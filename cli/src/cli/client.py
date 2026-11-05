@@ -1357,14 +1357,18 @@ class Client:
     # Inbox (CHT-1250)
     def get_inbox(
         self, team_id: str | None, unread: bool = False, skip: int = 0, limit: int = 50,
+        kind: list[str] | None = None,
     ) -> list:
-        """List the current user's inbox entries (every team when team_id is None)."""
-        params = {"skip": skip, "limit": limit}
+        """List the current user's inbox entries (every team when team_id is
+        None), optionally only those of the given kinds (CHT-2031)."""
+        params: dict = {"skip": skip, "limit": limit}
         if team_id is not None:
             params["team_id"] = team_id
         if unread:
             params["unread"] = "true"
-        query = urlencode(params)
+        if kind:
+            params["kind"] = list(kind)
+        query = urlencode(params, doseq=True)
         return self._request("GET", f"/inbox?{query}")
 
     def get_inbox_unread_count(self, team_id: str) -> dict:

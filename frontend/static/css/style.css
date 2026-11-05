@@ -7376,6 +7376,60 @@ body.theme-light .segmented-btn.active {
     cursor: progress;
 }
 
+/* A review or gate decided in place (CHT-2031): the ticket gate's
+   attestation block, what the ritual asks, and the decision buttons. */
+.inbox-decision {
+    max-width: 720px;
+    margin-bottom: 12px;
+}
+.inbox-decision .ticket-gate-attestation {
+    margin-bottom: 10px;
+}
+.inbox-decision .ticket-gate-asks {
+    font-size: var(--font-sm);
+    margin: 0 0 10px;
+}
+.inbox-decision-asks summary {
+    display: inline-block;
+    cursor: pointer;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    list-style: none;
+}
+.inbox-decision-asks summary::-webkit-details-marker { display: none; }
+.inbox-decision-asks summary::before { content: '▸ '; }
+.inbox-decision-asks[open] summary::before { content: '▾ '; }
+.inbox-decision-asks summary:hover { color: var(--text-primary); }
+.inbox-decision-status {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+.inbox-action-bar .btn-sm {
+    height: auto;
+    padding: 6px 14px;
+    font-size: var(--font-sm);
+    line-height: 1;
+}
+.inbox-action-bar [aria-disabled="true"] {
+    opacity: 0.6;
+    cursor: progress;
+}
+.inbox-comment-form .form-error {
+    color: var(--danger-fg);
+    font-size: var(--font-sm);
+    margin: 6px 0 0;
+}
+.inbox-comment-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.inbox-header .view-actions {
+    flex-wrap: wrap;
+}
+
 /* Phones: two lines (meta over title), the excerpt drops. */
 @media (max-width: 768px) {
     .inbox-row {

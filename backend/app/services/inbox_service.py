@@ -252,11 +252,17 @@ class InboxService:
 
     async def notify_review_requested(
         self, *, ritual, issue, project, attested_by_name: str, attested_by_id: str | None = None,
+        attestation_note: str | None = None,
     ) -> None:
         """A REVIEW ritual was just attested on `issue` and needs admin
         approval. Fan out an inbox entry to every team admin. No email
         per CHT-1251 (email is gate-requests + invitations only). The
         attester, when an admin, gets the entry but no push (CHT-1605).
+
+        The body is what was attested, not what the ritual asks: the
+        admin deciding already knows the ritual, and the note is what
+        they are deciding on (CHT-2031). An attestation with no note
+        leaves the body empty.
         """
         admins = await self._team_admins(project.team_id)
         title = f"Review requested: {ritual.name} on {issue.identifier}"
@@ -271,8 +277,10 @@ class InboxService:
                 project_id=project.id,
                 issue_id=issue.id,
                 ritual_id=ritual.id,
+                # Who attested: the row's avatar and "from" (CHT-2031).
+                source_user_id=attested_by_id,
                 title=title,
-                body=ritual.prompt,
+                body=(attestation_note or "").strip() or None,
             )
             created.append(entry)
             await self._broadcast(project.team_id, "created", entry)
@@ -889,17 +897,26 @@ class InboxService:
 
     async def list_for_user(
         self, user_id: str, *, team_id: str | None = None,
-        unread_only: bool = False, skip: int = 0, limit: int = 50,
+        unread_only: bool = False, kinds: list[InboxEntryKind] | None = None,
+        skip: int = 0, limit: int = 50,
     ) -> list[OxydeInboxEntry]:
         query = OxydeInboxEntry.objects.filter(
             recipient_user_id=user_id,
             team_id__in=await self.current_team_ids(user_id),
             archived_at=None,  # CHT-1316: archived entries leave the inbox
+            # Settled elsewhere (a review approved on the ticket, a gate
+            # signed off): nothing is waiting any more, so it leaves too
+            # (CHT-2031). Sync still sends it, as a tombstone.
+            resolved_at=None,
         )
         if team_id:
             query = query.filter(team_id=team_id)
         if unread_only:
             query = query.filter(read_at=None)
+        if kinds:
+            # Members, not strings: DbEnum registers each enum class with
+            # Oxyde, so a member filters by its stored name (CHT-1398).
+            query = query.filter(kind__in=list(kinds))
         return await query.order_by("-created_at").offset(skip).limit(limit).all()
 
     async def sync_for_user(

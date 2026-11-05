@@ -24,6 +24,7 @@
 package sh.chaotic.api.apis
 
 import sh.chaotic.api.models.HTTPValidationError
+import sh.chaotic.api.models.InboxEntryKind
 import sh.chaotic.api.models.InboxEntryResponse
 import sh.chaotic.api.models.InboxSyncResponse
 import sh.chaotic.api.models.MarkAllReadResponse
@@ -120,12 +121,13 @@ import io.ktor.http.ParametersBuilder
         * List the current user&#39;s inbox entries, newest first.
          * @param teamId  (optional)
          * @param unread  (optional, default to false)
+         * @param kind Only entries of these kinds (repeat the parameter for several). (optional)
          * @param skip  (optional, default to 0)
          * @param limit  (optional, default to 50)
          * @return kotlin.collections.List<InboxEntryResponse>
         */
             @Suppress("UNCHECKED_CAST")
-        open suspend fun listInboxApiInboxGet(teamId: kotlin.String? = null, unread: kotlin.Boolean? = false, skip: kotlin.Int? = 0, limit: kotlin.Int? = 50): HttpResponse<kotlin.collections.List<InboxEntryResponse>> {
+        open suspend fun listInboxApiInboxGet(teamId: kotlin.String? = null, unread: kotlin.Boolean? = false, kind: kotlin.collections.List<InboxEntryKind>? = null, skip: kotlin.Int? = 0, limit: kotlin.Int? = 50): HttpResponse<kotlin.collections.List<InboxEntryResponse>> {
 
             val localVariableAuthNames = listOf<String>("HTTPBearer")
 
@@ -135,6 +137,7 @@ import io.ktor.http.ParametersBuilder
             val localVariableQuery = mutableMapOf<String, List<String>>()
             teamId?.apply { localVariableQuery["team_id"] = listOf("$teamId") }
             unread?.apply { localVariableQuery["unread"] = listOf("$unread") }
+            kind?.apply { localVariableQuery["kind"] = toMultiValue(this, "multi") }
             skip?.apply { localVariableQuery["skip"] = listOf("$skip") }
             limit?.apply { localVariableQuery["limit"] = listOf("$limit") }
 

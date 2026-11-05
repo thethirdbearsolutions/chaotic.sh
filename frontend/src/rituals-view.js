@@ -320,7 +320,7 @@ export async function handleRejectTicketRitual(event, ritualId, issueId, ritualN
     return false;
 }
 
-export function showCompleteTicketRitualModal(ritualId, issueId, ritualName, artifact = '') {
+export function showCompleteTicketRitualModal(ritualId, issueId, ritualName, artifact = '', onCompleted = null) {
     document.getElementById('modal-title').textContent = `Complete: ${ritualName}`;
     document.getElementById('modal-content').innerHTML = `
         <form id="complete-ticket-ritual-form">
@@ -334,12 +334,17 @@ export function showCompleteTicketRitualModal(ritualId, issueId, ritualName, art
     `;
     // Attach event listener programmatically to avoid XSS via inline handlers (CHT-166)
     document.getElementById('complete-ticket-ritual-form').addEventListener('submit', (event) => {
-        handleCompleteTicketRitual(event, ritualId, issueId, artifact);
+        handleCompleteTicketRitual(event, ritualId, issueId, artifact, onCompleted);
     });
     showModal();
 }
 
-async function handleCompleteTicketRitual(event, ritualId, issueId, artifact = '') {
+/**
+ * `onCompleted`, when given, replaces the ticket view's reload: the
+ * Inbox signs off from here too (CHT-2031) and must not paint ticket
+ * detail state behind itself.
+ */
+async function handleCompleteTicketRitual(event, ritualId, issueId, artifact = '', onCompleted = null) {
     event.preventDefault();
     const note = document.getElementById('ticket-ritual-note').value;
     const bound = readArtifactField(artifact);
@@ -349,7 +354,8 @@ async function handleCompleteTicketRitual(event, ritualId, issueId, artifact = '
         await api.completeTicketGateRitual(ritualId, issueId, note || null, bound);
         showToast('Ritual completed!', 'success');
         closeModal();
-        await loadTicketRituals(issueId);
+        if (onCompleted) await onCompleted();
+        else await loadTicketRituals(issueId);
     } catch (e) {
         showApiError('complete ticket ritual', e);
     }
