@@ -433,6 +433,8 @@ ROUTES = [
     ("POST", "/api/agents/{agent}/keys", None, "agent"),
     ("POST", "/api/agents/{agent}/deactivate", None, "agent"),
     ("POST", "/api/agents/{agent}/reactivate", None, "agent"),
+    ("PUT", "/api/agents/{agent}/avatar", None, "agent"),
+    ("DELETE", "/api/agents/{agent}/avatar", None, "agent"),
     ("DELETE", "/api/api-keys/{api_key}", None, "api_key"),
     ("GET", "/api/users/{user}", None, "user"),
     ("GET", "/api/users/{agent}", None, "agent"),
@@ -1161,6 +1163,8 @@ MCP_NOT_ROW_KEYED = {
     ("team_roster", "detail"): _MCP_PAGING,
     # Your own profile (CHT-1982): values written to the caller's own row.
     **{("profile_update", a): _MCP_VALUE for a in ("name", "avatar_url", "pronouns", "tagline", "bio")},
+    **{("profile_update", a): "the caller's own picture the tool uploads or removes (CHT-2045), names no row"
+       for a in ("photo_path", "photo_base64", "remove_photo")},
 }
 
 # MCP_PROBES entries, keyed (tool, placeholder, argument), that succeed

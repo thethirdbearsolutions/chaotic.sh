@@ -357,7 +357,7 @@
           "users"
         ],
         "summary": "Upload My Avatar",
-        "description": "Upload your own profile picture (CHT-1992): the raw image as the\nrequest body (PNG, JPEG, WebP or GIF, at most 256 KB), recognised by\nits bytes. Replaces any earlier upload and points your avatar_url at\n``/api/avatars/{sha256}``. Every member may, people and agents alike.",
+        "description": "Upload your own profile picture (CHT-1992): the raw image as the\nrequest body (PNG, JPEG, WebP or GIF, at most 256 KB), recognised by\nits bytes. Replaces any earlier upload and points your avatar_url at\n``/api/avatars/{sha256}``. Every member may, people and agents alike,\na registered identity with its own key included (CHT-2045).",
         "operationId": "upload_my_avatar_api_users_me_avatar_put",
         "responses": {
           "200": {
@@ -6556,6 +6556,100 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{agent_id}/avatar": {
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Upload Agent Avatar",
+        "description": "Upload an agent's profile picture (CHT-2045): the raw image as the\nrequest body, with the limits of PUT /users/me/avatar (PNG, JPEG,\nWebP or GIF, at most 256 KB, 413 ``avatar_too_large``, else 422).\nReplaces any earlier upload and points the agent's avatar_url at it.\nAllowed to the agent itself, its creator while in its team, and that\nteam's admins.",
+        "operationId": "upload_agent_avatar_api_agents__agent_id__avatar_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Delete Agent Avatar",
+        "description": "Remove an agent's uploaded picture (CHT-2045), allowed as for the\nupload. Its avatar_url is cleared if it pointed at the upload; an\nemoji or URL stays.",
+        "operationId": "delete_agent_avatar_api_agents__agent_id__avatar_delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",

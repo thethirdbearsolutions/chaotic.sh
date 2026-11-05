@@ -446,6 +446,31 @@ class TestAppSession:
         assert response.status_code == 403, response.text
         assert response.json()["detail"]["error_code"] == "app_session_refused"
 
+    async def test_an_app_session_sets_an_agents_photo_but_not_its_own(
+        self, client, app_tokens, test_team, test_user,
+    ):
+        """CHT-2045, decided in PR #547's review: an agent's picture is an
+        identity edit, which an app session may make as on PATCH
+        /agents/{id}; the account's own picture is a change to the account
+        itself, which it may not (NotAppSession)."""
+        agent = await OxydeUser.objects.create(
+            email="p@example.com", hashed_password="x", name="Bot", is_agent=True,
+            parent_user_id=test_user.id, agent_team_id=test_team.id,
+        )
+        headers = {**_bearer(app_tokens["access_token"]), "Content-Type": "image/png"}
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+        agents = await client.put(f"/api/agents/{agent.id}/avatar", content=png, headers=headers)
+        removed = await client.delete(f"/api/agents/{agent.id}/avatar", headers=headers)
+        own = await client.put("/api/users/me/avatar", content=png, headers=headers)
+        own_removed = await client.delete("/api/users/me/avatar", headers=headers)
+
+        assert agents.status_code == 200, agents.text
+        assert removed.status_code == 200, removed.text
+        for refused in (own, own_removed):
+            assert refused.status_code == 403, refused.text
+            assert refused.json()["detail"]["error_code"] == "app_session_refused"
+
     async def test_agent_key_routes_refuse_an_app_session(
         self, client, app_tokens, test_team, test_user, test_project,
     ):

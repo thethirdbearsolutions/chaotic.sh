@@ -48,6 +48,10 @@ let saving = false;
 // Bumped each time the form opens: a save finishing after its form was
 // closed (and perhaps another opened) must leave the new one alone.
 let formToken = 0;
+// Your role in a team, as its newest roster fetch said (CHT-2045): what
+// decides whether you may edit any of its agents, fresher than a cached
+// roster or another page's member list.
+let viewerRole = { teamId: null, role: null };
 
 export function getRoster() {
     return roster;
@@ -65,6 +69,7 @@ export function resetPeople() {
     saving = false;
     shownEntry = null;
     photoBusy = false;
+    viewerRole = { teamId: null, role: null };
 }
 
 /**
@@ -72,7 +77,11 @@ export function resetPeople() {
  * stores it only once it knows its request is still the current one.
  */
 async function fetchRoster(teamId, includeIdle) {
-    return api.getTeamRoster(teamId, { includeIdle });
+    const fetched = await api.getTeamRoster(teamId, { includeIdle });
+    const me = getCurrentUser();
+    const mine = Array.isArray(fetched) ? fetched.find(r => r.user_id === me?.id) : null;
+    viewerRole = { teamId, role: mine?.role ?? null };
+    return fetched;
 }
 
 /** Replace one entry in the cached roster, if it is cached there. */
@@ -267,10 +276,25 @@ function entryFromAgent(agent) {
     };
 }
 
-/** May the viewer edit this entry? Their own, or an agent they own. */
+/** Is `me` an admin or owner of the current team, by the newest roster
+ * fetched for it? The edit form fetches one as it opens, so the form
+ * itself is always decided fresh; PATCH /agents/{id} lets those admins
+ * edit every field of any agent of the team, as this form does. */
+function viewerIsTeamAdmin(me) {
+    const teamId = getCurrentTeam()?.id;
+    if (!teamId || !me) return false;
+    let role = null;
+    if (me.id === getCurrentUser()?.id && viewerRole.teamId === teamId) role = viewerRole.role;
+    else if (rosterTeamId === teamId) role = roster.find(r => r.user_id === me.id)?.role ?? null;
+    return role === 'admin' || role === 'owner';
+}
+
+/** May the viewer edit this entry? Their own, an agent they own, or
+ * (as the server allows) any agent of a team they administer. */
 export function canEditProfile(entry, me = getCurrentUser()) {
     if (!entry || !me) return false;
-    return entry.user_id === me.id || (entry.is_agent && entry.owner_id === me.id);
+    if (entry.user_id === me.id) return true;
+    return !!entry.is_agent && (entry.owner_id === me.id || viewerIsTeamAdmin(me));
 }
 
 /**
@@ -554,14 +578,14 @@ export async function showEditProfileModal(userId) {
                 <label for="profile-avatar">Avatar</label>
                 <input type="text" id="profile-avatar" value="${value(entry.avatar_url)}" placeholder="An emoji, or an image URL">
             </div>
-            ${self ? `<div class="form-group">
+            <div class="form-group">
                 <label for="profile-photo">Photo</label>
                 <div class="profile-photo-row">
                     <input type="file" id="profile-photo" accept="image/png,image/jpeg,image/webp,image/gif" data-action="pick-profile-photo"${photoBusy ? ' disabled' : ''}>
                     <button type="button" class="btn btn-secondary btn-small${UPLOADED_AVATAR_RE.test(entry.avatar_url || '') ? '' : ' hidden'}" id="profile-photo-remove" data-action="remove-profile-photo"${photoBusy ? ' disabled' : ''}>Remove photo</button>
                 </div>
                 <p class="form-help">Uploads at once, cropped square and resized to ${PHOTO_SIZE}px.</p>
-            </div>` : ''}
+            </div>
             <div class="form-group">
                 <label for="profile-pronouns">Pronouns</label>
                 <input type="text" id="profile-pronouns" value="${value(entry.pronouns)}" maxlength="${PROFILE_LIMITS.pronouns}" placeholder="e.g. they/them">
@@ -713,18 +737,21 @@ function setPhotoControlsDisabled(disabled) {
 }
 
 /**
- * Your own profile picture changed: the roster, the header, your profile
- * page if it is on screen, and your edit form if one is open; a form
- * opened since for someone else (an agent you own) is left alone.
+ * A member's profile picture changed (yours, or an agent's you manage):
+ * the roster, the header if it is yours, their profile page if it is on
+ * screen, and their edit form if one is open; a form opened since for
+ * someone else is left alone.
  */
-function applyMyAvatar(saved) {
-    const me = getCurrentUser();
-    if (!me || !saved || (saved.id && saved.id !== me.id)) return;
+function applyAvatar(userId, saved) {
+    if (!userId || !saved || (saved.id && saved.id !== userId)) return;
     const avatar = saved.avatar_url ?? null;
-    roster = roster.map(r => (r.user_id === me.id ? { ...r, avatar_url: avatar } : r));
-    setCurrentUser({ ...me, avatar_url: avatar });
-    updateUserInfo();
-    if (editingId === me.id && editingInitial) {
+    roster = roster.map(r => (r.user_id === userId ? { ...r, avatar_url: avatar } : r));
+    const me = getCurrentUser();
+    if (me && me.id === userId) {
+        setCurrentUser({ ...me, avatar_url: avatar });
+        updateUserInfo();
+    }
+    if (editingId === userId && editingInitial) {
         const field = document.getElementById('profile-avatar');
         if (field) field.value = avatar || '';
         // The upload is saved already: Save sends the avatar only if it
@@ -733,15 +760,23 @@ function applyMyAvatar(saved) {
         editingEntry = { ...editingEntry, avatar_url: avatar };
         document.getElementById('profile-photo-remove')?.classList.toggle('hidden', !UPLOADED_AVATAR_RE.test(avatar || ''));
     }
-    if (shownEntry && showingProfileOf(me.id)) rerenderProfile({ ...shownEntry, avatar_url: avatar });
+    if (shownEntry && showingProfileOf(userId)) rerenderProfile({ ...shownEntry, avatar_url: avatar });
 }
 
-async function changePhoto(request, done, failed) {
-    if (photoBusy) return;
+/** Whose picture the photo controls change: the member the open form
+ * edits (you, or an agent you manage); with no form open, you. */
+function photoTarget() {
+    const me = getCurrentUser();
+    const userId = editingId || me?.id;
+    return userId ? { userId, self: userId === me?.id } : null;
+}
+
+async function changePhoto(target, request, done, failed) {
+    if (photoBusy || !target) return;
     photoBusy = true;
     setPhotoControlsDisabled(true);
     try {
-        applyMyAvatar(await request());
+        applyAvatar(target.userId, await request());
         showToast(done, 'success');
     } catch (e) {
         showApiError(failed, e);
@@ -754,15 +789,23 @@ async function changePhoto(request, done, failed) {
 export async function handlePickPhoto(input, resize = resizePhoto) {
     const file = input.files?.[0];
     if (!file) return;
+    const target = photoTarget();
     try {
-        await changePhoto(async () => api.uploadAvatar(await resize(file)), 'Photo uploaded', 'upload the photo');
+        await changePhoto(target, async () => {
+            const blob = await resize(file);
+            return target.self ? api.uploadAvatar(blob) : api.uploadAgentAvatar(target.userId, blob);
+        }, 'Photo uploaded', 'upload the photo');
     } finally {
         input.value = '';
     }
 }
 
 export function handleRemovePhoto() {
-    return changePhoto(() => api.deleteAvatar(), 'Photo removed', 'remove the photo');
+    const target = photoTarget();
+    return changePhoto(
+        target, () => (target.self ? api.deleteAvatar() : api.deleteAgentAvatar(target.userId)),
+        'Photo removed', 'remove the photo',
+    );
 }
 
 function opensInNewTab(event) {

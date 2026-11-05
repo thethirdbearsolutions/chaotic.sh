@@ -11,9 +11,11 @@ from typing import Annotated
 
 from pydantic import Field
 
+from ..attachments import decode_base64
 from ..backend import Backend
 from ..constants import TEAM_FIELD_DESC
-from ..errors import ToolInputError
+from ..errors import BackendError, ToolInputError, TransportError
+from .issues import _with_note
 from ..shapes import COMPACT_ROSTER_FIELDS, _fields_prose, listing
 
 DETAIL_ROSTER_DESC = (
@@ -124,11 +126,29 @@ async def profile_update(
         str | None,
         Field(description="Markdown about yourself: for an agent, your persona and how you work. Empty string clears it."),
     ] = None,
+    photo_path: Annotated[
+        str | None,
+        Field(description=(
+            "Upload a profile picture from a file on the machine the MCP server runs on: PNG, JPEG, "
+            "WebP or GIF, at most 256 KB. Only the stdio server (`chaotic mcp`) can read one, and not "
+            "a hidden file, nor one in a hidden directory, nor its own config; with the hosted server "
+            "send photo_base64."
+        )),
+    ] = None,
+    photo_base64: Annotated[
+        str | None,
+        Field(description="Upload a profile picture as its base64-encoded bytes (PNG, JPEG, WebP or GIF, at most 256 KB)."),
+    ] = None,
+    remove_photo: Annotated[
+        bool, Field(description="Remove your uploaded profile picture (an emoji or URL avatar stays).")
+    ] = False,
 ) -> dict:
     """Write your own profile: the identity teammates see on the roster.
 
     Yours to write, person or agent. Only the fields you pass change;
-    pass an empty string to clear one. Returns your updated profile.
+    pass an empty string to clear one. A picture is uploaded with
+    photo_path or photo_base64, or removed with remove_photo. Returns
+    your updated profile.
     """
     fields = {
         key: value for key, value in (
@@ -136,10 +156,38 @@ async def profile_update(
             ("tagline", tagline), ("bio", bio),
         ) if value is not None
     }
-    if not fields:
-        raise ToolInputError("Pass at least one of name, avatar_url, pronouns, tagline, bio.")
+    photos = [given for given in (photo_path, photo_base64) if given is not None]
+    if len(photos) > 1 or (photos and remove_photo):
+        raise ToolInputError("Give at most one of photo_path, photo_base64, remove_photo.")
+    if (photos or remove_photo) and avatar_url is not None:
+        # Both set avatar_url; the second would undo the first.
+        raise ToolInputError("Give avatar_url or a photo (photo_path, photo_base64, remove_photo), not both.")
+    if not fields and not photos and not remove_photo:
+        raise ToolInputError(
+            "Pass at least one of name, avatar_url, pronouns, tagline, bio, photo_path, photo_base64, remove_photo."
+        )
     if "avatar_url" in fields and not fields["avatar_url"].strip():
         fields["avatar_url"] = None
-    me = await backend.update_me(**fields)
+    me = None
+    if photo_path is not None:
+        data, _name = await backend.read_local_file(photo_path, base64_arg="photo_base64")
+        me = await backend.upload_avatar(data)
+    elif photo_base64 is not None:
+        data = decode_base64(photo_base64, "photo_base64")
+        if not data:
+            raise ToolInputError("photo_base64 is empty.")
+        me = await backend.upload_avatar(data)
+    elif remove_photo:
+        me = await backend.delete_avatar()
+    if fields:
+        try:
+            me = await backend.update_me(**fields)
+        except (BackendError, TransportError) as e:
+            if me is None:
+                raise
+            # The picture is saved already; say so, or the caller would
+            # think nothing changed (PR #547 review).
+            done = "removed" if remove_photo else "uploaded"
+            raise _with_note(e, "", f"your photo was {done}; the other fields were not saved") from e
     # `user_id`, as on the roster rows, so the two compare (PR #516 review).
     return {"user_id": me.get("id"), **{key: me.get(key) for key in PROFILE_FIELDS[1:]}}
