@@ -3343,7 +3343,9 @@ def _opens_gate_on_handled_exit(func):
 def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade):
     """Upgrade to a new version.
 
-    This command:
+    This command first asks for confirmation (unless --yes), before
+    anything below happens, so a "no" or an unanswered prompt changes
+    nothing. Then it:
     1. Prepares the new version in a staging checkout (~/.chaotic/staging)
        while the server keeps running: syncs its dependencies, which warms
        the cache for step 4, and builds the frontend bundle there. If the
@@ -3474,16 +3476,38 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
         console.print("\n[green]Already on the latest version.[/green]")
         raise SystemExit(0)
 
+    gated = socket_mode_installed()
+    if gated and not _justfile_serves_socket(target_commit):
+        # The target's serve-prod would bind the port chaotic.socket holds
+        # and crash-loop (PR #510 review): not something to find out with
+        # the server down.
+        console.print(
+            f"[red]{esc(describe_commit(target_commit))} predates socket activation (CHT-1970), "
+            "and this server runs behind chaotic.socket.[/red]"
+        )
+        console.print(
+            "Nothing was changed. To go back that far, first return to the classic unit: "
+            f"'chaotic system stop', delete {esc(get_socket_file_path())}, then 'chaotic system reconfigure'."
+        )
+        raise SystemExit(1)
+
     # CHT-2025: every question is asked before anything is stopped or
     # gated. Asked after the stop, an unanswered prompt (no tty over ssh:
-    # click reads EOF and aborts) left the server down behind deploy.hold.
-    # An abort or a "no" here leaves the server exactly as it was.
+    # click reads EOF and raises Abort, which is not a handled exit) left
+    # the server down behind deploy.hold. An abort or a "no" here leaves
+    # the server exactly as it was.
     if not yes:
         if already_current:
             action = "Run migrations with --fake-initial?"
         else:
             action = f"Upgrade from {current_version} to {target_version}?"
-        if not _confirm_action(f"\n{action}"):
+        try:
+            confirmed = _confirm_action(f"\n{action}")
+        except click.Abort:
+            console.print("\n[yellow]No answer. Nothing was changed and the server was not stopped. "
+                          "Pass --yes to run without a prompt.[/yellow]")
+            raise SystemExit(1)
+        if not confirmed:
             console.print("[yellow]Cancelled. Nothing was changed and the server was not stopped.[/yellow]")
             raise SystemExit(0)
 
@@ -3525,20 +3549,8 @@ def system_upgrade(target_version, no_backup, yes, fake_initial, allow_downgrade
     # CHT-1970: behind chaotic.socket the port stays open through the
     # window, and the deploy gate keeps a request from starting the server
     # before the new version is in place. start_service() releases it.
-    gated = socket_mode_installed()
-    if gated and not _justfile_serves_socket(target_commit):
-        # The target's serve-prod would bind the port chaotic.socket holds
-        # and crash-loop (PR #510 review): not something to find out with
-        # the server down.
-        console.print(
-            f"[red]{esc(describe_commit(target_commit))} predates socket activation (CHT-1970), "
-            "and this server runs behind chaotic.socket.[/red]"
-        )
-        console.print(
-            "Nothing was changed. To go back that far, first return to the classic unit: "
-            f"'chaotic system stop', delete {esc(get_socket_file_path())}, then 'chaotic system reconfigure'."
-        )
-        raise SystemExit(1)
+    # Computed (and the predates refusal made) before the prompt; the gate
+    # itself is taken after it (CHT-2025).
     if gated and not hold_deploy_gate():
         console.print(f"[red]Another upgrade holds {esc(DEPLOY_GATE)}; wait for it to finish.[/red]")
         console.print("Nothing was changed and the server was not stopped.")

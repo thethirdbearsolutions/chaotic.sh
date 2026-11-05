@@ -1279,13 +1279,63 @@ class TestUpgradeCancelled:
         self._assert_untouched(m)
 
     def test_no_tty_abort_behind_the_socket_closes_no_gate(self, monkeypatch):
+        """Against the real gate (conftest points it at a temp dir): on the
+        old order this left deploy.hold behind, the incident itself."""
         monkeypatch.setattr(system, "socket_mode_installed", lambda: True)
         monkeypatch.setattr(system, "_justfile_serves_socket", lambda commit: True)
-        result, m = self._run_without_yes(
-            input="", _confirm_action=dict(wraps=system._confirm_action),
-        )
+        try:
+            result, m = self._run_without_yes(
+                input="",
+                _confirm_action=dict(wraps=system._confirm_action),
+                hold_deploy_gate=dict(wraps=system.hold_deploy_gate),
+            )
+            assert result.exit_code == 1
+            assert "Nothing was changed and the server was not stopped. Pass --yes" in _flat(result.output)
+            self._assert_untouched(m)
+            assert system._deploy_gate_fd is None
+        finally:
+            system.release_deploy_gate()
+
+    def test_a_predates_socket_refusal_comes_before_the_prompt(self, monkeypatch):
+        monkeypatch.setattr(system, "socket_mode_installed", lambda: True)
+        monkeypatch.setattr(system, "_justfile_serves_socket", lambda commit: False)
+        monkeypatch.setattr(system, "describe_commit", lambda commit: "old")
+        result, m = self._run_without_yes()
         assert result.exit_code == 1
+        assert "predates socket activation" in _flat(result.output)
+        m["_confirm_action"].assert_not_called()
+        m["prepare_release"].assert_not_called()
         self._assert_untouched(m)
+
+    def test_no_prompt_is_reached_after_the_gate_or_the_stop(self, monkeypatch):
+        """Structural guard: an Abort-raising prompt inside the window is
+        what kept the server down. Any prompt reached once the gate is
+        taken or the server stopped fails this test."""
+        monkeypatch.setattr(system, "socket_mode_installed", lambda: True)
+        monkeypatch.setattr(system, "_justfile_serves_socket", lambda commit: True)
+        in_window = []
+
+        def confirm(*a, **k):
+            if in_window:
+                raise AssertionError(f"prompt inside the window, after {in_window}")
+            return True
+
+        try:
+            result, m = self._run_without_yes(
+                _confirm_action=dict(side_effect=confirm),
+                hold_deploy_gate=dict(side_effect=lambda: in_window.append("gate") or True),
+                stop_service=dict(side_effect=lambda **k: in_window.append("stop") or True),
+                run_migrations=dict(return_value=(True, "ok")),
+                rebuild_frontend=dict(return_value=(True, "built")),
+                verify_deployed_commit=dict(return_value=(True, "ab71cd5")),
+                restore_backup=dict(return_value=True),
+                resync_checkout=dict(return_value=(True, "re-synced")),
+            )
+        finally:
+            system.release_deploy_gate()
+        assert result.exit_code == 0, result.output
+        assert in_window == ["gate", "stop"]
+        m["_confirm_action"].assert_called_once()
 
     def test_yes_is_asked_before_the_slow_preparation_and_the_stop(self):
         order = []
