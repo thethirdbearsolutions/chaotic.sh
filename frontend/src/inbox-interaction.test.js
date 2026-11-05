@@ -18,9 +18,13 @@ vi.mock('./api.js', () => ({
         archiveInbox: vi.fn(() => Promise.resolve({})),
         markAllInboxRead: vi.fn(() => Promise.resolve({ marked_count: 0 })),
         updateIssue: vi.fn(() => Promise.resolve({})),
+        createComment: vi.fn(() => Promise.resolve({ id: 'c-1' })),
     },
 }));
-vi.mock('./ui.js', () => ({ showApiError: vi.fn(), isModalOpen: vi.fn(() => false), showToast: vi.fn(), showModal: vi.fn(), closeModal: vi.fn(), showMentionWarnings: vi.fn() }));
+vi.mock('./ui.js', () => ({
+    showApiError: vi.fn(), isModalOpen: vi.fn(() => false), showToast: vi.fn(),
+    showModal: vi.fn(), closeModal: vi.fn(), showMentionWarnings: vi.fn(),
+}));
 vi.mock('./issue-detail-view.js', () => ({ viewIssue: vi.fn(), noteSkippedDetailRefresh: vi.fn() }));
 vi.mock('./rituals-view.js', () => ({ showRejectTicketRitualModal: vi.fn(), showCompleteTicketRitualModal: vi.fn() }));
 vi.mock('./documents.js', () => ({
@@ -142,7 +146,8 @@ beforeEach(() => {
         <div id="inbox-view" class="view"><div id="inbox-list"></div></div>
         <div id="issue-detail-view" class="view hidden"></div>
         <div id="document-detail-view" class="view hidden"></div>
-        <span id="inbox-badge"></span>`;
+        <span id="inbox-badge"></span>
+        <div id="modal-title"></div><div id="modal-content"></div>`;
     setInboxEntries([{ ...ASSIGN }, { ...OTHER }]);
     collapseInboxExpand();
     renderInbox();
@@ -251,12 +256,14 @@ describe('keys on an expanded row (CHT-1320)', () => {
         expect(isExpanded()).toBe(true);
     });
 
-    it.each(['Enter', ' '])('%j on a focused Reassign button reassigns, not collapses', (k) => {
+    it.each(['Enter', ' '])('%j on a focused Reassign button opens the comment dialog, not collapses', (k) => {
         key(row(), 'Enter');
         const btn = document.querySelector('[data-action="reassign-inbox-entry"]');
         btn.focus();
         key(btn, k);
-        expect(api.updateIssue).toHaveBeenCalledWith('issue-9', { assignee_id: 'user-ethan' });
+        // CHT-2029: nothing changes hands until a comment is written.
+        expect(document.getElementById('inbox-reassign-form')).not.toBeNull();
+        expect(api.updateIssue).not.toHaveBeenCalled();
         expect(isExpanded()).toBe(true);
     });
 
@@ -455,13 +462,26 @@ describe('finding 5: a failed mark-read rolls back', () => {
 });
 
 describe('finding 6: Reassign back is guarded while in flight', () => {
-    it('a double press sends one PATCH and marks the button busy', async () => {
+    // CHT-2029: the button opens a comment dialog; submitting it reassigns.
+    const reassignWith = (text) => {
+        click(document.querySelector('[data-action="reassign-inbox-entry"]'));
+        document.getElementById('inbox-reassign-comment').value = text;
+        document.getElementById('inbox-reassign-form')
+            .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    };
+
+    it('a double submit sends one comment and one PATCH and marks the button busy', async () => {
         let resolve;
         api.updateIssue.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
         key(toggleOf(row()), 'Enter');
         const btn = () => document.querySelector('[data-action="reassign-inbox-entry"]');
+        reassignWith('why');
+        await flush();
+        // A press on the row's button while in flight does not reopen the dialog.
+        document.getElementById('modal-content').innerHTML = '';
         click(btn());
-        click(btn());
+        expect(document.getElementById('inbox-reassign-form')).toBeNull();
+        expect(api.createComment).toHaveBeenCalledTimes(1);
         expect(api.updateIssue).toHaveBeenCalledTimes(1);
         expect(btn().getAttribute('aria-disabled')).toBe('true');
         resolve({});
@@ -473,11 +493,13 @@ describe('finding 6: Reassign back is guarded while in flight', () => {
         api.updateIssue.mockRejectedValueOnce(new Error('nope'));
         key(toggleOf(row()), 'Enter');
         const btn = () => document.querySelector('[data-action="reassign-inbox-entry"]');
-        click(btn());
+        reassignWith('why');
         await flush();
         expect(btn().hasAttribute('aria-disabled')).toBe(false);
-        click(btn());
+        reassignWith('why');
+        await flush();
         expect(api.updateIssue).toHaveBeenCalledTimes(2);
+        expect(api.createComment).toHaveBeenCalledTimes(1); // not posted twice
     });
 });
 
