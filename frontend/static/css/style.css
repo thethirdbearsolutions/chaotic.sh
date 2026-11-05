@@ -10714,3 +10714,108 @@ body.theme-light {
 .timeline-note { margin-top: 0; }
 .timeline-note .markdown-body { margin-top: 2px; font-size: var(--font-sm); }
 .timeline-note .markdown-body > :last-child { margin-bottom: 0; }
+
+/* ============================================================================
+   Shared components (CHT-2040). Generic names, never tab-prefixed; every
+   surface uses these rather than inventing its own. Colour is tokens only.
+   ============================================================================ */
+
+/* Section label: .section-header > h3 (uppercase, muted) + .section-count,
+   defined above. Use it for every grouped list heading. */
+
+/* Meter: a thin bar for progress or budget. Neutral by default; a state
+   modifier on .meter colours the fill. Put the "9 of 16" in .meter-label. */
+.meter {
+    position: relative;
+    height: 4px;
+    min-width: 40px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+}
+.meter-fill {
+    height: 100%;
+    background: var(--text-secondary);
+    border-radius: inherit;
+    transition: width var(--transition-normal);
+}
+.meter.is-accent .meter-fill { background: var(--accent-color); }
+.meter.is-done .meter-fill { background: var(--success-fg); }
+.meter.is-near .meter-fill,
+.meter.is-limbo .meter-fill { background: var(--warning-color); }
+.meter.is-over .meter-fill { background: var(--danger-fg); }
+.meter-label {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Badge variants on the .badge base. State colour only: accent is "needs
+   you", success is done, warning is near or limbo, danger is arrears or
+   sent back. */
+.badge-neutral { background: var(--bg-tertiary); color: var(--text-secondary); }
+.badge-accent { background: var(--accent-subtle); color: var(--accent-fg); }
+.badge-success { background: var(--success-subtle); color: var(--success-fg); }
+.badge-warning { background: var(--warning-subtle); color: var(--warning-color); }
+.badge-danger { background: var(--danger-subtle); color: var(--danger-fg); }
+
+/* State dot: a 6px mark beside a name. */
+.state-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: var(--radius-circle);
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+.state-dot.is-accent { background: var(--accent-color); }
+.state-dot.is-done { background: var(--success-fg); }
+.state-dot.is-near,
+.state-dot.is-limbo { background: var(--warning-color); }
+.state-dot.is-over { background: var(--danger-fg); }
+
+/* Two-line list row: title over a muted sub-line, optional leading and
+   trailing cells. Layout (grid columns) is the surface's call. */
+.list-row-2line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-xs) var(--space-lg);
+    padding: var(--space-md) var(--space-lg);
+    border-bottom: 1px solid var(--border-color);
+}
+.list-row-2line:hover { background: var(--row-hover); }
+.list-row-title {
+    color: var(--text-primary);
+    font-size: var(--font-base);
+    font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.list-row-sub {
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.list-row-right {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    justify-self: end;
+}
+.list-row-action {
+    color: var(--accent-fg);
+    font-size: var(--font-sm);
+    font-weight: 500;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+.list-row-action:hover { text-decoration: underline; }
