@@ -19,6 +19,7 @@ import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { showCreateSubIssueModal } from './issue-creation.js';
 import { getMembers } from './teams.js';
+import { renderAttachmentsSection, setupAttachmentDrop, hydrateAttachments } from './attachments.js';
 import { renderTicketGatePanel, renderTicketGateStickyBar, describeTicketGate, gateFocusRitual, isAwaitingApproval } from './ticket-gate.js';
 import { viewDocument } from './documents.js';
 import { renderRelatedWork, renderTimeline, renderMetaLine } from './ticket-body.js';
@@ -289,6 +290,26 @@ function canApproveAttestations() {
     const self = members.find(m => m.user_id === user.id);
     // Loaded and not on the list: not a member here, so not an admin.
     return !!self && (self.role === 'admin' || self.role === 'owner');
+}
+
+/**
+ * Who is looking, for the Attachments strip: an attachment's uploader or
+ * a team admin may delete it (the server decides; this only hides the
+ * button from everyone else).
+ */
+export function attachmentViewer(issue) {
+    const user = getCurrentUser();
+    const project = getProjects().find(p => p.id === issue?.project_id);
+    const team = getCurrentTeam();
+    const members = getMembers() || [];
+    // The server checks the issue's team. Only the loaded members of that
+    // same team can answer here; otherwise null (unknown): Delete is
+    // offered and a 403 explains.
+    if (!project || !team || project.team_id !== team.id || members.length === 0) {
+        return { userId: user?.id || null, isAdmin: null };
+    }
+    const self = members.find(m => m.user_id === user?.id);
+    return { userId: user?.id || null, isAdmin: !!self && (self.role === 'admin' || self.role === 'owner') };
 }
 
 // Watches the gate panel so the sticky bar shows only once it has scrolled
@@ -698,13 +719,15 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         // the whole detail view. Isolate it like documents.js's viewDocument()
         // does, and surface a small notice in the comments section instead.
         let commentsLoadFailed = false;
-        const [issue, comments, activities, subIssues, relations, ritualStatus] = await Promise.all([
+        const [issue, comments, activities, subIssues, relations, ritualStatus, attachments] = await Promise.all([
             api.getIssue(issueId),
             api.getComments(issueId).catch(e => { console.error('Failed to load comments:', e); commentsLoadFailed = true; return []; }),
             api.getActivities(issueId, 0, ACTIVITY_PAGE),
             api.getSubIssues(issueId),
             api.getRelations(issueId),
             api.getTicketRitualsStatus(issueId).catch(() => ({ pending_rituals: [], completed_rituals: [] })),
+            // A failed list shows a notice in its section, not a failed page.
+            api.getAttachments(issueId).catch(e => { console.error('Failed to load attachments:', e); return null; }),
         ]);
 
         // Comments in time order. Attestations reach the timeline as
@@ -814,6 +837,8 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                             ${issue.description ? renderDescriptionContent(issue.description) : '<span class="add-description-link">Add description...</span>'}
                         </div>
                     </div>
+
+                    ${renderAttachmentsSection(issue.id, attachments, attachmentViewer(issue))}
 
                     ${renderRelatedWork(issue, subIssues, relations, { formatEstimate })}
 
@@ -991,6 +1016,8 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         setupMentionAutocomplete('new-comment', 'mention-suggestions', { projectId: issue.project_id });
         setupQuoteComment({ signal: detailSignal });
         setupRelatedAddMenu(detailSignal);
+        setupAttachmentDrop(detailView.querySelector('.detail-main'), issue.id, detailSignal);
+        hydrateAttachments(detailView);
 
         // Cmd/Ctrl+Enter to submit comment + draft persistence (CHT-1041)
         const commentTextarea = document.getElementById('new-comment');

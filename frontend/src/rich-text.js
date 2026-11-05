@@ -11,6 +11,25 @@
 import { renderMarkdown } from './gate-approvals.js';
 
 /**
+ * Sanitized markdown HTML (attachment references already marked by
+ * renderMarkdown, CHT-1996), with issue links and @mentions. Parsed in a
+ * <template>, whose content is inert: a div would fetch every <img> in it
+ * at once, before the page even shows it.
+ * @param {string} content
+ * @returns {string}
+ */
+function renderRich(content) {
+    // SECURITY: Render markdown first (with DOMPurify sanitization)
+    // Then safely process the DOM to add issue links and mentions
+    const sanitizedHtml = renderMarkdown(content);
+    const template = document.createElement('template');
+    template.innerHTML = sanitizedHtml;
+    // Walk through text nodes only and apply transformations
+    processTextNodes(template.content, addIssueLinksAndMentions);
+    return template.innerHTML;
+}
+
+/**
  * Process text nodes in an element with a callback
  * @param {Element} element - DOM element
  * @param {Function} callback - Function to call on each text node
@@ -171,18 +190,7 @@ export function addIssueLinks(textNode) {
  */
 export function renderCommentContent(content) {
     if (!content) return '';
-    // SECURITY: Render markdown first (with DOMPurify sanitization)
-    // Then safely process the DOM to add issue links and mentions
-    const sanitizedHtml = renderMarkdown(content);
-
-    // Parse the sanitized HTML into a DOM for safe manipulation
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = sanitizedHtml;
-
-    // Walk through text nodes only and apply transformations
-    processTextNodes(tempDiv, addIssueLinksAndMentions);
-
-    return tempDiv.innerHTML;
+    return renderRich(content);
 }
 
 /**
@@ -196,12 +204,5 @@ export function renderDescriptionContent(content) {
     // (CHT-1214), matching the comment box's existing behavior instead of
     // leaving manually-typed @handles as permanent plain text.
     if (!content) return '';
-    const sanitizedHtml = renderMarkdown(content);
-
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = sanitizedHtml;
-
-    processTextNodes(tempDiv, addIssueLinksAndMentions);
-
-    return tempDiv.innerHTML;
+    return renderRich(content);
 }
