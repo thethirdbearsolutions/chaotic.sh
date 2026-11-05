@@ -2855,10 +2855,16 @@ class IssueService:
     async def list_comments(
         self, issue_id: str, skip: int = 0, limit: int = 100
     ) -> list[OxydeIssueComment]:
-        """List comments for an issue."""
+        """List comments for an issue, oldest first.
+
+        ``id`` breaks ties on ``created_at`` so that paging with ``skip``
+        is stable: without it, two comments sharing a timestamp could swap
+        places between two OFFSET queries and one of them never arrive
+        (CHT-2064).
+        """
         return await OxydeIssueComment.objects.filter(
             issue_id=issue_id,
-        ).join("author").order_by("created_at").offset(skip).limit(limit).all()
+        ).join("author").order_by("created_at", "id").offset(skip).limit(limit).all()
 
     async def list_sub_issues(
         self, parent_id: str, skip: int = 0, limit: int = 100

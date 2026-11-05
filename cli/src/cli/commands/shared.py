@@ -528,6 +528,38 @@ def fetch_all_labels(team_id: str) -> list:
             return labels
 
 
+# Big enough that almost every ticket is one request; the loop is the
+# safety net for the rest. Matches no server cap: the API has none.
+COMMENT_PAGE_SIZE = 1000
+
+
+def fetch_all_comments(issue_id: str) -> list:
+    """Every comment on an issue, oldest first, paging past the API's
+    default of 100 (CHT-2064).
+
+    The server orders by ``created_at`` then ``id``, so pages do not
+    overlap or skip when timestamps tie.
+
+    `issue show` used to make one request and print what came back: on a
+    ticket with more than 100 comments that was the OLDEST 100, with
+    nothing saying so, so a reader catching up missed everything recent.
+    Pages until one comes back short, or until a page adds nothing new
+    (a server that ignored ``skip`` would otherwise loop forever).
+    """
+    comments: list = []
+    seen: set = set()
+    while True:
+        kwargs = {"limit": COMMENT_PAGE_SIZE}
+        if comments:
+            kwargs["skip"] = len(comments)
+        page = _client().get_comments(issue_id, **kwargs) or []
+        fresh = [c for c in page if c.get("id") not in seen]
+        comments.extend(fresh)
+        seen.update(c.get("id") for c in fresh)
+        if len(page) < COMMENT_PAGE_SIZE or not fresh:
+            return comments
+
+
 def resolve_label_id(label_value: str, team_id: str) -> str:
     """Resolve a label value to a label ID.
 
