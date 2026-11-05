@@ -94,6 +94,23 @@
     --row-cursor: #23253a;
     --row-cursor-edge: #7c86f0;
     --row-height: 28px;
+
+    /* Monospace stack for identifiers, keys and code (CHT-2042) */
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    /* Issue status and priority (CHT-2042). One colour per state, used by
+       every status icon, dot, badge, bar segment and tooltip, so "in
+       progress" reads the same on every tab. Tints derive from these. */
+    --status-todo: #9ca3af;
+    --status-in-progress: #f59e0b;
+    --status-in-review: #8b5cf6;
+    --status-done: #22c55e;
+    --status-canceled: #ef4444;
+
+    --priority-urgent: #ef4444;
+    --priority-high: #f59e0b;
+    --priority-medium: #3b82f6;
+    --priority-low: #9ca3af;
 }
 
 body.theme-light {
@@ -116,6 +133,15 @@ body.theme-light {
     --row-hover: #f0f0ee;
     --row-cursor: #eef0ff;
     --row-cursor-edge: #5e6ad2;
+    --status-todo: #6b7280;
+    --status-in-progress: #d97706;
+    --status-in-review: #7c3aed;
+    --status-done: #16a34a;
+    --status-canceled: #dc2626;
+    --priority-urgent: #dc2626;
+    --priority-high: #d97706;
+    --priority-medium: #2563eb;
+    --priority-low: #6b7280;
 }
 
 /* ============================================================================
@@ -1021,21 +1047,18 @@ textarea {
 }
 
 .badge-status-backlog { background: var(--bg-tertiary); color: var(--text-secondary); }
-.badge-status-todo { background: #1f2937; color: #9ca3af; }
-.badge-status-in_progress { background: #1e3a5f; color: #60a5fa; }
-.badge-status-in_review { background: #3b2f63; color: #a78bfa; }
-.badge-status-done { background: #14532d; color: #4ade80; }
-.badge-status-canceled { background: #450a0a; color: #fca5a5; }
+.badge-status-todo { background: color-mix(in srgb, var(--status-todo) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--status-todo) 65%, var(--text-primary)); }
+.badge-status-in_progress { background: color-mix(in srgb, var(--status-in-progress) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--status-in-progress) 65%, var(--text-primary)); }
+.badge-status-in_review { background: color-mix(in srgb, var(--status-in-review) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--status-in-review) 65%, var(--text-primary)); }
+.badge-status-done { background: color-mix(in srgb, var(--status-done) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--status-done) 65%, var(--text-primary)); }
+.badge-status-canceled { background: color-mix(in srgb, var(--status-canceled) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--status-canceled) 65%, var(--text-primary)); }
 
-.badge-priority-urgent { background: #7f1d1d; color: #fca5a5; }
-.badge-priority-high { background: #713f12; color: #fcd34d; }
-.badge-priority-medium { background: #1e3a5f; color: #60a5fa; }
-.badge-priority-low { background: #14532d; color: #4ade80; }
+.badge-priority-urgent { background: color-mix(in srgb, var(--priority-urgent) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--priority-urgent) 65%, var(--text-primary)); }
+.badge-priority-high { background: color-mix(in srgb, var(--priority-high) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--priority-high) 65%, var(--text-primary)); }
+.badge-priority-medium { background: color-mix(in srgb, var(--priority-medium) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--priority-medium) 65%, var(--text-primary)); }
+.badge-priority-low { background: color-mix(in srgb, var(--priority-low) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--priority-low) 65%, var(--text-primary)); }
 .badge-priority-no_priority { background: var(--bg-tertiary); color: var(--text-secondary); }
 
-.badge-sprint-planned { background: var(--bg-tertiary); color: var(--text-secondary); }
-.badge-sprint-active { background: #1e3a5f; color: #60a5fa; }
-.badge-sprint-completed { background: #14532d; color: #4ade80; }
 
 /* Agent identity badge (CHT-1304) - marks AI-agent actors vs humans */
 .badge-agent { background: rgba(124, 58, 237, 0.15); color: #7c3aed; margin-left: 0.375rem; }
@@ -1434,7 +1457,7 @@ textarea {
 .linked-item-id {
     font-family: monospace;
     font-weight: 600;
-    color: var(--primary);
+    color: var(--accent-color);
 }
 
 .linked-item-title {
@@ -1477,7 +1500,7 @@ textarea {
 .link-result-id {
     font-family: monospace;
     font-weight: 600;
-    color: var(--primary);
+    color: var(--accent-color);
 }
 
 .link-result-title {
@@ -1493,13 +1516,13 @@ textarea {
     margin-top: 0.5rem;
     margin-bottom: 1rem;
     background: var(--bg-secondary);
-    border: 1px solid var(--success);
+    border: 1px solid var(--success-fg);
     border-radius: var(--radius-sm);
 }
 
 .selected-issue-label {
     font-weight: 600;
-    color: var(--success);
+    color: var(--success-fg);
 }
 
 #selected-issue-info {
@@ -2394,12 +2417,12 @@ select:focus-visible {
     margin-right: 6px;
 }
 
-.status-dot-backlog { background: var(--text-muted); }
-.status-dot-todo { background: #9ca3af; }
-.status-dot-in_progress { background: #3b82f6; }
-.status-dot-in_review { background: #8b5cf6; }
-.status-dot-done { background: #22c55e; }
-.status-dot-canceled { background: #ef4444; }
+.status-dot-backlog { background: var(--status-backlog); }
+.status-dot-todo { background: var(--status-todo); }
+.status-dot-in_progress { background: var(--status-in-progress); }
+.status-dot-in_review { background: var(--status-in-review); }
+.status-dot-done { background: var(--status-done); }
+.status-dot-canceled { background: var(--status-canceled); }
 
 /* Improved inline select appearance */
 .inline-select {
@@ -2826,11 +2849,11 @@ input[type="checkbox"] {
 }
 
 /* Column status colors */
-.kanban-column[data-status="backlog"] .kanban-column-header { border-left: 3px solid var(--text-muted); }
-.kanban-column[data-status="todo"] .kanban-column-header { border-left: 3px solid #9ca3af; }
-.kanban-column[data-status="in_progress"] .kanban-column-header { border-left: 3px solid #3b82f6; }
-.kanban-column[data-status="in_review"] .kanban-column-header { border-left: 3px solid #8b5cf6; }
-.kanban-column[data-status="done"] .kanban-column-header { border-left: 3px solid #22c55e; }
+.kanban-column[data-status="backlog"] .kanban-column-header { border-left: 3px solid var(--status-backlog); }
+.kanban-column[data-status="todo"] .kanban-column-header { border-left: 3px solid var(--status-todo); }
+.kanban-column[data-status="in_progress"] .kanban-column-header { border-left: 3px solid var(--status-in-progress); }
+.kanban-column[data-status="in_review"] .kanban-column-header { border-left: 3px solid var(--status-in-review); }
+.kanban-column[data-status="done"] .kanban-column-header { border-left: 3px solid var(--status-done); }
 
 /* Activity log styles */
 .issue-activity {
@@ -3242,7 +3265,7 @@ input[type="checkbox"] {
 
 .estimate-badge.out-of-scale,
 .property-value.out-of-scale {
-    color: var(--warning, #f59e0b);
+    color: var(--warning-color);
     font-style: italic;
 }
 
@@ -3344,19 +3367,19 @@ input[type="checkbox"] {
 }
 
 /* Priority icon colors */
-.priority-urgent { color: #ef4444; }
-.priority-high { color: #f59e0b; }
-.priority-medium { color: #3b82f6; }
-.priority-low { color: #9ca3af; }
-.priority-none { color: var(--text-muted); }
+.priority-urgent { color: var(--priority-urgent); }
+.priority-high { color: var(--priority-high); }
+.priority-medium { color: var(--priority-medium); }
+.priority-low { color: var(--priority-low); }
+.priority-none { color: var(--priority-none); }
 
 /* Status icon colors */
-.status-backlog { color: var(--text-muted); }
-.status-todo { color: #9ca3af; }
-.status-in-progress { color: #f59e0b; }
-.status-in-review { color: #8b5cf6; }
-.status-done { color: #22c55e; }
-.status-canceled { color: #ef4444; }
+.status-backlog { color: var(--status-backlog); }
+.status-todo { color: var(--status-todo); }
+.status-in-progress { color: var(--status-in-progress); }
+.status-in-review { color: var(--status-in-review); }
+.status-done { color: var(--status-done); }
+.status-canceled { color: var(--status-canceled); }
 
 /* Issue identifier */
 .issue-row .issue-identifier {
@@ -3788,7 +3811,7 @@ input[type="checkbox"] {
     font-weight: 600;
     text-transform: uppercase;
     background: var(--accent-color);
-    color: var(--bg-color);
+    color: var(--bg-primary);
 }
 
 /* Stale-draft-vs-server conflict warning (CHT-1214) */
@@ -3925,7 +3948,7 @@ input[type="checkbox"] {
     width: 100%;
     min-height: 120px;
     resize: vertical;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     font-size: var(--font-base);
     line-height: 1.5;
     padding: 8px 12px;
@@ -4018,11 +4041,11 @@ input[type="checkbox"] {
 }
 
 .sprint-status-card.limbo {
-    border-color: var(--warning, #f59e0b);
+    border-color: var(--warning-color);
 }
 
 .sprint-status-card.arrears {
-    border-color: var(--error, #ef4444);
+    border-color: var(--error-color);
 }
 
 .sprint-status-header {
@@ -4050,12 +4073,12 @@ input[type="checkbox"] {
 
 .sprint-status-badge.limbo {
     background: rgba(245, 158, 11, 0.15);
-    color: var(--warning, #f59e0b);
+    color: var(--warning-color);
 }
 
 .sprint-status-badge.arrears {
     background: rgba(239, 68, 68, 0.15);
-    color: var(--error, #ef4444);
+    color: var(--error-color);
 }
 
 .sprint-status-name {
@@ -4087,11 +4110,11 @@ input[type="checkbox"] {
 }
 
 .sprint-progress-fill.arrears {
-    background: var(--error, #ef4444);
+    background: var(--error-color);
 }
 
 .sprint-progress-fill.limbo {
-    background: var(--warning, #f59e0b);
+    background: var(--warning-color);
 }
 
 .sprint-status-points {
@@ -4118,11 +4141,11 @@ input[type="checkbox"] {
     min-width: 2px;
 }
 
-.sprint-stacked-segment.status-done { background: var(--success, #22c55e); }
-.sprint-stacked-segment.status-in_review { background: #8b5cf6; }
-.sprint-stacked-segment.status-in_progress { background: var(--accent-color, #6366f1); }
-.sprint-stacked-segment.status-todo { background: var(--warning, #f59e0b); }
-.sprint-stacked-segment.status-backlog { background: var(--text-quaternary, #6b7280); }
+.sprint-stacked-segment.status-done { background: var(--status-done); }
+.sprint-stacked-segment.status-in_review { background: var(--status-in-review); }
+.sprint-stacked-segment.status-in_progress { background: var(--status-in-progress); }
+.sprint-stacked-segment.status-todo { background: var(--status-todo); }
+.sprint-stacked-segment.status-backlog { background: var(--status-backlog); }
 
 .sprint-status-counts {
     display: flex;
@@ -4135,11 +4158,11 @@ input[type="checkbox"] {
     color: var(--text-muted);
 }
 
-.sprint-count-label.status-done { color: var(--success, #22c55e); }
-.sprint-count-label.status-in_review { color: #8b5cf6; }
-.sprint-count-label.status-in_progress { color: var(--accent-color, #6366f1); }
-.sprint-count-label.status-todo { color: var(--warning, #f59e0b); }
-.sprint-count-label.status-backlog { color: var(--text-quaternary, #6b7280); }
+.sprint-count-label.status-done { color: var(--status-done); }
+.sprint-count-label.status-in_review { color: var(--status-in-review); }
+.sprint-count-label.status-in_progress { color: var(--status-in-progress); }
+.sprint-count-label.status-todo { color: var(--status-todo); }
+.sprint-count-label.status-backlog { color: var(--status-backlog); }
 
 .dashboard-activity {
     margin-bottom: 24px;
@@ -4606,7 +4629,7 @@ input[type="checkbox"] {
     /* Extend background edge-to-edge, keep content aligned */
     margin: 0 -40px;
     padding: 12px 40px;
-    background: var(--bg-color);
+    background: var(--bg-primary);
     border-top: 1px solid var(--border-color);
     z-index: 5;
 }
@@ -5794,7 +5817,7 @@ input[type="checkbox"] {
 }
 
 .settings-hint a {
-    color: var(--accent);
+    color: var(--accent-color);
 }
 
 .settings-hint a:hover {
@@ -5871,14 +5894,14 @@ input[type="checkbox"] {
 }
 
 .api-key-revoked {
-    color: var(--danger-color);
+    color: var(--error-color);
     font-weight: 500;
 }
 
 .btn-danger-outline {
     background: transparent;
-    border: 1px solid var(--danger-color);
-    color: var(--danger-color);
+    border: 1px solid var(--error-color);
+    color: var(--error-color);
     padding: 6px 12px;
     border-radius: var(--radius-sm);
     font-size: var(--font-base);
@@ -5887,7 +5910,7 @@ input[type="checkbox"] {
 }
 
 .btn-danger-outline:hover {
-    background: var(--danger-color);
+    background: var(--error-color);
     color: white;
 }
 
@@ -8053,7 +8076,7 @@ button.stat-card-link:hover .stat-note {
 }
 
 .sprint-issue-identifier {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     font-size: var(--font-sm);
     color: var(--text-muted);
     flex-shrink: 0;
@@ -8080,7 +8103,7 @@ button.stat-card-link:hover .stat-note {
 }
 
 .badge-status-active {
-    background: var(--success-bg);
+    background: var(--success-subtle);
     color: var(--success-color);
 }
 
@@ -8090,12 +8113,12 @@ button.stat-card-link:hover .stat-note {
 }
 
 .badge-status-completed {
-    background: var(--success-bg);
+    background: var(--success-subtle);
     color: var(--success-color);
 }
 
 .badge-limbo {
-    background: var(--warning-bg);
+    background: var(--warning-subtle);
     color: var(--warning-color);
 }
 
@@ -8285,7 +8308,7 @@ button.stat-card-link:hover .stat-note {
     width: 18px;
     height: 18px;
     cursor: pointer;
-    accent-color: var(--primary-color);
+    accent-color: var(--accent-color);
 }
 
 /* Update grid when checkbox is present */
@@ -8295,7 +8318,7 @@ button.stat-card-link:hover .stat-note {
 
 .document-list-item.selected {
     background: var(--bg-tertiary);
-    border-color: var(--primary-color);
+    border-color: var(--accent-color);
 }
 
 .badge-small {
@@ -8736,7 +8759,7 @@ button.stat-card-link:hover .stat-note {
 }
 
 .epic-identifier {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     font-size: var(--font-base);
     color: var(--text-muted);
     white-space: nowrap;
@@ -9466,7 +9489,7 @@ button.stat-card-link:hover .stat-note {
     flex: 1;
     min-width: 0;
     padding: 6px 10px;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     font-size: var(--font-base);
     color: var(--text-primary);
     background: var(--bg-secondary);
@@ -9588,7 +9611,7 @@ button.stat-card-link:hover .stat-note {
 }
 
 .query-col-identifier {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     white-space: nowrap;
 }
 
@@ -9808,11 +9831,11 @@ body.theme-light .picker-popover {
     flex-shrink: 0;
     background: var(--text-muted);
 }
-.dash-group-dot.status-in_progress { background: var(--warning-color); }
-.dash-group-dot.status-in_review { background: #8b5cf6; }
-.dash-group-dot.status-todo { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-secondary); }
-.dash-group-dot.status-backlog { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
-.dash-group-dot.status-done { background: var(--success-color); }
+.dash-group-dot.status-in_progress { background: var(--status-in-progress); }
+.dash-group-dot.status-in_review { background: var(--status-in-review); }
+.dash-group-dot.status-todo { background: transparent; box-shadow: inset 0 0 0 1.5px var(--status-todo); }
+.dash-group-dot.status-backlog { background: transparent; box-shadow: inset 0 0 0 1.5px var(--status-backlog); }
+.dash-group-dot.status-done { background: var(--status-done); }
 #my-issues-list .issue-row {
     border-bottom: 0;
 }
@@ -10211,6 +10234,11 @@ body.theme-light {
     --success-subtle: color-mix(in srgb, var(--success-fg) 12%, var(--bg-secondary));
     --danger-subtle: color-mix(in srgb, var(--danger-fg) 10%, var(--bg-secondary));
     --danger-border: color-mix(in srgb, var(--danger-fg) 45%, var(--border-color));
+    --warning-subtle: color-mix(in srgb, var(--warning-color) 14%, var(--bg-secondary));
+    /* These read a token light theme redefines, so they are declared on
+       both scopes too (CHT-2042). */
+    --status-backlog: var(--text-muted);
+    --priority-none: var(--text-muted);
 }
 
 /* ============================================================================
@@ -10730,3 +10758,108 @@ body.theme-light {
 .timeline-note { margin-top: 0; }
 .timeline-note .markdown-body { margin-top: 2px; font-size: var(--font-sm); }
 .timeline-note .markdown-body > :last-child { margin-bottom: 0; }
+
+/* ============================================================================
+   Shared components (CHT-2040). Generic names, never tab-prefixed; every
+   surface uses these rather than inventing its own. Colour is tokens only.
+   ============================================================================ */
+
+/* Section label: .section-header > h3 (uppercase, muted) + .section-count,
+   defined above. Use it for every grouped list heading. */
+
+/* Meter: a thin bar for progress or budget. Neutral by default; a state
+   modifier on .meter colours the fill. Put the "9 of 16" in .meter-label. */
+.meter {
+    position: relative;
+    height: 4px;
+    min-width: 40px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+}
+.meter-fill {
+    height: 100%;
+    background: var(--text-secondary);
+    border-radius: inherit;
+    transition: width var(--transition-normal);
+}
+.meter.is-accent .meter-fill { background: var(--accent-color); }
+.meter.is-done .meter-fill { background: var(--success-fg); }
+.meter.is-near .meter-fill,
+.meter.is-limbo .meter-fill { background: var(--warning-color); }
+.meter.is-over .meter-fill { background: var(--danger-fg); }
+.meter-label {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Badge variants on the .badge base. State colour only: accent is "needs
+   you", success is done, warning is near or limbo, danger is arrears or
+   sent back. */
+.badge-neutral { background: var(--bg-tertiary); color: var(--text-secondary); }
+.badge-accent { background: var(--accent-subtle); color: var(--accent-fg); }
+.badge-success { background: var(--success-subtle); color: var(--success-fg); }
+.badge-warning { background: var(--warning-subtle); color: var(--warning-color); }
+.badge-danger { background: var(--danger-subtle); color: var(--danger-fg); }
+
+/* State dot: a 6px mark beside a name. */
+.state-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: var(--radius-circle);
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+.state-dot.is-accent { background: var(--accent-color); }
+.state-dot.is-done { background: var(--success-fg); }
+.state-dot.is-near,
+.state-dot.is-limbo { background: var(--warning-color); }
+.state-dot.is-over { background: var(--danger-fg); }
+
+/* Two-line list row: title over a muted sub-line, optional leading and
+   trailing cells. Layout (grid columns) is the surface's call. */
+.list-row-2line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-xs) var(--space-lg);
+    padding: var(--space-md) var(--space-lg);
+    border-bottom: 1px solid var(--border-color);
+}
+.list-row-2line:hover { background: var(--row-hover); }
+.list-row-title {
+    color: var(--text-primary);
+    font-size: var(--font-base);
+    font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.list-row-sub {
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.list-row-right {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    justify-self: end;
+}
+.list-row-action {
+    color: var(--accent-fg);
+    font-size: var(--font-sm);
+    font-weight: 500;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+.list-row-action:hover { text-decoration: underline; }
