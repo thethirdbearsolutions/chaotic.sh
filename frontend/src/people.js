@@ -4,8 +4,12 @@
  * The roster (`GET /teams/{id}/roster`, CHT-1980) lists people and agents
  * alike, each with the identity they wrote for themselves: name, avatar,
  * pronouns, tagline and a markdown bio (CHT-1979). `/people` shows it as
- * cards; `/people/{id}` is one member's page. Every member edits their own
+ * rows; `/people/{id}` is one member's page. Every member edits their own
  * profile there, and a person edits the profiles of the agents they own.
+ *
+ * Since CHT-2044 this is the one home for people and agents: the Team view
+ * folded in here (invitations, Edit team, Invite), and an agent's page
+ * carries its access, credentials and owner actions (agent-profile.js).
  *
  * Self-contained on purpose: the router, app.js and the page template
  * only register the view, its route and its nav item.
@@ -20,6 +24,9 @@ import { navigateTo, saveScrollPosition, setActiveNav, navigateToIssueByIdentifi
 import { renderDescriptionContent } from './rich-text.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { updateUserInfo } from './auth.js';
+import { isCurrentUserAdmin, getMembers, loadTeamInvitations, loadTeamMembers } from './teams.js';
+import { renderAgentSections, loadAgentCredentials, revokeAgentKey, canManageAgent, agentScope, agentFor } from './agent-profile.js';
+import { revokeConnection } from './connected-apps.js';
 
 // The server's caps (app.schemas.user.PROFILE_LIMITS); the server enforces
 // them, these only stop the form from sending what it would refuse.
@@ -27,6 +34,8 @@ export const PROFILE_LIMITS = { bio: 4000, pronouns: 40, tagline: 120, name: 255
 
 let roster = [];
 let rosterTeamId = null;
+// user id -> their in-progress issues, for the roster's "working on" line.
+let working = new Map();
 let showIdle = false;
 let loadRequestId = 0;
 let editingId = null;
@@ -47,6 +56,7 @@ export function getRoster() {
 export function resetPeople() {
     roster = [];
     rosterTeamId = null;
+    working = new Map();
     showIdle = false;
     editingId = null;
     editingInitial = null;
@@ -72,10 +82,30 @@ function refreshCached(teamId, entry) {
 
 function rosterSkeleton() {
     return Array(4).fill(0).map(() => `
-        <div class="person-card person-card-skeleton">
+        <div class="list-row-2line person-row-skeleton">
             <div class="skeleton skeleton-title"></div>
         </div>
     `).join('');
+}
+
+/**
+ * What each teammate is working on: one request for the team's
+ * in-progress issues, grouped by assignee. A failure leaves the lines out.
+ */
+async function fetchWorking(teamId) {
+    try {
+        const issues = await api.getTeamIssues(teamId, { status: ['in_progress'], sort_by: 'updated', order: 'desc', limit: 200 });
+        const byAssignee = new Map();
+        for (const issue of issues || []) {
+            if (!issue.assignee_id) continue;
+            if (!byAssignee.has(issue.assignee_id)) byAssignee.set(issue.assignee_id, []);
+            byAssignee.get(issue.assignee_id).push(issue);
+        }
+        return byAssignee;
+    } catch (e) {
+        console.error('Failed to load what the team is working on:', e);
+        return new Map();
+    }
 }
 
 /** The `/people` view: load the current team's roster and show it. */
@@ -91,11 +121,16 @@ export async function loadPeople() {
     }
     const toggle = document.getElementById('people-show-idle');
     if (toggle) toggle.checked = showIdle;
+    // The viewer's role gates Invite, Edit team and the invitations list.
+    loadTeamMembers().then(() => {
+        if (requestId === loadRequestId && isCurrentUserAdmin()) loadTeamInvitations();
+    });
     try {
-        const fetched = await fetchRoster(team.id, includeIdle);
+        const [fetched, work] = await Promise.all([fetchRoster(team.id, includeIdle), fetchWorking(team.id)]);
         if (requestId !== loadRequestId) return;
         roster = fetched;
         rosterTeamId = team.id;
+        working = work;
         renderPeople();
     } catch (e) {
         if (requestId !== loadRequestId) return;
@@ -124,22 +159,51 @@ export function rosterRole(entry) {
     return parts.join(' ');
 }
 
-function personCard(entry) {
+/** The muted line under a roster name: what they're on, else who they are. */
+function rowSub(entry) {
+    const issues = working.get(entry.user_id) || [];
+    if (issues.length) {
+        const [first] = issues;
+        const more = issues.length > 1 ? ` and ${issues.length - 1} more` : '';
+        return `<span class="status-dot status-dot-in_progress" aria-hidden="true"></span>Working on ${escapeHtml(first.identifier)} ${escapeHtml(first.title)}${more}`;
+    }
+    if (entry.is_agent) {
+        const owner = entry.owner_name ? `Agent of ${escapeHtml(entry.owner_name)}` : 'Agent';
+        return `${owner}${entry.idle ? ' · idle' : ''}`;
+    }
+    return entry.tagline ? escapeHtml(entry.tagline) : escapeHtml(rosterRole(entry));
+}
+
+function rosterRow(entry) {
     const id = escapeAttr(entry.user_id);
-    const pronouns = entry.pronouns ? `<span class="person-pronouns">${escapeHtml(entry.pronouns)}</span>` : '';
-    const handle = entry.mention_handle ? `<div class="person-handle">@${escapeHtml(entry.mention_handle)}</div>` : '';
-    const tagline = entry.tagline ? `<div class="person-tagline">${escapeHtml(entry.tagline)}</div>` : '';
+    const handle = entry.mention_handle ? ` <span class="person-row-handle">@${escapeHtml(entry.mention_handle)}</span>` : '';
+    const badges = [];
+    if (entry.is_agent) {
+        badges.push(`<span class="badge badge-neutral">${escapeHtml(agentScope(entry.project_id))}</span>`);
+        if (entry.kind === 'service' || agentFor(entry)?.can_register) badges.push('<span class="badge badge-accent">Registrar</span>');
+        else if (entry.kind === 'session') badges.push('<span class="badge badge-neutral">Session</span>');
+    } else if (entry.role && entry.role !== 'member') {
+        badges.push(`<span class="badge badge-neutral">${escapeHtml(rosterRole(entry))}</span>`);
+    }
     return `
-        <a class="person-card${entry.is_agent ? ' person-card-agent' : ''}${entry.idle ? ' person-card-idle' : ''}"
+        <a class="list-row-2line person-row${entry.idle ? ' person-row-idle' : ''}"
            href="/people/${id}" data-action="view-person" data-user-id="${id}">
-            <span class="person-card-avatar" aria-hidden="true">${renderAvatar(entry, 'avatar person-avatar')}</span>
-            <div class="person-card-body">
-                <div class="person-name">${escapeHtml(entry.name)}${pronouns}</div>
-                ${handle}
-                ${tagline}
-                <div class="person-role">${escapeHtml(rosterRole(entry))}</div>
-            </div>
+            <span class="person-row-avatar" aria-hidden="true">${renderAvatar(entry, `avatar person-avatar${entry.is_agent ? ' person-avatar-agent' : ''}`)}</span>
+            <span class="list-row-main">
+                <span class="list-row-title">${escapeHtml(entry.name)}${handle}</span>
+                <span class="list-row-sub">${rowSub(entry)}</span>
+            </span>
+            <span class="list-row-right">${badges.join('')}</span>
         </a>
+    `;
+}
+
+function rosterSection(label, entries, empty, extra = '') {
+    return `
+        <div class="section-header people-section-header">
+            <h3>${label} <span class="section-count">${entries.length}</span></h3>${extra}
+        </div>
+        <div class="people-rows">${entries.map(rosterRow).join('') || `<p class="people-empty">${empty}</p>`}</div>
     `;
 }
 
@@ -151,12 +215,8 @@ export function renderPeople() {
     const agents = roster.filter(r => r.is_agent);
     const me = getCurrentUser();
     const edit = me ? `<button class="btn btn-secondary btn-small" data-action="edit-profile" data-user-id="${escapeAttr(me.id)}">Edit your profile</button>` : '';
-    list.innerHTML = `
-        <div class="people-section-header"><h3>People</h3>${edit}</div>
-        <div class="people-grid">${people.map(personCard).join('') || '<p class="people-empty">No one yet.</p>'}</div>
-        <div class="people-section-header"><h3>Agents</h3></div>
-        <div class="people-grid">${agents.map(personCard).join('') || '<p class="people-empty">No agents yet.</p>'}</div>
-    `;
+    list.innerHTML = rosterSection('Humans', people, 'No one yet.', edit)
+        + rosterSection('Agents', agents, 'No agents yet.');
 }
 
 /** May the viewer edit this entry? Their own, or an agent they own. */
@@ -272,12 +332,59 @@ export function renderPerson(entry, { withIssues = true } = {}) {
             </div>
         </div>
         ${bio}
-        <section class="person-work">
-            <h3>Working on</h3>
-            <div id="person-issues" class="person-issues"><div class="skeleton skeleton-title"></div></div>
-        </section>
+        <div class="person-sections">
+            <section class="person-work">
+                <div class="section-header"><h3>Working on</h3></div>
+                <div id="person-issues" class="person-issues"><div class="skeleton skeleton-title"></div></div>
+            </section>
+            ${entry.is_agent ? renderAgentSections(entry, roster) : memberSection(entry)}
+        </div>
     `;
     if (withIssues) loadPersonIssues(entry.user_id);
+    if (canManageAgent(entry)) loadAgentCredentials(entry.user_id);
+}
+
+/**
+ * A person's membership, for team admins: their address and Remove (what
+ * the Team view's member list offered, CHT-2044). Owners are not removable.
+ */
+function memberSection(entry) {
+    if (!isCurrentUserAdmin()) return '';
+    const member = getMembers().find(m => m.user_id === entry.user_id);
+    if (!member) return '';
+    const removable = entry.user_id !== getCurrentUser()?.id && member.role !== 'owner';
+    return `
+        <section class="agent-profile-section">
+            <div class="section-header"><h3>Membership</h3></div>
+            <dl class="agent-access">
+                <dt>Role</dt><dd>${escapeHtml(rosterRole(entry))}</dd>
+                ${member.user_email ? `<dt>Email</dt><dd>${escapeHtml(member.user_email)}</dd>` : ''}
+            </dl>
+            ${removable ? `<div class="agent-profile-actions"><button class="btn btn-danger-outline" data-action="remove-member" data-user-id="${escapeAttr(entry.user_id)}">Remove from team</button></div>` : ''}
+        </section>
+    `;
+}
+
+/** Redraw the profile shown, if it is this member's, after it changed. */
+function onAgentChanged(event) {
+    const { agentId, deleted } = event.detail || {};
+    if (deleted) {
+        roster = roster.filter(r => r.user_id !== agentId);
+        if (showingProfileOf(agentId)) navigateTo('people');
+        return;
+    }
+    if (showingProfileOf(agentId) && shownEntry) renderPerson(shownEntry);
+}
+
+function onMemberRemoved(event) {
+    const { userId } = event.detail || {};
+    roster = roster.filter(r => r.user_id !== userId);
+    if (showingProfileOf(userId)) navigateTo('people');
+}
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('chaotic:agent-changed', onAgentChanged);
+    window.addEventListener('chaotic:member-removed', onMemberRemoved);
 }
 
 // Open work assigned to them, most active first: what to ask them about.
@@ -632,6 +739,15 @@ registerActions({
         if (event.type !== 'click' || opensInNewTab(event)) return;
         event.preventDefault();
         navigateToIssueByIdentifier(data.identifier);
+    },
+    'revoke-agent-key': (event, data) => {
+        if (event.type !== 'click') return;
+        revokeAgentKey(data.keyId, data.agentId);
+    },
+    'revoke-agent-connection': async (event, data) => {
+        if (event.type !== 'click') return;
+        await revokeConnection(data.connectionId, data.connectionName);
+        loadAgentCredentials(data.agentId);
     },
     'back-to-roster': (event) => {
         if (event.type !== 'click' || opensInNewTab(event)) return;

@@ -416,7 +416,7 @@ describe('Keyboard Handler', () => {
             it.each([
                 ['p', 'projects'],
                 ['s', 'sprints'],
-                ['t', 'team'],
+                ['t', 'people'],
                 ['e', 'epics'],
                 ['a', 'approvals'],
                 ['w', 'inbox'],
@@ -464,10 +464,10 @@ describe('Keyboard Handler', () => {
             expect(actions.navigateTo).toHaveBeenCalledWith('documents');
         });
 
-        it('g then t navigates to team', () => {
+        it('g then t navigates to people', () => {
             handler(makeEvent('g'));
             handler(makeEvent('t'));
-            expect(actions.navigateTo).toHaveBeenCalledWith('team');
+            expect(actions.navigateTo).toHaveBeenCalledWith('people');
         });
 
         // CHT-1215: help overlay/command palette advertised these but the switch

@@ -27,6 +27,9 @@ vi.mock('./api.js', () => ({
     updateMe: vi.fn(),
     updateAgent: vi.fn(),
     getTeamIssues: vi.fn(),
+    getAgentKeys: vi.fn(),
+    getConnections: vi.fn(),
+    revokeApiKey: vi.fn(),
     uploadAvatar: vi.fn(),
     deleteAvatar: vi.fn(),
   },
@@ -51,6 +54,19 @@ vi.mock('./router.js', () => ({
 
 vi.mock('./auth.js', () => ({ updateUserInfo: vi.fn() }));
 
+const mockIsAdmin = vi.fn(() => false);
+const mockMembers = vi.fn(() => []);
+vi.mock('./teams.js', () => ({
+  isCurrentUserAdmin: (...a) => mockIsAdmin(...a),
+  getMembers: (...a) => mockMembers(...a),
+  loadTeamMembers: vi.fn(() => Promise.resolve()),
+  loadTeamInvitations: vi.fn(() => Promise.resolve()),
+}));
+const mockAgents = vi.fn(() => []);
+vi.mock('./agents.js', () => ({ getAgents: (...a) => mockAgents(...a) }));
+vi.mock('./projects.js', () => ({ getProjects: vi.fn(() => [{ id: 'p-1', key: 'CHT' }]) }));
+vi.mock('./connected-apps.js', () => ({ revokeConnection: vi.fn(() => Promise.resolve()) }));
+
 const ADA = {
   user_id: 'u-ada', name: 'Ada', avatar_url: null, pronouns: 'she/her', tagline: 'Founder',
   bio: 'Builds **things**.', mention_handle: 'ada', is_agent: false, role: 'owner',
@@ -74,7 +90,7 @@ function setupDom() {
         <input type="checkbox" id="people-show-idle">
         <div id="people-list"></div>
       </div>
-      <div id="team-view" class="view"></div>
+      <div id="settings-view" class="view"></div>
     </main>
     <div id="modal-title"></div>
     <div id="modal-content"></div>
@@ -90,6 +106,11 @@ beforeEach(() => {
   setCurrentUser({ id: 'u-ada', name: 'Ada', avatar_url: null });
   api.getTeamRoster.mockResolvedValue([ADA, SAM, PIPER]);
   api.getTeamIssues.mockResolvedValue([]);
+  api.getAgentKeys.mockResolvedValue([]);
+  api.getConnections.mockResolvedValue([]);
+  mockIsAdmin.mockReturnValue(false);
+  mockMembers.mockReturnValue([]);
+  mockAgents.mockReturnValue([]);
 });
 
 describe('loadPeople', () => {
@@ -97,9 +118,9 @@ describe('loadPeople', () => {
     await loadPeople();
 
     expect(api.getTeamRoster).toHaveBeenCalledWith('team-1', { includeIdle: false });
-    const cards = [...document.querySelectorAll('.person-card')].map(c => c.dataset.userId);
+    const cards = [...document.querySelectorAll('.person-row')].map(c => c.dataset.userId);
     expect(cards).toEqual(['u-ada', 'u-sam', 'a-piper']);
-    expect(document.querySelector('.person-card').getAttribute('href')).toBe('/people/u-ada');
+    expect(document.querySelector('.person-row').getAttribute('href')).toBe('/people/u-ada');
   });
 
   it('never renders a teammate’s text as HTML', async () => {
@@ -157,7 +178,7 @@ describe('loadPeople', () => {
     resolveFirst([ADA, SAM, PIPER]);
     await first;
 
-    expect(document.querySelectorAll('.person-card')).toHaveLength(1);
+    expect(document.querySelectorAll('.person-row')).toHaveLength(1);
   });
 });
 
@@ -655,7 +676,7 @@ describe('profile photos', () => {
 
     await loadPeople();
 
-    expect(document.querySelector('.person-card img').getAttribute('src')).toBe(`/api/avatars/${SHA}`);
+    expect(document.querySelector('.person-row img').getAttribute('src')).toBe(`/api/avatars/${SHA}`);
   });
 });
 
@@ -707,5 +728,160 @@ describe('resizePhoto', () => {
     vi.spyOn(document, 'createElement').mockReturnValueOnce(fakeCanvas([]));
 
     await expect(resizePhoto(new File(['x'], 'me.png'))).rejects.toThrow('could not convert');
+  });
+});
+
+// One home per agent (CHT-2044).
+describe('the roster as one home', () => {
+  it('shows what each teammate is working on, from one request', async () => {
+    api.getTeamIssues.mockResolvedValue([
+      { identifier: 'CHT-1', title: 'Ship it', assignee_id: 'a-piper', status: 'in_progress' },
+      { identifier: 'CHT-2', title: 'And this', assignee_id: 'a-piper', status: 'in_progress' },
+    ]);
+    await loadPeople();
+    expect(api.getTeamIssues).toHaveBeenCalledTimes(1);
+    expect(api.getTeamIssues).toHaveBeenCalledWith('team-1', expect.objectContaining({ status: ['in_progress'] }));
+    const piper = document.querySelector('.person-row[data-user-id="a-piper"]');
+    expect(piper.textContent).toContain('Working on CHT-1 Ship it and 1 more');
+  });
+
+  it('still shows the roster when the working-on request fails', async () => {
+    api.getTeamIssues.mockRejectedValue(new Error('down'));
+    await loadPeople();
+    expect(document.querySelectorAll('.person-row')).toHaveLength(3);
+  });
+
+  it('labels agents with their scope and a registrar as one', async () => {
+    mockAgents.mockReturnValue([{ id: 'a-piper', can_register: true }]);
+    api.getTeamRoster.mockResolvedValue([ADA, { ...PIPER, project_id: 'p-1' }]);
+    await loadPeople();
+    const piper = document.querySelector('.person-row[data-user-id="a-piper"]');
+    expect(piper.textContent).toContain('Project CHT');
+    expect(piper.textContent).toContain('Registrar');
+  });
+
+  it('heads the sections Humans and Agents with counts', async () => {
+    await loadPeople();
+    const heads = [...document.querySelectorAll('#people-list .section-header h3')].map(h => h.textContent.replace(/\s+/g, ' ').trim());
+    expect(heads).toEqual(['Humans 2', 'Agents 1']);
+  });
+});
+
+describe('an agent profile holds access, credentials and owner actions', () => {
+  const show = async (entry, roster = [ADA, entry]) => {
+    api.getTeamRoster.mockResolvedValue(roster);
+    await loadPeople();
+    renderPerson(entry, { withIssues: false });
+    await new Promise(r => setTimeout(r, 0));
+    return document.getElementById('person-detail-view');
+  };
+
+  it('shows scope and owner to everyone, credentials and actions only to a manager', async () => {
+    setCurrentUser({ id: 'u-sam', name: 'Sam' });
+    const view = await show(PIPER);
+    expect(view.querySelector('.agent-access').textContent).toContain('Team-wide');
+    expect(view.querySelector('.agent-access').textContent).toContain('Ada');
+    expect(view.querySelector('#agent-credentials')).toBeNull();
+    expect(view.querySelector('[data-action="delete-agent"]')).toBeNull();
+    expect(api.getAgentKeys).not.toHaveBeenCalled();
+  });
+
+  it('gives its owner the keys, its connected apps and the actions', async () => {
+    mockAgents.mockReturnValue([{ id: 'a-piper', is_active: true, can_register: false }]);
+    api.getAgentKeys.mockResolvedValue([
+      { id: 'k1', key_prefix: 'ck_ab', is_active: true, created_at: '2026-01-01T00:00:00Z', last_used_at: null },
+      { id: 'k0', key_prefix: 'ck_old', is_active: false, created_at: '2025-01-01T00:00:00Z' },
+    ]);
+    api.getConnections.mockResolvedValue([
+      { id: 'c1', acts_as: 'agent', agent: { id: 'a-piper' }, client: { name: 'An MCP app' }, created_at: '2026-01-01T00:00:00Z' },
+      { id: 'c2', acts_as: 'agent', agent: { id: 'someone-else' }, client: { name: 'Other' }, created_at: '2026-01-01T00:00:00Z' },
+    ]);
+    const view = await show(PIPER);
+    expect(api.getAgentKeys).toHaveBeenCalledWith('a-piper');
+    const creds = view.querySelector('#agent-credentials');
+    expect(creds.textContent).toContain('ck_ab');
+    expect(creds.textContent).not.toContain('ck_old');
+    expect(creds.textContent).toContain('An MCP app');
+    expect(creds.textContent).not.toContain('Other');
+    expect(creds.querySelector('[data-action="revoke-agent-key"]').dataset.keyId).toBe('k1');
+    expect(view.querySelector('[data-action="toggle-agent-registrar"]').textContent).toBe('Make registrar');
+    expect(view.querySelector('[data-action="delete-agent"]')).not.toBeNull();
+    expect(view.querySelector('[data-action="generate-agent-key"]')).not.toBeNull();
+  });
+
+  it('gives a team admin the actions on someone else\'s agent', async () => {
+    setCurrentUser({ id: 'u-sam', name: 'Sam' });
+    mockIsAdmin.mockReturnValue(true);
+    const view = await show(PIPER);
+    expect(view.querySelector('[data-action="delete-agent"]')).not.toBeNull();
+  });
+
+  it('offers no registrar toggle on a session identity, and says who registered it', async () => {
+    const reg = { ...PIPER, user_id: 'a-reg', name: 'Reg', kind: 'service' };
+    const ses = { ...PIPER, user_id: 'a-ses', name: 'Reg · main', kind: 'session' };
+    mockAgents.mockReturnValue([{ id: 'a-reg', can_register: true }, { id: 'a-ses', registered_by_id: 'a-reg' }]);
+    const view = await show(ses, [ADA, reg, ses]);
+    expect(view.querySelector('[data-action="toggle-agent-registrar"]')).toBeNull();
+    expect(view.querySelector('.agent-access').textContent).toContain('Registered by');
+    expect(view.querySelector('.agent-access').textContent).toContain('Reg');
+  });
+
+  it('lists the sessions a registrar registered', async () => {
+    const reg = { ...PIPER, user_id: 'a-reg', name: 'Reg', kind: 'service' };
+    const ses = { ...PIPER, user_id: 'a-ses', name: 'Reg · main', kind: 'session' };
+    mockAgents.mockReturnValue([{ id: 'a-reg', can_register: true }, { id: 'a-ses', registered_by_id: 'a-reg' }]);
+    const view = await show(reg, [ADA, reg, ses]);
+    expect(view.querySelector('.agent-access').textContent).toContain('Reg · main');
+    expect(view.querySelector('[data-action="toggle-agent-registrar"]').textContent).toBe('Stop being a registrar');
+  });
+
+  it('says so when the keys cannot be loaded', async () => {
+    api.getAgentKeys.mockRejectedValue(new Error('down'));
+    const view = await show(PIPER);
+    expect(view.querySelector('#agent-credentials').textContent).toContain('Couldn’t load its keys');
+  });
+
+  it('leaves the roster when the agent shown is deleted', async () => {
+    await show(PIPER);
+    window.dispatchEvent(new CustomEvent('chaotic:agent-changed', { detail: { agentId: 'a-piper', deleted: true } }));
+    expect(navigateTo).toHaveBeenCalledWith('people');
+    expect(getRoster().some(r => r.user_id === 'a-piper')).toBe(false);
+  });
+
+  it('redraws when the agent shown changes', async () => {
+    const view = await show(PIPER);
+    mockAgents.mockReturnValue([{ id: 'a-piper', can_register: true, is_active: true }]);
+    window.dispatchEvent(new CustomEvent('chaotic:agent-changed', { detail: { agentId: 'a-piper' } }));
+    expect(view.querySelector('[data-action="toggle-agent-registrar"]').textContent).toBe('Stop being a registrar');
+  });
+});
+
+describe('a person\'s membership, for admins', () => {
+  it('shows a team admin the address and Remove, never for an owner or yourself', async () => {
+    mockIsAdmin.mockReturnValue(true);
+    mockMembers.mockReturnValue([
+      { user_id: 'u-sam', role: 'member', user_email: 'sam@example.com' },
+      { user_id: 'u-ada', role: 'owner', user_email: 'ada@example.com' },
+    ]);
+    renderPerson(SAM, { withIssues: false });
+    let view = document.getElementById('person-detail-view');
+    expect(view.textContent).toContain('sam@example.com');
+    expect(view.querySelector('[data-action="remove-member"]').dataset.userId).toBe('u-sam');
+    renderPerson(ADA, { withIssues: false });
+    view = document.getElementById('person-detail-view');
+    expect(view.querySelector('[data-action="remove-member"]')).toBeNull();
+  });
+
+  it('shows a member no one\'s address', () => {
+    mockMembers.mockReturnValue([{ user_id: 'u-sam', role: 'member', user_email: 'sam@example.com' }]);
+    renderPerson(SAM, { withIssues: false });
+    expect(document.getElementById('person-detail-view').textContent).not.toContain('sam@example.com');
+  });
+
+  it('leaves a removed member\'s page', async () => {
+    await loadPeople();
+    renderPerson(SAM, { withIssues: false });
+    window.dispatchEvent(new CustomEvent('chaotic:member-removed', { detail: { userId: 'u-sam' } }));
+    expect(navigateTo).toHaveBeenCalledWith('people');
   });
 });
