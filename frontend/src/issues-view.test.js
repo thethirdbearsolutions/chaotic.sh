@@ -115,7 +115,6 @@ import {
     getGroupByValue,
     showIssuesLoadingSkeleton,
     renderDisplayMenuOptions,
-    setProjectFilter,
     setTypeFilter,
     setAssigneeFilter,
     setSprintFilter,
@@ -298,13 +297,14 @@ describe('issues-view', () => {
     // ========================================
 
     describe('FILTER_CATEGORIES', () => {
-        it('has 8 categories', () => {
-            expect(FILTER_CATEGORIES).toHaveLength(8);
+        it('has 7 categories', () => {
+            expect(FILTER_CATEGORIES).toHaveLength(7);
         });
 
-        it('includes project, status, priority, type, assignee, sprint, labels, exclude_labels', () => {
+        // The project is the sidebar switcher's scope, not a filter (CHT-2058).
+        it('includes status, priority, type, assignee, sprint, labels, exclude_labels', () => {
             const keys = FILTER_CATEGORIES.map(c => c.key);
-            expect(keys).toEqual(['project', 'status', 'priority', 'type', 'assignee', 'sprint', 'labels', 'exclude_labels']);
+            expect(keys).toEqual(['status', 'priority', 'type', 'assignee', 'sprint', 'labels', 'exclude_labels']);
         });
     });
 
@@ -317,9 +317,9 @@ describe('issues-view', () => {
             expect(getFilterCategoryCount('project')).toBe(0);
         });
 
-        it('returns 1 for project when a project is selected', () => {
+        it('does not count the project as a filter (CHT-2058)', () => {
             getCurrentProject.mockReturnValue('proj-1');
-            expect(getFilterCategoryCount('project')).toBe(1);
+            expect(getFilterCategoryCount('project')).toBe(0);
             getCurrentProject.mockReturnValue(null);
         });
 
@@ -342,6 +342,7 @@ describe('issues-view', () => {
         it('sums counts across all categories', () => {
             getCurrentProject.mockReturnValue('proj-1');
             document.querySelector('#status-filter-dropdown input[value="backlog"]').checked = true;
+            document.getElementById('issue-type-filter').value = 'bug';
             expect(getTotalFilterCount()).toBe(2);
             getCurrentProject.mockReturnValue(null);
         });
@@ -472,14 +473,14 @@ describe('issues-view', () => {
             expect(document.body.innerHTML).not.toContain('Unknown');
         });
 
-        it('renders project options', () => {
+        it('has no project options: the sidebar switcher picks the project (CHT-2058)', () => {
             getProjects.mockReturnValue([
                 { id: 'p-1', name: 'Project Alpha', color: '#ff0000' },
             ]);
-            showFilterCategoryOptions('project');
             const container = document.getElementById('filter-menu-options');
-            expect(container.innerHTML).toContain('Project Alpha');
-            expect(container.innerHTML).toContain('All Projects');
+            container.innerHTML = '';
+            showFilterCategoryOptions('project');
+            expect(container.innerHTML).not.toContain('Project Alpha');
         });
 
         it('renders sprint options from select element', () => {
@@ -504,10 +505,10 @@ describe('issues-view', () => {
     // ========================================
 
     describe('renderFilterMenuCategories', () => {
-        it('renders all 8 categories', () => {
+        it('renders all 7 categories', () => {
             renderFilterMenuCategories();
             const container = document.getElementById('filter-menu-categories');
-            expect(container.querySelectorAll('.filter-menu-category')).toHaveLength(8);
+            expect(container.querySelectorAll('.filter-menu-category')).toHaveLength(7);
         });
 
         it('marks active category', () => {
@@ -520,7 +521,7 @@ describe('issues-view', () => {
         });
 
         it('shows count badge for filtered categories', () => {
-            getCurrentProject.mockReturnValue('proj-1');
+            document.querySelector('#status-filter-dropdown input[value="todo"]').checked = true;
             renderFilterMenuCategories();
             const container = document.getElementById('filter-menu-categories');
             expect(container.innerHTML).toContain('filter-menu-category-count');
@@ -530,17 +531,17 @@ describe('issues-view', () => {
         it('shows arrow indicator on every category even with no filters', () => {
             renderFilterMenuCategories();
             const container = document.getElementById('filter-menu-categories');
-            expect(container.querySelectorAll('.filter-menu-category-arrow')).toHaveLength(8);
+            expect(container.querySelectorAll('.filter-menu-category-arrow')).toHaveLength(7);
         });
 
         it('shows arrow indicator alongside count badge when filters are applied', () => {
-            getCurrentProject.mockReturnValue('proj-1');
+            document.querySelector('#status-filter-dropdown input[value="todo"]').checked = true;
             renderFilterMenuCategories();
             const container = document.getElementById('filter-menu-categories');
-            const projectCat = container.querySelector('[data-category="project"]');
-            expect(projectCat.querySelector('.filter-menu-category-count')).not.toBeNull();
-            expect(projectCat.querySelector('.filter-menu-category-arrow')).not.toBeNull();
-            expect(container.querySelectorAll('.filter-menu-category-arrow')).toHaveLength(8);
+            const statusCat = container.querySelector('[data-category="status"]');
+            expect(statusCat.querySelector('.filter-menu-category-count')).not.toBeNull();
+            expect(statusCat.querySelector('.filter-menu-category-arrow')).not.toBeNull();
+            expect(container.querySelectorAll('.filter-menu-category-arrow')).toHaveLength(7);
         });
     });
 
@@ -608,7 +609,7 @@ describe('issues-view', () => {
             document.getElementById('filter-menu-categories').innerHTML = '';
             showFilterCategories();
             const container = document.getElementById('filter-menu-categories');
-            expect(container.querySelectorAll('.filter-menu-category')).toHaveLength(8);
+            expect(container.querySelectorAll('.filter-menu-category')).toHaveLength(7);
         });
 
         it('toggleFilterMenu opens on the category pane, not a stale options pane', () => {
@@ -1002,19 +1003,27 @@ describe('issues-view', () => {
         });
 
         it('shows chips when filters are active', () => {
+            document.getElementById('issue-type-filter').value = 'bug';
+
+            updateFilterChips();
+
+            const container = document.getElementById('filter-chips-row');
+            expect(container.classList.contains('hidden')).toBe(false);
+            expect(container.innerHTML).toContain('Type');
+        });
+
+        it('shows no project chip: the project is the sidebar scope (CHT-2058)', () => {
             getCurrentProject.mockReturnValue('proj-1');
             getProjects.mockReturnValue([{ id: 'proj-1', name: 'Project Alpha' }]);
 
             updateFilterChips();
 
             const container = document.getElementById('filter-chips-row');
-            expect(container.classList.contains('hidden')).toBe(false);
-            expect(container.innerHTML).toContain('Project');
-            expect(container.innerHTML).toContain('Project Alpha');
+            expect(container.innerHTML).not.toContain('Project Alpha');
         });
 
         it('shows clear all button when multiple filters', () => {
-            getCurrentProject.mockReturnValue('proj-1');
+            document.getElementById('issue-type-filter').value = 'bug';
             document.querySelector('#status-filter-dropdown input[value="todo"]').checked = true;
             getProjects.mockReturnValue([{ id: 'proj-1', name: 'Test' }]);
 
@@ -1062,7 +1071,7 @@ describe('issues-view', () => {
         });
 
         it('shows badge with count when filters active', () => {
-            getCurrentProject.mockReturnValue('proj-1');
+            document.getElementById('issue-type-filter').value = 'bug';
             document.querySelector('#status-filter-dropdown input[value="todo"]').checked = true;
 
             updateFilterCountBadge();
@@ -1942,12 +1951,13 @@ describe('issues-view', () => {
     // ========================================
 
     describe('clearAllFilters', () => {
-        it('clears project filter', () => {
+        it('leaves the project scope alone (CHT-2058)', () => {
             getCurrentProject.mockReturnValue('proj-1');
             getProjects.mockReturnValue([{ id: 'proj-1' }]);
             api.getTeamIssues.mockResolvedValue([]);
+            setCurrentProject.mockClear();
             clearAllFilters();
-            expect(setCurrentProject).toHaveBeenCalledWith(null);
+            expect(setCurrentProject).not.toHaveBeenCalled();
         });
 
         it('clears type filter', () => {
@@ -1993,11 +2003,6 @@ describe('issues-view', () => {
             getProjects.mockReturnValue([]);
             document.getElementById('filter-menu-dropdown').classList.remove('hidden');
             document.getElementById('display-menu-dropdown').classList.remove('hidden');
-        });
-
-        it('setProjectFilter closes the filter menu, matching Display-menu behavior', () => {
-            setProjectFilter('proj-1');
-            expect(document.getElementById('filter-menu-dropdown').classList.contains('hidden')).toBe(true);
         });
 
         it('setTypeFilter closes the filter menu', () => {

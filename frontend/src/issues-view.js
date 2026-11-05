@@ -20,7 +20,6 @@ import {
     setSearchDebounceTimer,
     setSelectedIssueIndex,
     getCurrentProject,
-    setCurrentProject,
     getCurrentView,
     subscribe,
 } from './state.js';
@@ -671,17 +670,6 @@ export function initFilterBar() {
 // Filter Option Toggle/Set Functions
 // ========================================
 
-export function setProjectFilter(value) {
-    setCurrentProject(value);
-    renderFilterMenuCategories();
-    showFilterCategoryOptions('project');
-    closeAllFilterMenus();
-}
-
-export function clearProjectFilter() {
-    setProjectFilter('');
-}
-
 export function setStatusPreset(preset) {
     const statusValues = preset === 'open' ? OPEN_STATUSES
         : preset === 'closed' ? CLOSED_STATUSES
@@ -849,7 +837,6 @@ export function setGroupBy(value) {
 }
 
 export function clearAllFilters() {
-    setCurrentProject(null);
     clearStatusFilter();
     clearPriorityFilter();
 
@@ -897,8 +884,6 @@ registerActions({
         const target = container?.querySelector('.filter-menu-category.active') || container?.querySelector('.filter-menu-category');
         target?.focus();
     },
-    'set-project-filter': (_event, dataset) => setProjectFilter(dataset.value),
-    'clear-project-filter': () => clearProjectFilter(),
     'clear-status-filter-new': () => clearStatusFilterNew(),
     'set-status-preset': (_event, dataset) => setStatusPreset(dataset.value),
     'show-all-statuses': () => clearStatusFilter(),

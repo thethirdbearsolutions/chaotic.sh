@@ -54,7 +54,6 @@ export function getGroupByValue() {
 // ========================================
 
 export const FILTER_CATEGORIES = [
-    { key: 'project', label: 'Project' },
     { key: 'status', label: 'Status' },
     { key: 'priority', label: 'Priority' },
     { key: 'type', label: 'Type' },
@@ -95,8 +94,6 @@ export function getStatusPreset(selected = getSelectedStatuses()) {
 
 export function getFilterCategoryCount(category) {
     switch (category) {
-        case 'project':
-            return getCurrentProject() ? 1 : 0;
         case 'status': {
             // A preset is one filter, not four (CHT-1755)
             const preset = getStatusPreset();

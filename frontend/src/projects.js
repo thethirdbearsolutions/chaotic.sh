@@ -8,7 +8,7 @@ import { escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getSavedProject, setSavedProject } from './storage.js';
 import { getCurrentTeam, getCurrentProject, setCurrentProject, subscribe } from './state.js';
-import { getProjectFromUrl, updateUrlWithProject } from './url-helpers.js';
+import { updateUrlWithProject } from './url-helpers.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo } from './router.js';
 import { renderMarkdown } from './gate-approvals.js';
@@ -21,19 +21,21 @@ let projects = [];
 // Callback for when rituals change (set by rituals-view)
 let _onRitualsChangedCallback = null;
 
-// All project filter DOM element IDs
-const PROJECT_FILTER_IDS = [
-  'project-filter',
-  'board-project-filter',
-  'sprint-project-filter',
-  'epics-project-filter',
-  'doc-project-filter',
-  'dashboard-project-filter',
-  'rituals-project-filter',
-  'approvals-project-filter',
-];
+// The one project scope picker, in the sidebar (CHT-2058). Every view
+// follows currentProject; an empty value is "All projects".
+export const PROJECT_SWITCHER_ID = 'project-switcher';
 
-// Central subscriber: sync DOM selects + localStorage when currentProject changes
+// What "All projects" is saved as, so the choice survives a reload. The
+// saved value is otherwise a project id, and no id looks like this.
+export const ALL_PROJECTS = 'all';
+
+/** Show `projectId` (or All projects for null) in the switcher. */
+export function syncProjectSwitcher(projectId = getCurrentProject()) {
+  const el = document.getElementById(PROJECT_SWITCHER_ID);
+  if (el) el.value = projectId || '';
+}
+
+// Central subscriber: sync the switcher + localStorage when currentProject changes
 subscribe((key, newValue) => {
   if (key !== 'currentProject') return;
 
@@ -42,15 +44,20 @@ subscribe((key, newValue) => {
     setSavedProject(newValue);
   }
 
-  // Sync all DOM selects
-  PROJECT_FILTER_IDS.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = newValue || '';
-  });
+  syncProjectSwitcher(newValue);
 
   // Update URL
   updateUrlWithProject(newValue || '');
 });
+
+/**
+ * Choose "All projects" on purpose: unlike a null set while loading, it is
+ * remembered across reloads.
+ */
+export function chooseAllProjects() {
+  setSavedProject(ALL_PROJECTS);
+  setCurrentProject(null);
+}
 
 // Estimate scale definitions
 const ESTIMATE_SCALES = {
@@ -204,18 +211,23 @@ export async function loadProjects() {
 
 /**
  * Initialize currentProject from the projects list: keep it if valid,
- * else URL > saved > first. Also used when the boot cache (CHT-1972)
- * supplies the list.
+ * else URL > saved > first. A saved "All projects" keeps it empty. Also
+ * used when the boot cache (CHT-1972) supplies the list.
  */
 export function chooseCurrentProject() {
   const current = getCurrentProject();
   if (current && projects.some(p => p.id === current)) return;
-  const urlProject = getProjectFromUrl();
+  const params = new URLSearchParams(window.location.search);
+  const urlProject = params.get('project');
   if (urlProject && projects.some(p => p.id === urlProject)) {
     setCurrentProject(urlProject);
     return;
   }
   const saved = getSavedProject();
+  if (saved === ALL_PROJECTS) {
+    if (current) setCurrentProject(null);
+    return;
+  }
   if (saved && projects.some(p => p.id === saved)) {
     setCurrentProject(saved);
     return;
@@ -226,42 +238,19 @@ export function chooseCurrentProject() {
 }
 
 /**
- * Update all project filter dropdowns with current project list.
- * Populates <option> elements and syncs to currentProject state.
+ * Fill the project switcher with the team's projects and show the
+ * current one. Each option carries its key as a hint, which the picker
+ * shows and matches when filtering.
  */
 export function updateProjectFilters() {
-  const allProjectsOptions =
-    '<option value="">All Projects</option>' +
+  const el = document.getElementById(PROJECT_SWITCHER_ID);
+  if (!el) return;
+  el.innerHTML =
+    '<option value="">All projects</option>' +
     projects
-      .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
+      .map((p) => `<option value="${escapeAttr(p.id)}" data-hint="${escapeAttr(p.key || '')}">${escapeHtml(p.name)}</option>`)
       .join('');
-
-  const selectProjectOptions =
-    '<option value="">Select Project</option>' +
-    projects
-      .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
-      .join('');
-
-  // Views that allow "All Projects" (empty = show all)
-  const allProjectsFilterIds = ['project-filter', 'doc-project-filter', 'dashboard-project-filter', 'epics-project-filter', 'approvals-project-filter'];
-  // Views that require a project selection
-  const selectProjectFilterIds = ['board-project-filter', 'sprint-project-filter', 'rituals-project-filter'];
-
-  allProjectsFilterIds.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.innerHTML = allProjectsOptions;
-  });
-  selectProjectFilterIds.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.innerHTML = selectProjectOptions;
-  });
-
-  // Sync all dropdowns to current project state
-  const currentProjectId = getCurrentProject();
-  PROJECT_FILTER_IDS.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = currentProjectId || '';
-  });
+  syncProjectSwitcher();
 }
 
 /**

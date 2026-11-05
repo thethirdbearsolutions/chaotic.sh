@@ -85,7 +85,7 @@ export async function loadSprints({ fromMemory = false } = {}) {
             list.innerHTML = `
                 <div class="empty-state">
                     <h3>Select a project</h3>
-                    <p>Choose a project to view its sprints</p>
+                    <p>Sprints belong to one project. Pick one in the sidebar switcher, or press P.</p>
                 </div>
             `;
         }

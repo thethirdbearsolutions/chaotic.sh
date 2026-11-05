@@ -9164,9 +9164,73 @@ body.theme-light .picker-popover {
     color: var(--text-muted);
 }
 
+/* An option's hint (a project's key, CHT-2058): muted, after the name. */
+.picker-option-text {
+    flex: 1;
+    min-width: 0;
+}
+.picker-option-hint {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+.picker-label-hint {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: var(--accent-subtle);
+    color: var(--accent-fg);
+    font-family: var(--font-mono);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+/* The sidebar's project switcher (CHT-2058): one scope for every view. */
+.project-switcher {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin: 12px 12px 0;
+}
+.project-switcher .picker-btn {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+    height: 36px;
+    padding-right: 32px;
+    background: var(--bg-primary);
+}
+.project-switcher .picker-label {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+}
+.project-switcher-key {
+    position: absolute;
+    right: 28px;
+    pointer-events: none;
+    padding: 0 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: var(--font-xs);
+    line-height: 1.4;
+    color: var(--text-muted);
+}
+/* The chevron sits right of the P hint. */
+.project-switcher .picker-chevron {
+    position: absolute;
+    right: 10px;
+}
+
 @media (pointer: coarse) {
     .picker-btn { height: 40px; }
     .picker-option { padding: 10px 8px; }
+    .project-switcher .picker-btn { height: 40px; padding-right: 28px; }
+    .project-switcher-key { display: none; }
 }
 
 /* ========================================

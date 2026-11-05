@@ -40,14 +40,14 @@ import {
     getExcludedLabels,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
-import { loadQueryView } from './query-view.js';
+import { loadQueryView, setQueryScope } from './query-view.js';
 import { loadInbox, toggleInboxEntryElementExpand, collapseInboxExpand, archiveInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive, focusMainContent } from './keyboard.js';
 import { showInlineDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { isQuoteTooltipVisible } from './quote-comment.js';
-import { initSelectPickers } from './select-picker.js';
+import { initSelectPickers, openSelectPicker } from './select-picker.js';
 import './revisions.js';
 import {
     toggleTeamDropdown,
@@ -69,6 +69,8 @@ import {
     saveProjectSettingsRules,
     showCreateProjectRitualModal,
     setOnRitualsChanged,
+    chooseAllProjects,
+    PROJECT_SWITCHER_ID,
 } from './projects.js';
 import { getProjectFromUrl } from './url-helpers.js';
 import { resetOnboarding } from './onboarding.js';
@@ -531,13 +533,36 @@ function initSidebarNav() {
     if (fab) fab.addEventListener('click', () => showCreateIssueModal());
 }
 
+/**
+ * The sidebar switcher picked a project, or '' for all of them (CHT-2058).
+ * Query keeps its scope in its own URL, so it changes the scope there and
+ * follows on success; every other view follows currentProject.
+ */
+export function switchProject(projectId) {
+    // On a phone the switcher is in the drawer: close it to show the result.
+    closeSidebar();
+    if (getCurrentView() === 'query') {
+        setQueryScope(projectId);
+    } else if (projectId) {
+        setCurrentProject(projectId);
+    } else {
+        chooseAllProjects();
+    }
+}
+
+/** P: open the project switcher. */
+export function openProjectSwitcher() {
+    return openSelectPicker(document.getElementById(PROJECT_SWITCHER_ID));
+}
+
 // Register shared delegated actions (CHT-1120: migrated from initActionButtons)
 registerActions({
     'navigate-to': (_event, data) => {
         navigateTo(data.view);
     },
-    'set-current-project': (_event, _data, target) => {
-        setCurrentProject(target.value);
+    'switch-project': (event, _data, target) => {
+        if (event.type !== 'change') return;
+        switchProject(target.value);
     },
     'showCreateIssueModal': () => showCreateIssueModal(),
     'showCreateEpicModal': () => showCreateEpicModal(),
@@ -831,6 +856,7 @@ document.addEventListener('keydown', createKeyboardHandler({
     closeModal,
     closeSidebar,
     navigateTo,
+    openProjectSwitcher,
     showCreateIssueModal,
     showKeyboardShortcutsHelp,
     isModalOpen,

@@ -25,7 +25,7 @@ import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor, formatStatus, formatPriority, formatIssueType, formatDate } from './utils.js';
 import { showToast } from './ui.js';
 import { getCurrentProject, setCurrentProject, getCurrentTeam, getCurrentView } from './state.js';
-import { getProjects } from './projects.js';
+import { getProjects, chooseAllProjects, syncProjectSwitcher } from './projects.js';
 
 export const PAGE_SIZE = 100;
 export const DEFAULT_WHERE = 'status!=done,canceled';
@@ -290,13 +290,18 @@ function writeUrl(mode) {
     }
 }
 
-function populateProjectSelect() {
-    const select = el('query-project-filter');
-    if (!select) return;
-    const options = ['<option value="">All projects</option>']
-        .concat(getProjects().map((p) => `<option value="${escapeAttr(p.id)}">${esc(p.name)}</option>`));
-    select.innerHTML = options.join('');
-    select.value = state.teamScope ? '' : (state.projectId || '');
+/**
+ * The sidebar switcher shows the query's scope (CHT-2058): a team-wide
+ * query is "All projects", whatever project the other views last showed.
+ */
+function syncScopeToSwitcher() {
+    if (!state) return;
+    if (state.teamScope) {
+        if (getCurrentProject()) setCurrentProject(null);
+        else syncProjectSwitcher(null);
+    } else if (state.projectId !== getCurrentProject()) {
+        setCurrentProject(state.projectId);
+    }
 }
 
 function renderColumnPicker() {
@@ -449,7 +454,12 @@ export function setQueryScope(projectId) {
     showNotice(null);
     // setCurrentProject syncs ?project= with a replaceState, so it runs after
     // the new entry is pushed, not on the entry Back returns to.
-    return runQuery('push', { onSuccess: () => { if (projectId) setCurrentProject(projectId); } });
+    return runQuery('push', {
+        onSuccess: () => {
+            if (projectId) setCurrentProject(projectId);
+            else chooseAllProjects();
+        },
+    });
 }
 
 /** Show or hide a column; identifier and title cannot be hidden. */
@@ -520,7 +530,6 @@ function initListeners() {
     });
     el('query-run-btn')?.addEventListener('click', () => runWhereBox());
     el('query-copy-cli-btn')?.addEventListener('click', () => copyQueryAsCli());
-    el('query-project-filter')?.addEventListener('change', (e) => setQueryScope(e.target.value));
     el('query-columns-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
         const menu = el('query-columns-menu');
@@ -577,7 +586,7 @@ export function loadQueryView() {
     if (box) box.value = state.where === null ? DEFAULT_WHERE : state.where;
     el('query-cli-preview')?.classList.add('hidden');
     el('query-columns-menu')?.classList.add('hidden');
-    populateProjectSelect();
+    syncScopeToSwitcher();
     renderColumnPicker();
     showError(null);
     showNotice(notice);

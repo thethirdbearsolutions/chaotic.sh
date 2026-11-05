@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { enhanceSelect, initSelectPickers, isSelectPickerOpen, closeSelectPicker } from './select-picker.js';
+import { enhanceSelect, initSelectPickers, isSelectPickerOpen, closeSelectPicker, openSelectPicker } from './select-picker.js';
 
 function makeSelect(n = 3, { id = 'proj', value } = {}) {
     const opts = ['<option value="">All Projects</option>']
@@ -268,5 +268,52 @@ describe('select picker (CHT-1961)', () => {
         document.querySelector('.picker-option[data-value="p1"]').click();
         expect(seen).toEqual([['set-current-project', 'p1']]);
         document.removeEventListener('change', handler);
+    });
+
+    // The sidebar project switcher (CHT-2058) shows each project's key.
+    describe('option hints', () => {
+        function hinted() {
+            const opts = '<option value="">All projects</option>'
+                + Array.from({ length: 8 }, (_, i) => `<option value="p${i}" data-hint="K${i}">Name ${i}</option>`).join('');
+            document.body.innerHTML = `<select id="sw" data-picker aria-label="Project">${opts}</select>`;
+            return document.getElementById('sw');
+        }
+
+        it('leads the label with the hint, and keeps it out of the accessible name', () => {
+            const select = hinted();
+            const btn = enhanceSelect(select);
+            select.value = 'p3';
+            expect(btn.querySelector('.picker-label-hint').textContent).toBe('K3');
+            expect(btn.getAttribute('aria-label')).toBe('Project: Name 3');
+            select.value = '';
+            expect(btn.querySelector('.picker-label-hint')).toBeNull();
+        });
+
+        it('shows hints in the list and filters on them', () => {
+            const select = hinted();
+            const btn = enhanceSelect(select);
+            btn.click();
+            const popover = document.querySelector('.picker-popover');
+            expect(popover.querySelectorAll('.picker-option-hint')).toHaveLength(8);
+            const search = popover.querySelector('.picker-search');
+            search.value = 'k5';
+            search.dispatchEvent(new Event('input'));
+            const shown = [...popover.querySelectorAll('.picker-option')].map(li => li.dataset.value);
+            expect(shown).toEqual(['p5']);
+        });
+
+        it('openSelectPicker opens it as a click would, and refuses a plain select', () => {
+            const select = hinted();
+            expect(openSelectPicker(select)).toBe(false);
+            enhanceSelect(select);
+            expect(openSelectPicker(select)).toBe(true);
+            expect(isSelectPickerOpen()).toBe(true);
+            // A second call leaves the open picker alone.
+            expect(openSelectPicker(select)).toBe(true);
+            expect(document.querySelectorAll('.picker-popover')).toHaveLength(1);
+            select.disabled = true;
+            select._picker.sync();
+            expect(openSelectPicker(select)).toBe(false);
+        });
     });
 });
