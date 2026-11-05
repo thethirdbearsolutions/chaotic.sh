@@ -28,6 +28,7 @@ from .shared import (
     _client,
     apply_ritual_attestations,
     console,
+    fetch_all_comments,
     fetch_all_labels,
     parse_duration,
     print_ritual_prompt,
@@ -837,16 +838,21 @@ def register(cli):
 
     @issue.command("show")
     @click.argument("identifiers", nargs=-1)
+    @click.option("--last", "last", type=click.IntRange(min=1), default=None,
+                  help="Show only the newest N comments (all are shown by default)")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_show(identifiers):
+    def issue_show(identifiers, last=None):
         """Show issue details.
 
         Pass one identifier for detailed view, or multiple for a summary table.
+        Every comment is shown, oldest first; --last N keeps only the newest N
+        (the JSON then carries comment_count, the total).
 
         Examples:
             chaotic issue show CHT-123
+            chaotic issue show CHT-123 --last 5
             chaotic issue show CHT-123 CHT-124 CHT-125
         """
         m = _main()
@@ -858,7 +864,9 @@ def register(cli):
         if m.is_json_output():
             if len(identifiers) == 1:
                 iss = _client().get_issue_by_identifier(identifiers[0])
-                iss['comments'] = _client().get_comments(iss["id"])
+                comments = fetch_all_comments(iss["id"])
+                iss['comment_count'] = len(comments)
+                iss['comments'] = comments[-last:] if last else comments
                 try:
                     iss['sub_issues'] = _client().get_sub_issues(iss["id"])
                 except m.APIError:
@@ -876,7 +884,10 @@ def register(cli):
         # Single issue: show detailed view
         if len(identifiers) == 1:
             iss = _client().get_issue_by_identifier(identifiers[0])
-            comments = _client().get_comments(iss["id"])
+            comments = fetch_all_comments(iss["id"])
+            comment_total = len(comments)
+            if last:
+                comments = comments[-last:]
 
             # Build panel lines
             panel_lines_markup = [
@@ -916,7 +927,10 @@ def register(cli):
                 console.print(f"  {esc(description)}")
 
             if comments:
-                console.print("\n[bold]Comments:[/bold]")
+                if len(comments) < comment_total:
+                    console.print(f"\n[bold]Comments:[/bold] [dim](newest {esc(len(comments))} of {esc(comment_total)})[/dim]")
+                else:
+                    console.print("\n[bold]Comments:[/bold]")
                 for c in comments:
                     # Format date if available (CHT-462)
                     created_at = c.get('created_at', '')
@@ -1006,15 +1020,17 @@ def register(cli):
 
     @issue.command("view")
     @click.argument("identifiers", nargs=-1)
+    @click.option("--last", "last", type=click.IntRange(min=1), default=None,
+                  help="Show only the newest N comments (all are shown by default)")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
-    def issue_view(identifiers):
+    def issue_view(identifiers, last=None):
         """Show issue details.
 
         Alias for 'issue show'.
         """
-        issue_show.callback(identifiers)
+        issue_show.callback(identifiers, last=last)
 
     @issue.command("open")
     @click.argument("identifier")
