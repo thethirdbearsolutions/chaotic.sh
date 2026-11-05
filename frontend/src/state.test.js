@@ -21,8 +21,6 @@ import {
     setActiveFilterCategory,
     getSelectedIssueIndex,
     setSelectedIssueIndex,
-    getPendingGates,
-    setPendingGates,
 } from './state.js';
 
 describe('state', () => {
@@ -164,12 +162,6 @@ describe('state', () => {
             expect(getSelectedIssueIndex()).toBe(-1);
             setSelectedIssueIndex(5);
             expect(getSelectedIssueIndex()).toBe(5);
-        });
-
-        it('getPendingGates/setPendingGates', () => {
-            expect(getPendingGates()).toEqual([]);
-            setPendingGates([{ id: 'gate-1' }]);
-            expect(getPendingGates()).toEqual([{ id: 'gate-1' }]);
         });
     });
 });

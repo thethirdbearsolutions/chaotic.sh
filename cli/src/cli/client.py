@@ -1357,10 +1357,11 @@ class Client:
     # Inbox (CHT-1250)
     def get_inbox(
         self, team_id: str | None, unread: bool = False, skip: int = 0, limit: int = 50,
-        kind: list[str] | None = None,
+        kind: list[str] | None = None, include_archived: bool = False,
     ) -> list:
         """List the current user's inbox entries (every team when team_id is
-        None), optionally only those of the given kinds (CHT-2031)."""
+        None), optionally only those of the given kinds (CHT-2031), and
+        with include_archived the archived ones still waiting (CHT-2032)."""
         params: dict = {"skip": skip, "limit": limit}
         if team_id is not None:
             params["team_id"] = team_id
@@ -1368,6 +1369,8 @@ class Client:
             params["unread"] = "true"
         if kind:
             params["kind"] = list(kind)
+        if include_archived:
+            params["include_archived"] = "true"
         query = urlencode(params, doseq=True)
         return self._request("GET", f"/inbox?{query}")
 

@@ -16,14 +16,16 @@ import { registerActions } from './event-delegation.js';
 import {
     getCurrentTeam, getInboxEntries, setInboxEntries,
     getInboxUnreadCount, setInboxUnreadCount,
-    setSelectedInboxIndex,
+    setSelectedInboxIndex, getCurrentProject,
 } from './state.js';
+import { getProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
 import { formatRelativeTime, renderMarkdown } from './gate-approvals.js';
 import { renderArtifact, earlierRejection, isAwaitingApproval } from './ticket-gate.js';
 import { renderApprovalActions } from './components/approval-actions.js';
-import { showRejectTicketRitualModal, showCompleteTicketRitualModal } from './rituals-view.js';
+import { showRejectTicketRitualModal, showCompleteTicketRitualModal, completeGateRitual } from './rituals-view.js';
+import { loadLimboStatus } from './sprints.js';
 
 const KIND_LABELS = {
     gate_pending: 'Gate pending',
@@ -34,6 +36,13 @@ const KIND_LABELS = {
     gate_rejected: 'Rejected',
     push_device_added: 'New device',
     children_closed: 'Nothing left open',
+    sprint_ritual: 'Sprint',
+};
+
+// A kind whose badge is a shared state colour rather than its own
+// (CHT-2032): a sprint ritual holds the whole project, a warning.
+const KIND_BADGE_CLASS = {
+    sprint_ritual: 'badge badge-warning',
 };
 
 // Only entries of these kinds are read-only within a fixed request race
@@ -58,13 +67,13 @@ const reassignCommentPosted = new Map();
 
 // The kinds an entry waits on a human decision for (CHT-2031): its row
 // loads the ritual's live state when opened and can be decided in place.
-const DECISION_KINDS = new Set(['review_requested', 'gate_pending']);
+const DECISION_KINDS = new Set(['review_requested', 'gate_pending', 'sprint_ritual']);
 
 // The Inbox's type filter (CHT-2031): which kinds each choice asks the
 // server for. `all` sends no kind.
 export const INBOX_KIND_FILTERS = {
     all: null,
-    approvals: ['review_requested', 'gate_pending'],
+    approvals: ['review_requested', 'gate_pending', 'sprint_ritual'],
     mentions: ['mention'],
     assigned: ['assignment'],
 };
@@ -225,6 +234,9 @@ export async function loadInbox({ focusFirst = false, background = false } = {})
     try {
         const fetched = await api.getInbox(team.id, {
             unread: showUnreadOnly, kinds: INBOX_KIND_FILTERS[kindFilter], limit: 100,
+            // Under Approvals, a decision archived before it was made is
+            // still listed: nothing pending is unreachable (CHT-2032).
+            includeArchived: kindFilter === 'approvals',
         });
         if (requestId !== loadInboxRequestId) return; // a newer loadInbox() has since started
         // What was archived when this fetch started, before pruning: an open
@@ -233,7 +245,7 @@ export async function loadInbox({ focusFirst = false, background = false } = {})
         // reflects, and lay the rest over it.
         const archivedIds = new Set(archivedLocally.keys());
         pruneLocalState(requestId);
-        const entries = overlayLocalState(fetched || []);
+        const entries = orderForFilter(overlayLocalState(fetched || []));
 
         const intent = pendingLoadIntent;
         pendingLoadIntent = null;
@@ -771,6 +783,23 @@ export function setInboxUnreadFilter(unreadOnly) {
 export function setInboxKindFilter(kind) {
     if (!(kind in INBOX_KIND_FILTERS) || kind === kindFilter) return;
     kindFilter = kind;
+    syncKindControls();
+    loadInbox({ focusFirst: true });
+}
+
+/**
+ * Take the type filter from the address's ?kind= (CHT-2032): /approvals
+ * redirects to /inbox?kind=approvals. Call before the view's load.
+ */
+export function applyInboxKindFromUrl() {
+    const kind = new URLSearchParams(window.location.search).get('kind');
+    if (!kind || !(kind in INBOX_KIND_FILTERS) || kind === kindFilter) return;
+    kindFilter = kind;
+    syncKindControls();
+}
+
+/** The filter's buttons, Mark all read and the count, for kindFilter. */
+function syncKindControls() {
     // Mark all read marks every kind, so it is offered only on the
     // unfiltered view: under Mentions it would clear unseen approvals.
     document.querySelectorAll('[data-action="mark-all-inbox-read"]').forEach(btn => {
@@ -783,7 +812,6 @@ export function setInboxKindFilter(kind) {
         btn.classList.toggle('active', on);
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
-    loadInbox({ focusFirst: true });
 }
 
 /**
@@ -794,7 +822,7 @@ export function setInboxKindFilter(kind) {
  * failed load can be retried from the row.
  */
 async function loadDecisionDetails(entry, { force = false } = {}) {
-    if (!entry || !DECISION_KINDS.has(entry.kind) || !entry.issue_id || !entry.ritual_id) return;
+    if (!entry || !isDecisionEntry(entry)) return;
     if (entry.state === 'resolved') return; // its panel says so without the ritual
     // Every open refetches: someone else may have decided or sent it back
     // since (PR #532 review). A ready copy stays on screen meanwhile.
@@ -806,11 +834,20 @@ async function loadDecisionDetails(entry, { force = false } = {}) {
     if (force) rerenderInboxRows([entry.id]);
     let next;
     try {
-        const status = await api.getTicketRitualsStatus(entry.issue_id);
-        const ritual = (status?.pending_rituals || []).find(r => r.id === entry.ritual_id) || null;
-        const decided = ritual ? null
-            : (status?.completed_rituals || []).find(r => r.id === entry.ritual_id) || null;
-        next = { state: 'ready', ritual, decided };
+        if (entry.kind === 'sprint_ritual') {
+            // A sprint ritual lives on the project's limbo (CHT-2032).
+            const limbo = await api.getLimboStatus(entry.project_id);
+            const ritual = limbo?.in_limbo
+                ? (limbo.pending_rituals || []).find(r => r.id === entry.ritual_id) || null
+                : null;
+            next = { state: 'ready', ritual, decided: null, sprintClosed: !limbo?.in_limbo };
+        } else {
+            const status = await api.getTicketRitualsStatus(entry.issue_id);
+            const ritual = (status?.pending_rituals || []).find(r => r.id === entry.ritual_id) || null;
+            const decided = ritual ? null
+                : (status?.completed_rituals || []).find(r => r.id === entry.ritual_id) || null;
+            next = { state: 'ready', ritual, decided };
+        }
     } catch (e) {
         console.error('Failed to load ritual for inbox entry:', e);
         // Keep a ready copy over an error; the next open tries again.
@@ -819,6 +856,36 @@ async function loadDecisionDetails(entry, { force = false } = {}) {
     if (decisionDetails.get(entry.id)?.token !== token) return; // superseded or decided
     decisionDetails.set(entry.id, next);
     rerenderInboxRows([entry.id]);
+}
+
+/**
+ * Under Approvals, the sprint rituals come first (CHT-2032): they hold the
+ * whole project, and the Sprint close section sits above the day groups.
+ * The list itself is reordered, not just its rendering, so a row's index
+ * is still its entry's index for keyboard navigation.
+ */
+function orderForFilter(entries) {
+    if (kindFilter !== 'approvals') return entries;
+    const sprint = entries.filter(e => e.kind === 'sprint_ritual');
+    if (!sprint.length) return entries;
+    return [...sprint, ...entries.filter(e => e.kind !== 'sprint_ritual')];
+}
+
+/** The limbo banner follows a sprint decision made from the Inbox. */
+function refreshLimboAfterSprintDecision(projectId) {
+    if (projectId && getCurrentProject() === projectId) loadLimboStatus();
+}
+
+/** A row that waits on a decision and can load the ritual it is about. */
+function isDecisionEntry(entry) {
+    if (!DECISION_KINDS.has(entry.kind) || !entry.ritual_id) return false;
+    return entry.kind === 'sprint_ritual' ? !!entry.project_id : !!entry.issue_id;
+}
+
+/** How a decision row's ritual is decided: 'review' or 'gate'. */
+function decisionMode(entry, r) {
+    if (entry.kind === 'sprint_ritual') return r?.approval_mode === 'gate' ? 'gate' : 'review';
+    return entry.kind === 'review_requested' ? 'review' : 'gate';
 }
 
 /** Whether the server offers this entry's recipient the decision now. */
@@ -853,6 +920,10 @@ function renderDecisionBody(entry) {
     }
     const r = d.ritual;
     if (!r) {
+        if (d.sprintClosed) return status('The sprint has closed. Nothing is waiting on you here.');
+        if (entry.kind === 'sprint_ritual') {
+            return status('Already done. Nothing is waiting on you here.');
+        }
         if (d.decided) {
             const by = d.decided.attestation?.approved_by_name;
             return status(`Already decided${by ? ` by ${escapeHtml(by)}` : ''}. Nothing is waiting on you here.`);
@@ -861,14 +932,16 @@ function renderDecisionBody(entry) {
         // this ticket (its conditions or group changed), or was removed.
         return status('This ritual no longer applies to the ticket. Open it to see where it stands.');
     }
-    const isReview = entry.kind === 'review_requested';
+    const isReview = decisionMode(entry, r) === 'review';
     const rej = r.last_rejection && !r.last_rejection.superseded_at ? r.last_rejection : null;
     const asksDisclosure = r.prompt
         ? `<details class="inbox-decision-asks" data-entry-id="${escapeAttr(entry.id)}"${asksOpen.has(entry.id) ? ' open' : ''}><summary>What ${escapeHtml(r.name)} asks</summary>
                <div class="inbox-decision-asks-text markdown-body">${renderMarkdown(r.prompt)}</div></details>`
         : '';
     let state = '';
-    if (isReview && !isAwaitingApproval(r)) {
+    if (entry.kind === 'sprint_ritual' && isReview && !r.attestation) {
+        state = '<div class="inbox-decision-status">Waiting on an attestation.</div>';
+    } else if (isReview && !isAwaitingApproval(r)) {
         state = rej
             ? `<div class="inbox-decision-status">Sent back by ${escapeHtml(rej.rejected_by_name || 'someone')}: “${escapeHtml(rej.note || '')}”. Waiting on a new attestation.</div>`
             : '<div class="inbox-decision-status">Not attested any more. Waiting on a new attestation.</div>';
@@ -923,6 +996,10 @@ function decidableRitual(entry) {
     const d = decisionDetails.get(entry.id);
     const r = d?.state === 'ready' ? d.ritual : null;
     if (!r || !canDecide(entry)) return null;
+    if (entry.kind === 'sprint_ritual') {
+        if (r.approval_mode === 'gate') return !r.attestation ? r : null;
+        return r.attestation && !r.attestation.approved_at ? r : null;
+    }
     if (entry.kind === 'review_requested') return isAwaitingApproval(r) ? r : null;
     const sentBack = r.last_rejection && !r.last_rejection.superseded_at;
     return !r.attestation && !sentBack ? r : null;
@@ -935,8 +1012,22 @@ function decidableRitual(entry) {
  * server says the viewer may decide and the ritual is still waiting.
  */
 function renderDecisionActions(entry) {
-    if (!DECISION_KINDS.has(entry.kind) || !entry.issue_id) return [];
+    if (!isDecisionEntry(entry)) return [];
     const r = decidableRitual(entry);
+    if (entry.kind === 'sprint_ritual') {
+        // No ticket to comment on, and a sprint ritual cannot be sent back.
+        if (!r) return [];
+        const mode = decisionMode(entry, r);
+        return renderApprovalActions(mode, {
+            approveAction: mode === 'review' ? 'approve-inbox-entry' : 'sign-off-inbox-entry',
+            size: 'sm',
+            busy: decisionInFlight.has(entry.id),
+            data: {
+                entryId: entry.id, ritualId: r.id, projectId: entry.project_id, ritualName: r.name,
+                ...(mode === 'gate' ? { ritualArtifact: r.artifact || '' } : {}),
+            },
+        });
+    }
     const comment = canWrite(entry)
         ? `<button type="button" class="inbox-action-btn" data-action="comment-inbox-entry"
         data-entry-id="${escapeAttr(entry.id)}">Comment…</button>`
@@ -988,7 +1079,8 @@ export async function decideInboxEntry(entryId, { comment = null } = {}) {
         if (entry) showToast('This is no longer waiting on a decision from you.', 'error');
         return false;
     }
-    const isReview = entry.kind === 'review_requested';
+    const isReview = decisionMode(entry, r) === 'review';
+    const isSprint = entry.kind === 'sprint_ritual';
     decisionInFlight.add(entryId);
     setDecisionBusy(entryId, true);
     const what = `${isReview ? 'approve' : 'sign off on'} ${r.name}`;
@@ -998,7 +1090,10 @@ export async function decideInboxEntry(entryId, { comment = null } = {}) {
             // A retry after a failed approve does not post it again.
             decisionCommentPosted.set(entryId, comment);
         }
-        if (isReview) await api.approveTicketRitual(r.id, entry.issue_id);
+        if (isSprint) {
+            if (isReview) await api.approveAttestation(r.id, entry.project_id);
+            else await api.completeGateRitual(r.id, entry.project_id, comment || null);
+        } else if (isReview) await api.approveTicketRitual(r.id, entry.issue_id);
         else await api.completeTicketGateRitual(r.id, entry.issue_id, comment || null);
     } catch (e) {
         decisionInFlight.delete(entryId);
@@ -1012,6 +1107,7 @@ export async function decideInboxEntry(entryId, { comment = null } = {}) {
     decisionDetails.delete(entryId);
     decisionCommentPosted.delete(entryId);
     const ref = entry.issue_identifier ? ` on ${entry.issue_identifier}` : '';
+    if (isSprint) refreshLimboAfterSprintDecision(entry.project_id);
     showToast(`${isReview ? 'Approved' : 'Signed off on'} ${r.name}${ref}.`, 'success');
     archiveInboxEntry(entryId);
     return true;
@@ -1024,6 +1120,16 @@ export async function decideInboxEntry(entryId, { comment = null } = {}) {
  */
 function signOffInboxEntry(data) {
     if (decisionInFlight.has(data.entryId)) return;
+    const entry = getInboxEntries().find(e => e.id === data.entryId);
+    if (entry?.kind === 'sprint_ritual') {
+        // The sprint's own sign-off dialog takes the note and any artifact.
+        const entryId = data.entryId;
+        completeGateRitual(data.ritualId, data.projectId, data.ritualName, data.ritualArtifact || '', () => {
+            decisionDetails.delete(entryId);
+            archiveInboxEntry(entryId);
+        });
+        return;
+    }
     if (data.ritualArtifact) {
         const entryId = data.entryId;
         showCompleteTicketRitualModal(data.ritualId, data.issueId, data.ritualName, data.ritualArtifact, () => {
@@ -1159,7 +1265,10 @@ function renderInboxRow(entry) {
     const isUnread = !entry.read_at;
     const isExpanded = entry.id === expandedEntryId;
     const kindLabel = KIND_LABELS[entry.kind] || entry.kind;
-    const sourceRef = entry.issue_identifier || entry.document_title || '';
+    const badgeClass = KIND_BADGE_CLASS[entry.kind] || `badge badge-inbox-${entry.kind}`;
+    const project = entry.kind === 'sprint_ritual' && entry.project_id
+        ? getProjects().find(p => p.id === entry.project_id) : null;
+    const sourceRef = entry.issue_identifier || entry.document_title || project?.name || '';
     const dataAttrs = [
         `data-entry-id="${escapeAttr(entry.id)}"`,
         entry.issue_id ? `data-issue-id="${escapeAttr(entry.issue_id)}"` : '',
@@ -1182,8 +1291,9 @@ function renderInboxRow(entry) {
                     ${isUnread ? '<span class="inbox-row-unread-dot" title="Unread"></span>' : '<span class="inbox-row-dot-spacer" aria-hidden="true"></span>'}
                     <span class="inbox-row-avatar" aria-hidden="true">${escapeHtml(avatarInitial(entry.source_user_name))}</span>
                     <span class="inbox-row-header">
-                        <span class="badge badge-inbox-${escapeAttr(entry.kind)}">${escapeHtml(kindLabel)}</span>
+                        <span class="${escapeAttr(badgeClass)}">${escapeHtml(kindLabel)}</span>
                         ${sourceRef ? `<span class="inbox-row-source">${escapeHtml(sourceRef)}</span>` : ''}
+                        ${entry.archived_at ? '<span class="inbox-row-archived text-muted">archived</span>' : ''}
                     </span>
                     <span class="inbox-row-text">
                         <span class="inbox-row-title">${escapeHtml(entry.title)}</span>
@@ -1196,8 +1306,8 @@ function renderInboxRow(entry) {
                 <span class="inbox-row-hover-actions">
                     ${isUnread ? `<button type="button" class="inbox-row-action" data-action="mark-inbox-read"
                         data-entry-id="${escapeAttr(entry.id)}" title="Mark read" aria-label="Mark read">${CHECK_ICON}</button>` : ''}
-                    <button type="button" class="inbox-row-archive inbox-row-action" data-action="archive-inbox-entry"
-                        data-entry-id="${escapeAttr(entry.id)}" title="Archive (e)" aria-label="Archive">${ARCHIVE_ICON}</button>
+                    ${entry.archived_at ? '' : `<button type="button" class="inbox-row-archive inbox-row-action" data-action="archive-inbox-entry"
+                        data-entry-id="${escapeAttr(entry.id)}" title="Archive (e)" aria-label="Archive">${ARCHIVE_ICON}</button>`}
                 </span>
                 <span class="inbox-row-time">${escapeHtml(formatRelativeTime(entry.created_at))}</span>
             </div>
@@ -1218,7 +1328,7 @@ function renderExpandedPanel(entry, sourceRef, panelId) {
     const from = entry.source_user_name;
 
     const openLabel = sourceRef ? `Open ${escapeHtml(sourceRef)}` : 'Open';
-    const isDecision = DECISION_KINDS.has(entry.kind) && entry.issue_id && entry.ritual_id;
+    const isDecision = isDecisionEntry(entry);
     const actions = [
         ...(isDecision ? renderDecisionActions(entry) : []),
         canReassign
@@ -1231,7 +1341,7 @@ function renderExpandedPanel(entry, sourceRef, panelId) {
                     ${entry.issue_id ? `data-issue-id="${escapeAttr(entry.issue_id)}"` : ''}
                     ${entry.document_id ? `data-document-id="${escapeAttr(entry.document_id)}"` : ''}>${openLabel}</button>`
             : '',
-        `<button type="button" class="inbox-action-btn" data-action="archive-inbox-entry"
+        entry.archived_at ? '' : `<button type="button" class="inbox-action-btn" data-action="archive-inbox-entry"
                 data-entry-id="${escapeAttr(entry.id)}">Archive</button>`,
     ].filter(Boolean).join('');
 
@@ -1267,7 +1377,7 @@ const EMPTY_COPY = {
     },
     approvals: {
         noun: 'approvals', heading: 'Nothing to approve',
-        description: 'Reviews and gates waiting on you will show up here.',
+        description: 'Reviews, gates and sprint rituals waiting on you show up here. Rituals are the checks a project runs when tickets are claimed or closed and when a sprint closes.',
     },
     mentions: {
         noun: 'mentions', heading: 'No mentions',
@@ -1324,6 +1434,26 @@ export function inboxDayGroup(iso, now = new Date()) {
  * yesterday as Today until the next load or refresh.
  */
 function renderInboxGroups(entries) {
+    // Under Approvals, the sprint rituals are pinned above the day groups
+    // (CHT-2032); orderForFilter put them first.
+    let pinned = '';
+    if (kindFilter === 'approvals') {
+        const sprint = [];
+        while (entries.length && entries[0].kind === 'sprint_ritual') {
+            sprint.push(entries[0]);
+            entries = entries.slice(1);
+        }
+        if (sprint.length) {
+            pinned = `
+        <section class="inbox-group inbox-sprint-close" aria-labelledby="inbox-group-sprint">
+            <div class="section-header">
+                <h3 id="inbox-group-sprint">Sprint close <span class="section-count">${sprint.length}</span></h3>
+            </div>
+            <p class="text-muted">The sprint closes when these are done.</p>
+            ${sprint.map(entry => renderInboxRow(entry)).join('')}
+        </section>`;
+        }
+    }
     const groups = [];
     for (const entry of entries) {
         const label = inboxDayGroup(entry.created_at);
@@ -1331,7 +1461,7 @@ function renderInboxGroups(entries) {
         if (last && last.label === label) last.entries.push(entry);
         else groups.push({ label, entries: [entry] });
     }
-    return groups.map((g, i) => `
+    return pinned + groups.map((g, i) => `
         <section class="inbox-group" aria-labelledby="inbox-group-${i}">
             <h3 class="inbox-group-header" id="inbox-group-${i}">${escapeHtml(g.label)}</h3>
             ${g.entries.map(entry => renderInboxRow(entry)).join('')}

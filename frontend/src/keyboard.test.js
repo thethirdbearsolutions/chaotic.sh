@@ -448,7 +448,6 @@ describe('Keyboard Handler', () => {
                 ['s', 'sprints'],
                 ['t', 'people'],
                 ['e', 'epics'],
-                ['a', 'approvals'],
                 ['w', 'inbox'],
                 ['d', 'documents'],
             ])('g then %s navigates to %s when detail view is not active', (key, view) => {
@@ -514,10 +513,10 @@ describe('Keyboard Handler', () => {
             expect(actions.navigateTo).toHaveBeenCalledWith('rituals');
         });
 
-        it('g then a navigates to approvals', () => {
+        it('g then a goes nowhere: Approvals is an Inbox filter now (CHT-2032)', () => {
             handler(makeEvent('g'));
             handler(makeEvent('a'));
-            expect(actions.navigateTo).toHaveBeenCalledWith('approvals');
+            expect(actions.navigateTo).not.toHaveBeenCalled();
         });
 
         it('g then w navigates to inbox', () => {

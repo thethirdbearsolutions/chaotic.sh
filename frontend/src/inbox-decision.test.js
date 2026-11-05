@@ -4,7 +4,7 @@
  * Approve / Sign off, Comment… and Send back… when the server says the
  * viewer may decide. Plus the type filter.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('./api.js', () => ({
     api: {
@@ -17,6 +17,9 @@ vi.mock('./api.js', () => ({
         completeTicketGateRitual: vi.fn(() => Promise.resolve({})),
         createComment: vi.fn(() => Promise.resolve({ id: 'c1' })),
         markAllInboxRead: vi.fn(() => Promise.resolve({ marked_count: 0 })),
+        getLimboStatus: vi.fn(),
+        approveAttestation: vi.fn(() => Promise.resolve({})),
+        completeGateRitual: vi.fn(() => Promise.resolve({})),
     },
 }));
 vi.mock('./ui.js', () => ({
@@ -37,7 +40,10 @@ vi.mock('./gate-approvals.js', () => ({
 vi.mock('./rituals-view.js', () => ({
     showRejectTicketRitualModal: vi.fn(),
     showCompleteTicketRitualModal: vi.fn(),
+    completeGateRitual: vi.fn(),
 }));
+vi.mock('./projects.js', () => ({ getProjects: vi.fn(() => []) }));
+vi.mock('./sprints.js', () => ({ loadLimboStatus: vi.fn() }));
 vi.mock('./state.js', () => {
     let entries = [];
     let unread = 0;
@@ -48,18 +54,21 @@ vi.mock('./state.js', () => {
         getInboxUnreadCount: vi.fn(() => unread),
         setInboxUnreadCount: vi.fn(n => { unread = n; }),
         setSelectedInboxIndex: vi.fn(),
+        getCurrentProject: vi.fn(() => null),
     };
 });
 
 import { api } from './api.js';
 import { showApiError, showToast, closeModal } from './ui.js';
-import { showRejectTicketRitualModal, showCompleteTicketRitualModal } from './rituals-view.js';
-import { setInboxEntries, getInboxEntries, getInboxUnreadCount } from './state.js';
+import { showRejectTicketRitualModal, showCompleteTicketRitualModal, completeGateRitual } from './rituals-view.js';
+import { setInboxEntries, getInboxEntries, getInboxUnreadCount, getCurrentProject } from './state.js';
+import { getProjects } from './projects.js';
+import { loadLimboStatus } from './sprints.js';
 import { registerActions } from './event-delegation.js';
 import {
     renderInbox, toggleInboxEntryExpand, collapseInboxExpand, resetInboxLocalState,
     decideInboxEntry, submitInboxComment, showInboxCommentModal, setInboxKindFilter, loadInbox,
-    markAllInboxRead, setInboxUnreadFilter,
+    markAllInboxRead, setInboxUnreadFilter, applyInboxKindFromUrl,
 } from './inbox.js';
 
 const actions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
@@ -488,7 +497,8 @@ describe('the type filter', () => {
         setInboxKindFilter('approvals');
         await flush();
         expect(api.getInbox).toHaveBeenLastCalledWith('team-1', expect.objectContaining({
-            kinds: ['review_requested', 'gate_pending'],
+            kinds: ['review_requested', 'gate_pending', 'sprint_ritual'],
+            includeArchived: true,
         }));
         const approvals = document.querySelector('[data-kind="approvals"]');
         expect(approvals.classList.contains('active')).toBe(true);
@@ -497,11 +507,181 @@ describe('the type filter', () => {
 
         setInboxKindFilter('all');
         await flush();
-        expect(api.getInbox).toHaveBeenLastCalledWith('team-1', expect.objectContaining({ kinds: null }));
+        expect(api.getInbox).toHaveBeenLastCalledWith('team-1', expect.objectContaining({ kinds: null, includeArchived: false }));
     });
 
     it('ignores an unknown filter', async () => {
         setInboxKindFilter('bogus');
+        await loadInbox();
+        expect(api.getInbox).toHaveBeenLastCalledWith('team-1', expect.objectContaining({ kinds: null }));
+    });
+});
+
+describe('sprint close rituals (CHT-2032)', () => {
+    const SPRINT_REVIEW = {
+        id: 'sprint-1',
+        kind: 'sprint_ritual',
+        title: 'Review requested: retro for Sprint 4',
+        body: 'Retro notes are in the doc.',
+        project_id: 'proj-1',
+        ritual_id: 'sr-1',
+        team_id: 'team-1',
+        created_at: '2026-11-05T10:00:00Z',
+        read_at: null,
+        state: 'open',
+        actions: [{ kind: 'approve', path: '/api/rituals/sr-1/approve?project_id=proj-1' }],
+    };
+    const SPRINT_GATE = {
+        ...SPRINT_REVIEW, id: 'sprint-2', ritual_id: 'sg-1', title: 'Sign-off needed: demo for Sprint 4',
+        actions: [{ kind: 'approve', path: '/api/rituals/sg-1/complete?project_id=proj-1', note: 'optional' }],
+    };
+    const REVIEW_R = {
+        id: 'sr-1', name: 'retro', prompt: 'Did the team hold a retro?', approval_mode: 'review',
+        attestation: { attested_by_name: 'builder-bot', note: 'Retro notes are in the doc.', approved_at: null },
+    };
+    const GATE_R = { id: 'sg-1', name: 'demo', prompt: 'Was the demo given?', approval_mode: 'gate', attestation: null, artifact: null };
+
+    async function openSprintRow(entry, limbo) {
+        api.getLimboStatus.mockResolvedValue(limbo);
+        setInboxEntries([entry]);
+        renderInbox();
+        toggleInboxEntryExpand(entry.id);
+        await flush();
+        return row(entry.id);
+    }
+
+    beforeEach(() => {
+        getProjects.mockReturnValue([{ id: 'proj-1', name: 'Website' }]);
+    });
+
+    it('reads the ritual from the project limbo and names the project', async () => {
+        const r = await openSprintRow(SPRINT_REVIEW, { in_limbo: true, pending_rituals: [REVIEW_R] });
+        expect(api.getLimboStatus).toHaveBeenCalledWith('proj-1');
+        expect(api.getTicketRitualsStatus).not.toHaveBeenCalled();
+        expect(r.querySelector('.inbox-row-source').textContent).toBe('Website');
+        expect(r.querySelector('.badge').className).toContain('badge-warning');
+        expect(r.textContent).toContain('builder-bot attested');
+        expect(r.textContent).toContain('Retro notes are in the doc.');
+    });
+
+    it('offers Approve but no Send back or Comment: there is no ticket', async () => {
+        const r = await openSprintRow(SPRINT_REVIEW, { in_limbo: true, pending_rituals: [REVIEW_R] });
+        expect(r.querySelector('[data-action="approve-inbox-entry"]')).not.toBeNull();
+        expect(r.querySelector('[data-action="send-back-inbox-entry"]')).toBeNull();
+        expect(r.querySelector('[data-action="comment-inbox-entry"]')).toBeNull();
+        expect(r.querySelector('[data-action="open-inbox-full"]')).toBeNull();
+    });
+
+    it('Approve approves on the project, refreshes its limbo banner and archives', async () => {
+        getCurrentProject.mockReturnValue('proj-1');
+        await openSprintRow(SPRINT_REVIEW, { in_limbo: true, pending_rituals: [REVIEW_R] });
+        expect(await decideInboxEntry('sprint-1')).toBe(true);
+        expect(api.approveAttestation).toHaveBeenCalledWith('sr-1', 'proj-1');
+        expect(api.approveTicketRitual).not.toHaveBeenCalled();
+        expect(loadLimboStatus).toHaveBeenCalled();
+        expect(api.archiveInbox).toHaveBeenCalledWith('sprint-1');
+        getCurrentProject.mockReturnValue(null);
+    });
+
+    it('does not reload the limbo banner of another project', async () => {
+        getCurrentProject.mockReturnValue('proj-2');
+        await openSprintRow(SPRINT_REVIEW, { in_limbo: true, pending_rituals: [REVIEW_R] });
+        await decideInboxEntry('sprint-1');
+        expect(loadLimboStatus).not.toHaveBeenCalled();
+        getCurrentProject.mockReturnValue(null);
+    });
+
+    it('Sign off on a gate opens the sprint sign-off dialog, which archives on success', async () => {
+        const r = await openSprintRow(SPRINT_GATE, { in_limbo: true, pending_rituals: [GATE_R] });
+        expect(r.textContent).toContain('Waiting on a sign-off');
+        expect(r.textContent).toContain('Was the demo given?');
+        const btn = r.querySelector('[data-action="sign-off-inbox-entry"]');
+        press('sign-off-inbox-entry', { ...btn.dataset });
+        expect(completeGateRitual).toHaveBeenCalledWith('sg-1', 'proj-1', 'demo', '', expect.any(Function));
+        await completeGateRitual.mock.calls[0][4]();
+        expect(api.archiveInbox).toHaveBeenCalledWith('sprint-2');
+    });
+
+    it('says the sprint has closed when the project left limbo', async () => {
+        const r = await openSprintRow(SPRINT_REVIEW, { in_limbo: false, pending_rituals: [] });
+        expect(r.textContent).toContain('The sprint has closed');
+        expect(r.querySelector('[data-action="approve-inbox-entry"]')).toBeNull();
+    });
+
+    it('says it is done when the ritual is no longer pending', async () => {
+        const r = await openSprintRow(SPRINT_REVIEW, { in_limbo: true, pending_rituals: [GATE_R] });
+        expect(r.textContent).toContain('Already done');
+    });
+
+    it('waits on an attestation for a review nobody has attested', async () => {
+        const r = await openSprintRow(SPRINT_REVIEW, {
+            in_limbo: true, pending_rituals: [{ ...REVIEW_R, attestation: null }],
+        });
+        expect(r.textContent).toContain('Waiting on an attestation.');
+        expect(r.querySelector('[data-action="approve-inbox-entry"]')).toBeNull();
+    });
+
+    it('pins sprint rows in a Sprint close section above the day groups under Approvals', async () => {
+        api.getInbox.mockResolvedValueOnce([REVIEW, SPRINT_REVIEW, SPRINT_GATE]);
+        setInboxKindFilter('approvals');
+        await flush();
+        try {
+            const section = document.querySelector('.inbox-sprint-close');
+            expect(section.querySelector('h3').textContent).toContain('Sprint close');
+            expect(section.querySelector('.section-count').textContent).toBe('2');
+            expect(section.querySelector('p.text-muted').textContent).toBe('The sprint closes when these are done.');
+            expect([...section.querySelectorAll('.inbox-row')].map(r => r.dataset.entryId)).toEqual(['sprint-1', 'sprint-2']);
+            // Pinned first in the list itself too, so keyboard order matches.
+            expect(getInboxEntries().map(e => e.id)).toEqual(['sprint-1', 'sprint-2', 'review-1']);
+            const first = document.querySelector('#inbox-list .inbox-row');
+            expect(first.dataset.entryId).toBe('sprint-1');
+        } finally {
+            setInboxKindFilter('all');
+            await flush();
+        }
+    });
+
+    it('keeps them in the day groups on the unfiltered view', async () => {
+        api.getInbox.mockResolvedValueOnce([REVIEW, SPRINT_REVIEW]);
+        await loadInbox();
+        expect(document.querySelector('.inbox-sprint-close')).toBeNull();
+        expect(getInboxEntries().map(e => e.id)).toEqual(['review-1', 'sprint-1']);
+    });
+
+    it('marks an archived decision and offers no Archive for it', async () => {
+        setInboxEntries([{ ...REVIEW, archived_at: '2026-11-05T11:00:00Z' }]);
+        renderInbox();
+        toggleInboxEntryExpand('review-1');
+        api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [RITUAL], completed_rituals: [] });
+        await flush();
+        const r = row('review-1');
+        expect(r.querySelector('.inbox-row-archived').textContent).toBe('archived');
+        expect(r.querySelector('[data-action="archive-inbox-entry"]')).toBeNull();
+    });
+});
+
+describe('the address picks the type filter (CHT-2032)', () => {
+    afterEach(async () => {
+        window.history.replaceState({}, '', '/');
+        setInboxKindFilter('all');
+        await flush();
+    });
+
+    it('?kind=approvals turns Approvals on without loading by itself', () => {
+        document.body.insertAdjacentHTML('beforeend', `
+            <button data-action="set-inbox-kind" data-kind="all" class="active"></button>
+            <button data-action="set-inbox-kind" data-kind="approvals"></button>`);
+        window.history.replaceState({}, '', '/inbox?kind=approvals');
+        applyInboxKindFromUrl();
+        expect(api.getInbox).not.toHaveBeenCalled();
+        expect(document.querySelector('[data-kind="approvals"]').classList.contains('active')).toBe(true);
+    });
+
+    it('an unknown kind, or none, changes nothing', async () => {
+        for (const url of ['/inbox?kind=bogus', '/inbox']) {
+            window.history.replaceState({}, '', url);
+            applyInboxKindFromUrl();
+        }
         await loadInbox();
         expect(api.getInbox).toHaveBeenLastCalledWith('team-1', expect.objectContaining({ kinds: null }));
     });

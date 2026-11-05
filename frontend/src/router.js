@@ -82,7 +82,7 @@ export function getValidViews() {
 // Views that read getCurrentProject()/getCurrentView() to scope their data
 // and so should round-trip ?project= in the URL (CHT-1211 item 5). Every
 // one follows the sidebar's project switcher (CHT-2058).
-const viewsWithProject = ['issues', 'query', 'board', 'sprints', 'epics', 'documents', 'rituals', 'approvals', 'my-issues'];
+const viewsWithProject = ['issues', 'query', 'board', 'sprints', 'epics', 'documents', 'rituals', 'my-issues'];
 
 // The sidebar section each detail route belongs to, keyed by the first URL
 // segment (CHT-1752). Used only when a detail page is the first page loaded:
@@ -197,8 +197,11 @@ export function navigateTo(view, pushHistory = true, { transition = false } = {}
 
 // Backward-compat aliases for renamed routes. Team folded into People
 // (CHT-2044); its address is rewritten so a bookmark lands there for good.
-const routeAliases = { 'gate-approvals': 'approvals', team: 'people' };
-const rewrittenAliases = new Set(['team']);
+// The Approvals tab folded into the Inbox's Approvals filter (CHT-2032):
+// its addresses land there, with the filter on.
+const routeAliases = { 'gate-approvals': 'inbox', approvals: 'inbox', team: 'people' };
+const rewrittenAliases = new Set(['team', 'approvals', 'gate-approvals']);
+const aliasQuery = { approvals: 'kind=approvals', 'gate-approvals': 'kind=approvals' };
 
 /**
  * Boot (CHT-1971): before the team's data loads, show the shell of the
@@ -255,7 +258,8 @@ export function handleRoute() {
         view = parts[0];
         if (routeAliases[view]) {
             if (parts.length === 1 && rewrittenAliases.has(view)) {
-                history.replaceState({ view: routeAliases[view] }, '', `/${routeAliases[view]}${window.location.search}`);
+                const query = aliasQuery[view] || window.location.search.slice(1);
+                history.replaceState({ view: routeAliases[view] }, '', `/${routeAliases[view]}${query ? `?${query}` : ''}`);
             }
             view = routeAliases[view];
         }

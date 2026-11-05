@@ -26,7 +26,7 @@ vi.mock('./ui.js', () => ({
     showModal: vi.fn(), closeModal: vi.fn(), showMentionWarnings: vi.fn(),
 }));
 vi.mock('./issue-detail-view.js', () => ({ viewIssue: vi.fn(), noteSkippedDetailRefresh: vi.fn() }));
-vi.mock('./rituals-view.js', () => ({ showRejectTicketRitualModal: vi.fn(), showCompleteTicketRitualModal: vi.fn() }));
+vi.mock('./rituals-view.js', () => ({ showRejectTicketRitualModal: vi.fn(), showCompleteTicketRitualModal: vi.fn(), completeGateRitual: vi.fn() }));
 vi.mock('./documents.js', () => ({
     viewDocument: vi.fn(),
     refreshDocumentsListIfActive: vi.fn(),

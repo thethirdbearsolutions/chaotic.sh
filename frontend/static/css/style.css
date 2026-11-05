@@ -10953,3 +10953,13 @@ body.theme-light {
 
 /* The panel's gap spaces the line already (CHT-2081). */
 .inbox-row-expanded-panel .ticket-gate-earlier { margin-top: 0; }
+
+/* Sprint close (CHT-2032): the sprint rituals a limbo waits on, pinned
+   above the Approvals filter's day groups. */
+.inbox-sprint-close .section-header { margin: 0; padding: 0 12px; }
+.inbox-sprint-close > .text-muted {
+    font-size: var(--font-sm);
+    padding: 0 12px var(--space-md);
+    margin: 0;
+}
+.inbox-row-archived { font-size: var(--font-xs); }

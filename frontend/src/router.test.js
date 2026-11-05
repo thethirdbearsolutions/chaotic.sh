@@ -213,7 +213,6 @@ describe('router', () => {
             ['epics', '/epics?project=proj-789'],
             ['documents', '/documents?project=proj-789'],
             ['rituals', '/rituals?project=proj-789'],
-            ['approvals', '/approvals?project=proj-789'],
             ['query', '/query?project=proj-789'], // CHT-1810
         ])('includes project param for %s view', (view, expectedUrl) => {
             getProjectFromUrl.mockReturnValue('proj-789');
@@ -392,6 +391,17 @@ describe('router', () => {
             expect(replace).toHaveBeenCalledWith({ view: 'people' }, '', expect.stringMatching(/^\/people/));
             replace.mockRestore();
         });
+
+        it.each(['/approvals', '/gate-approvals'])(
+            'sends the old %s address to the Inbox with Approvals on, rewriting it (CHT-2032)', (path) => {
+                registerViews({ 'my-issues': vi.fn(), 'inbox': vi.fn() });
+                const replace = vi.spyOn(history, 'replaceState');
+                window.location.pathname = path;
+                handleRoute();
+                expect(setCurrentView).toHaveBeenCalledWith('inbox');
+                expect(replace).toHaveBeenCalledWith({ view: 'inbox' }, '', '/inbox?kind=approvals');
+                replace.mockRestore();
+            });
 
         it('routes unknown paths to my-issues', () => {
             window.location.pathname = '/nonexistent';

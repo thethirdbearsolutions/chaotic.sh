@@ -38,7 +38,7 @@ vi.mock('./issue-detail-view.js', () => ({
     viewIssue: vi.fn(),
 }));
 
-vi.mock('./rituals-view.js', () => ({ showRejectTicketRitualModal: vi.fn(), showCompleteTicketRitualModal: vi.fn() }));
+vi.mock('./rituals-view.js', () => ({ showRejectTicketRitualModal: vi.fn(), showCompleteTicketRitualModal: vi.fn(), completeGateRitual: vi.fn() }));
 vi.mock('./documents.js', () => ({
     viewDocument: vi.fn(),
 }));
@@ -47,6 +47,8 @@ vi.mock('./gate-approvals.js', () => ({
     formatRelativeTime: vi.fn(() => '2h ago'), renderMarkdown: vi.fn(s => s || ''),
 }));
 
+vi.mock('./projects.js', () => ({ getProjects: vi.fn(() => []) }));
+vi.mock('./sprints.js', () => ({ loadLimboStatus: vi.fn() }));
 vi.mock('./state.js', () => ({
     getCurrentTeam: vi.fn(),
     getInboxEntries: vi.fn(),
@@ -55,6 +57,7 @@ vi.mock('./state.js', () => ({
     setInboxUnreadCount: vi.fn(),
     getSelectedInboxIndex: vi.fn(),
     setSelectedInboxIndex: vi.fn(),
+    getCurrentProject: vi.fn(() => null),
 }));
 
 import { api } from './api.js';

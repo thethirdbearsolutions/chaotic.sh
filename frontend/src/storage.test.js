@@ -10,7 +10,6 @@ import {
     getCreateIssueDraft, setCreateIssueDraft, clearCreateIssueDraft,
     getDocumentDraft, getDocumentDraftBase, setDocumentDraft,
     getDocViewMode, setDocViewMode,
-    isApprovalsExplainerDismissed, dismissApprovalsExplainer,
 } from './storage.js';
 
 describe('storage', () => {
@@ -275,17 +274,6 @@ describe('storage', () => {
         it('stores and retrieves mode', () => {
             setDocViewMode('grid');
             expect(getDocViewMode()).toBe('grid');
-        });
-    });
-
-    describe('approvals explainer', () => {
-        it('returns false when not dismissed', () => {
-            expect(isApprovalsExplainerDismissed()).toBe(false);
-        });
-
-        it('returns true after dismissing', () => {
-            dismissApprovalsExplainer();
-            expect(isApprovalsExplainerDismissed()).toBe(true);
         });
     });
 

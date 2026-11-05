@@ -94,12 +94,6 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
-// Mock gate-approvals.js
-const mockLoadGateApprovals = vi.fn();
-vi.mock('./gate-approvals.js', () => ({
-    loadGateApprovals: (...args) => mockLoadGateApprovals(...args),
-}));
-
 // Mock documents.js (CHT-1213)
 vi.mock('./documents.js', () => ({
     refreshDocumentsListIfActive: vi.fn(),
@@ -944,13 +938,6 @@ describe('ws-handlers.js', () => {
             expect(viewIssue).toHaveBeenCalledWith('issue-1', false, { refresh: true });
         });
 
-        it('calls loadGateApprovals on approvals view', () => {
-            getCurrentView.mockReturnValue('approvals');
-
-            dispatch({ type: 'created', entity: 'attestation', data: { issue_id: 'issue-1' } });
-            expect(mockLoadGateApprovals).toHaveBeenCalled();
-        });
-
         it('defers instead of clobbering an in-progress description edit', () => {
             openIssueDetail('issue-1');
             document.getElementById('issue-detail-view').innerHTML = '<div class="description-inline-editor"></div>';
@@ -1166,12 +1153,6 @@ describe('ws-handlers.js', () => {
             getCurrentView.mockReturnValue('documents');
             dispatch({ type: 'reconnected', entity: 'connection', data: {} });
             expect(refreshDocumentsListIfActive).toHaveBeenCalled();
-        });
-
-        it('reloads gate approvals on the approvals view', () => {
-            getCurrentView.mockReturnValue('approvals');
-            dispatch({ type: 'reconnected', entity: 'connection', data: {} });
-            expect(mockLoadGateApprovals).toHaveBeenCalled();
         });
 
         it('refreshes the open issue detail', () => {

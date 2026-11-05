@@ -23,7 +23,6 @@ import { formatPriority, formatIssueType } from './utils.js';
 import { api } from './api.js';
 import { showAuthScreen } from './auth.js';
 import { forgetResults, forgetResultsUnlessOpen } from './last-result.js';
-import { loadGateApprovals } from './gate-approvals.js';
 import { loadInbox, refreshInboxUnreadCount, isInboxEventAlreadyApplied, recordInboxEvent } from './inbox.js';
 
 /**
@@ -513,9 +512,6 @@ function handleRelation(data) {
 }
 
 function handleAttestation(data) {
-    if (getCurrentView() === 'approvals') {
-        loadGateApprovals();
-    }
     if (isViewingIssueDetail(data.issue_id)) {
         refreshOpenDetail(data.issue_id);
     }
@@ -647,8 +643,6 @@ function handleReconnected() {
         }).catch(e => console.error('Failed to resync projects:', e));
     } else if (view === 'documents') {
         refreshDocumentsListIfActive();
-    } else if (view === 'approvals') {
-        loadGateApprovals();
     } else if (view === 'inbox') {
         loadInbox({ background: true });
     }

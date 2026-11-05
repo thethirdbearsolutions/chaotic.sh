@@ -295,6 +295,10 @@ class SprintService:
                 await RitualService().record_sprint_rotation(project_id, sprint.id)
                 await self._activate_next_sprint(next_sprint)
 
+        if has_rituals:
+            # Entered limbo: the admins it waits on hear of it (CHT-2032).
+            await RitualService().notify_sprint_limbo(sprint)
+
         await sprint.refresh()
         return sprint
 
@@ -418,6 +422,11 @@ class SprintService:
                     sprint.project_id, carry_budget=sprint.budget,
                 )
                 await self._activate_next_sprint(next_sprint)
+        if result:
+            # Out of limbo: none of its sprint rituals waits on anyone now,
+            # including any an admin force-cleared (CHT-2032).
+            from app.services.ritual_service import RitualService
+            await RitualService().settle_sprint_ritual_entries(sprint.project_id)
         # A loser (another request already cleared limbo and owns the
         # activation, or the sprint wasn't in limbo) just reports the row.
         await sprint.refresh()

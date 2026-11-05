@@ -64,6 +64,7 @@ RESOLVE_TIMEOUT_SECONDS = 3.0
 DEFAULT_KIND_ENABLED: dict[InboxEntryKind, bool] = {
     InboxEntryKind.GATE_PENDING: True,
     InboxEntryKind.REVIEW_REQUESTED: True,
+    InboxEntryKind.SPRINT_RITUAL: True,
     InboxEntryKind.MENTION: True,
     InboxEntryKind.ASSIGNMENT: True,
     InboxEntryKind.GATE_REJECTED: True,

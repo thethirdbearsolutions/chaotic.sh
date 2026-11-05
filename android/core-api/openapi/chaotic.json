@@ -7194,6 +7194,18 @@
             "description": "Only entries of these kinds (repeat the parameter for several)."
           },
           {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Also list archived entries that are still waiting: a decision archived before it was made stays reachable (CHT-2032).",
+              "default": false,
+              "title": "Include Archived"
+            },
+            "description": "Also list archived entries that are still waiting: a decision archived before it was made stays reachable (CHT-2032)."
+          },
+          {
             "name": "skip",
             "in": "query",
             "required": false,
@@ -12137,6 +12149,7 @@
           "agent_status",
           "gate_rejected",
           "push_device_added",
+          "sprint_ritual",
           "children_closed"
         ],
         "title": "InboxEntryKind",
