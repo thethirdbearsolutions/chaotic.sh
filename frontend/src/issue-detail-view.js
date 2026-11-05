@@ -824,7 +824,6 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     }, {
                         formatText: formatActivityText,
                         formatActor: formatActivityActor,
-                        getAssigneeById,
                     })}
 
                     <form class="comment-form comment-form-sticky" data-action="save-comment" data-issue-id="${escapeAttr(issue.id)}">
