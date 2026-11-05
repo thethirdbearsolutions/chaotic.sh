@@ -101,7 +101,6 @@
     /* Issue status and priority (CHT-2042). One colour per state, used by
        every status icon, dot, badge, bar segment and tooltip, so "in
        progress" reads the same on every tab. Tints derive from these. */
-    --status-backlog: var(--text-muted);
     --status-todo: #9ca3af;
     --status-in-progress: #f59e0b;
     --status-in-review: #8b5cf6;
@@ -112,7 +111,6 @@
     --priority-high: #f59e0b;
     --priority-medium: #3b82f6;
     --priority-low: #9ca3af;
-    --priority-none: var(--text-muted);
 }
 
 body.theme-light {
@@ -1049,16 +1047,16 @@ textarea {
 }
 
 .badge-status-backlog { background: var(--bg-tertiary); color: var(--text-secondary); }
-.badge-status-todo { background: color-mix(in srgb, var(--status-todo) 16%, var(--bg-secondary)); color: var(--status-todo); }
-.badge-status-in_progress { background: color-mix(in srgb, var(--status-in-progress) 16%, var(--bg-secondary)); color: var(--status-in-progress); }
-.badge-status-in_review { background: color-mix(in srgb, var(--status-in-review) 16%, var(--bg-secondary)); color: var(--status-in-review); }
-.badge-status-done { background: color-mix(in srgb, var(--status-done) 16%, var(--bg-secondary)); color: var(--status-done); }
-.badge-status-canceled { background: color-mix(in srgb, var(--status-canceled) 16%, var(--bg-secondary)); color: var(--status-canceled); }
+.badge-status-todo { background: color-mix(in srgb, var(--status-todo) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--status-todo) 65%, var(--text-primary)); }
+.badge-status-in_progress { background: color-mix(in srgb, var(--status-in-progress) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--status-in-progress) 65%, var(--text-primary)); }
+.badge-status-in_review { background: color-mix(in srgb, var(--status-in-review) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--status-in-review) 65%, var(--text-primary)); }
+.badge-status-done { background: color-mix(in srgb, var(--status-done) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--status-done) 65%, var(--text-primary)); }
+.badge-status-canceled { background: color-mix(in srgb, var(--status-canceled) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--status-canceled) 65%, var(--text-primary)); }
 
-.badge-priority-urgent { background: color-mix(in srgb, var(--priority-urgent) 16%, var(--bg-secondary)); color: var(--priority-urgent); }
-.badge-priority-high { background: color-mix(in srgb, var(--priority-high) 16%, var(--bg-secondary)); color: var(--priority-high); }
-.badge-priority-medium { background: color-mix(in srgb, var(--priority-medium) 16%, var(--bg-secondary)); color: var(--priority-medium); }
-.badge-priority-low { background: color-mix(in srgb, var(--priority-low) 16%, var(--bg-secondary)); color: var(--priority-low); }
+.badge-priority-urgent { background: color-mix(in srgb, var(--priority-urgent) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--priority-urgent) 65%, var(--text-primary)); }
+.badge-priority-high { background: color-mix(in srgb, var(--priority-high) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--priority-high) 65%, var(--text-primary)); }
+.badge-priority-medium { background: color-mix(in srgb, var(--priority-medium) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--priority-medium) 65%, var(--text-primary)); }
+.badge-priority-low { background: color-mix(in srgb, var(--priority-low) 14%, var(--bg-secondary)); color: color-mix(in srgb, var(--priority-low) 65%, var(--text-primary)); }
 .badge-priority-no_priority { background: var(--bg-tertiary); color: var(--text-secondary); }
 
 
@@ -2471,6 +2469,8 @@ select:focus-visible {
     align-items: center;
     gap: 8px;
     min-width: 200px;
+    /* A live toast now carries an issue title (CHT-2034) */
+    max-width: min(28rem, calc(100vw - 2rem));
 }
 
 .toast-icon {
@@ -2485,6 +2485,19 @@ select:focus-visible {
 /* One line per @mention warning (CHT-1743) */
 .toast-multiline .toast-message {
     white-space: pre-line;
+}
+
+/* Live issue toasts open the issue on click (CHT-2034) */
+.toast-message {
+    overflow-wrap: anywhere;
+}
+
+.toast-clickable .toast-message {
+    cursor: pointer;
+}
+
+.toast-clickable .toast-message:hover {
+    text-decoration: underline;
 }
 
 .toast-close {
@@ -2836,11 +2849,11 @@ input[type="checkbox"] {
 }
 
 /* Column status colors */
-.kanban-column[data-status="backlog"] .kanban-column-header { border-left: 3px solid var(--text-muted); }
-.kanban-column[data-status="todo"] .kanban-column-header { border-left: 3px solid #9ca3af; }
-.kanban-column[data-status="in_progress"] .kanban-column-header { border-left: 3px solid #3b82f6; }
-.kanban-column[data-status="in_review"] .kanban-column-header { border-left: 3px solid #8b5cf6; }
-.kanban-column[data-status="done"] .kanban-column-header { border-left: 3px solid #22c55e; }
+.kanban-column[data-status="backlog"] .kanban-column-header { border-left: 3px solid var(--status-backlog); }
+.kanban-column[data-status="todo"] .kanban-column-header { border-left: 3px solid var(--status-todo); }
+.kanban-column[data-status="in_progress"] .kanban-column-header { border-left: 3px solid var(--status-in-progress); }
+.kanban-column[data-status="in_review"] .kanban-column-header { border-left: 3px solid var(--status-in-review); }
+.kanban-column[data-status="done"] .kanban-column-header { border-left: 3px solid var(--status-done); }
 
 /* Activity log styles */
 .issue-activity {
@@ -10326,6 +10339,10 @@ body.theme-light {
     --danger-subtle: color-mix(in srgb, var(--danger-fg) 10%, var(--bg-secondary));
     --danger-border: color-mix(in srgb, var(--danger-fg) 45%, var(--border-color));
     --warning-subtle: color-mix(in srgb, var(--warning-color) 14%, var(--bg-secondary));
+    /* These read a token light theme redefines, so they are declared on
+       both scopes too (CHT-2042). */
+    --status-backlog: var(--text-muted);
+    --priority-none: var(--text-muted);
 }
 
 /* ============================================================================

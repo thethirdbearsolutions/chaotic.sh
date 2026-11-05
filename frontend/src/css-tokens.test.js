@@ -22,7 +22,7 @@ const modules = fs
 const defined = new Set([...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
 // Properties a module sets at runtime (style.setProperty('--x', ...)).
 for (const [, src] of modules) {
-    for (const m of src.matchAll(/setProperty\(\s*['"](--[a-z0-9-]+)['"]/g)) defined.add(m[1]);
+    for (const m of src.matchAll(/setProperty\(\s*['"`](--[a-z0-9-]+)['"`]/g)) defined.add(m[1]);
 }
 
 function used(text) {
@@ -53,5 +53,25 @@ describe('CSS custom properties', () => {
         for (const p of ['urgent', 'high', 'medium', 'low', 'none']) {
             expect(defined.has(`--priority-${p}`)).toBe(true);
         }
+    });
+
+    it('a :root token that reads a light-theme token is declared for light too', () => {
+        // A var() inside a custom property resolves where it is declared, so
+        // a token on :root alone that reads --text-muted keeps the dark value
+        // under body.theme-light. Declare it on both scopes instead.
+        const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+        const blocks = [...bare.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+            sel: m[1].trim(),
+            decls: [...m[2].matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)].map((d) => [d[1], d[2]]),
+        }));
+        const lightNames = new Set(blocks
+            .filter((b) => b.sel.split(',').some((x) => x.trim() === 'body.theme-light'))
+            .flatMap((b) => b.decls.map(([n]) => n)));
+        const offenders = blocks
+            .filter((b) => b.sel === ':root')
+            .flatMap((b) => b.decls)
+            .filter(([n, v]) => !lightNames.has(n) && used(v).some((r) => lightNames.has(r)))
+            .map(([n]) => n);
+        expect(offenders).toEqual([]);
     });
 });

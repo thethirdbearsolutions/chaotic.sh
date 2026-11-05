@@ -1357,7 +1357,19 @@ async def delete_issue(issue_id: str, current_user: CurrentUser):
     issue, project = await visible_issue(current_user, issue_id)
 
     # Broadcast before deleting (need the ID)
-    await broadcast_issue_event(project.team_id, "deleted", {"id": issue.id, "identifier": issue.identifier}, project_id=project.id)
+    # Title and actor let the web toast say what went and who did it (CHT-2034).
+    await broadcast_issue_event(
+        project.team_id,
+        "deleted",
+        {
+            "id": issue.id,
+            "identifier": issue.identifier,
+            "title": issue.title,
+            "deleted_by_id": current_user.id,
+            "deleted_by_name": current_user.name,
+        },
+        project_id=project.id,
+    )
 
     await issue_service.delete(issue, actor_id=current_user.id)
 
