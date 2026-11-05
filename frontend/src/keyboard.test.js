@@ -88,6 +88,19 @@ describe('Keyboard Handler', () => {
             expect(blur).toHaveBeenCalled();
         });
 
+        it('ignores shortcuts in a content-editable element, such as the rich comment editor (CHT-2028)', () => {
+            handler(makeEvent('c', { target: { tagName: 'DIV', isContentEditable: true } }));
+            expect(actions.showCreateIssueModal).not.toHaveBeenCalled();
+        });
+
+        it('lets a handled Escape alone: the field already used it (CHT-2028)', () => {
+            const blur = vi.fn();
+            handler(makeEvent('Escape', { defaultPrevented: true, target: { tagName: 'DIV', isContentEditable: true, blur } }));
+            expect(blur).not.toHaveBeenCalled();
+            handler(makeEvent('Escape', { target: { tagName: 'DIV', isContentEditable: true, blur } }));
+            expect(blur).toHaveBeenCalled();
+        });
+
         it('does not blur on non-Escape keys in input fields', () => {
             const blur = vi.fn();
             handler(makeEvent('a', { target: { tagName: 'INPUT', blur } }));

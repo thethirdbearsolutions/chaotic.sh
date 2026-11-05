@@ -10,11 +10,19 @@
 
 import { Editor, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
+import { Paragraph } from '@tiptap/extension-paragraph';
 import { Markdown } from '@tiptap/markdown';
 import { TaskList, TaskItem } from '@tiptap/extension-list';
 import { TableKit } from '@tiptap/extension-table';
 import { Placeholder } from '@tiptap/extensions';
-import Suggestion from '@tiptap/suggestion';
+import Suggestion, { exitSuggestion } from '@tiptap/suggestion';
+
+/**
+ * What the app checks before using this bundle. A tab opened before a
+ * deploy can load a newer editor bundle than its app bundle expects;
+ * bump this when createEditor's contract changes.
+ */
+export const API_VERSION = 1;
 
 /** The editor's markdown, without the trailing blank lines it adds after blocks. */
 export function getMarkdown(editor) {
@@ -26,23 +34,108 @@ export function getMarkdown(editor) {
  * the editor writes back renders the same as what came in. Writing style
  * may change (`snake\_case`, padded tables); meaning may not. `render`
  * is the app's markdown renderer, so the comparison is exactly what a
- * reader of the posted comment would see.
+ * reader of the posted comment would see. Anything that throws counts
+ * as not clean.
  */
 export function roundTripsCleanly(editor, markdown, render) {
-    if (!markdown) return true;
+    const input = (markdown || '').replace(/\s+$/, '');
+    if (!input) return true;
     const before = editor.getJSON();
     try {
-        editor.commands.setContent(markdown, { contentType: 'markdown', emitUpdate: false });
+        editor.commands.setContent(input, { contentType: 'markdown', emitUpdate: false });
         const out = getMarkdown(editor);
-        return normalizeHtml(render(out)) === normalizeHtml(render(markdown));
+        return normalizeHtml(render(out)) === normalizeHtml(render(input));
+    } catch {
+        return false;
     } finally {
-        editor.commands.setContent(before, { emitUpdate: false });
+        try {
+            editor.commands.setContent(before, { emitUpdate: false });
+        } catch {
+            // The editor keeps whatever it had; the caller treats this as not clean.
+        }
     }
 }
 
+/** Whitespace between and inside tags is noise, except inside <pre>. */
 function normalizeHtml(html) {
-    return String(html).replace(/>\s+</g, '><').replace(/\s+/g, ' ').trim();
+    return String(html)
+        .split(/(<pre[\s\S]*?<\/pre>)/)
+        .map((part, i) => (i % 2 ? part : part.replace(/>\s+</g, '><').replace(/\s+/g, ' ')))
+        .join('')
+        .trim();
 }
+
+// ---------------------------------------------------------------------------
+// Markdown out: write text so it renders as what the person typed.
+// ---------------------------------------------------------------------------
+
+// Words whose characters must reach the renderer as typed: a URL or email
+// (an escaped `_` ends up in the href) and an @handle (the server reads
+// `@first\_last` as `@first`).
+const PROTECTED = /(?:https?:\/\/|www\.)[^\s<]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+|(?<![A-Za-z0-9_`])@[A-Za-z0-9._-]+/g;
+
+/**
+ * Escape a text node for markdown. Inline syntax characters are
+ * backslash-escaped outside protected words; `<` and `&` only where they
+ * could start a tag or an entity, so `a < b` and `R&D` stay readable in
+ * the stored markdown.
+ */
+export function escapeText(text) {
+    let out = '';
+    let last = 0;
+    for (const m of text.matchAll(PROTECTED)) {
+        out += escapePlain(text.slice(last, m.index)) + m[0];
+        last = m.index + m[0].length;
+    }
+    return out + escapePlain(text.slice(last));
+}
+
+function escapePlain(s) {
+    return s
+        .replace(/&(?=#?[A-Za-z0-9]+;)/g, '&amp;')
+        .replace(/<(?=[A-Za-z/!?])/g, '&lt;')
+        .replace(/([\\`*_[\]~])/g, '\\$1');
+}
+
+/**
+ * Keep the start of each line of a paragraph from being read as block
+ * syntax: a heading, a list item, a quote, a rule or a setext underline,
+ * or indentation (four spaces make a code block, where every escape shows
+ * literally). Leading spaces become no-break spaces, which markdown does
+ * not count as indentation and which still show.
+ */
+export function escapeLineStarts(md) {
+    return md.split('\n').map((line) => {
+        let l = line.replace(/^[ \t]+/, (ws) => ws.replace(/\t/g, '    ').replace(/ /g, '\u00a0'));
+        if (/^#{1,6}(\s|$)/.test(l) || /^[-+>](\s|$)/.test(l) || /^>/.test(l) || /^(=+|-{2,})\s*$/.test(l) || /^-{3,}/.test(l)) {
+            l = `\\${l}`;
+        } else {
+            l = l.replace(/^(\d{1,9})([.)])(\s|$)/, '$1\\$2$3');
+        }
+        return l;
+    }).join('\n');
+}
+
+const SafeParagraph = Paragraph.extend({
+    renderMarkdown(node, h, ctx) {
+        return escapeLineStarts(Paragraph.config.renderMarkdown(node, h, ctx));
+    },
+});
+
+/** Route text-node escaping through escapeText (code stays as typed). */
+function installTextEscaping(editor) {
+    const manager = editor.markdown;
+    if (!manager) return;
+    manager.encodeTextForMarkdown = function encodeTextForMarkdown(text, node, parentNode) {
+        const inCode = (parentNode?.type != null && this.codeTypes.has(parentNode.type))
+            || (node.marks || []).some(m => this.codeTypes.has(typeof m === 'string' ? m : m.type));
+        return inCode ? text : escapeText(text);
+    };
+}
+
+// ---------------------------------------------------------------------------
+// @mentions
+// ---------------------------------------------------------------------------
 
 /**
  * @mention suggestions. Inserts plain `@handle ` text, never a node, so
@@ -65,27 +158,39 @@ function mentionExtension(getItems) {
                 },
                 items: ({ query }) => getItems(query),
                 command: ({ editor, range, props }) => {
-                    editor.chain().focus().insertContentAt(range, `@${props.handle} `).run();
+                    editor.chain().focus().insertContentAt(range, [{ type: 'text', text: `@${props.handle} ` }]).run();
                 },
-                render: mentionPopup,
+                render: () => mentionPopup(this.editor),
             })];
+        },
+        onBlur() {
+            // The list belongs to the caret; leaving the box closes it, as
+            // the textarea's list does.
+            if (!this.editor.isDestroyed) exitSuggestion(this.editor.view);
         },
     });
 }
 
-/** The suggestion list: a small listbox under the caret. */
-function mentionPopup() {
+let popupSeq = 0;
+
+/** The suggestion list: a listbox at the caret, kept on screen. */
+function mentionPopup(editor) {
     let el = null;
     let items = [];
     let selected = 0;
     let pick = null;
+    let clientRect = null;
+    const id = `rich-mention-list-${++popupSeq}`;
+    const dom = editor.view.dom;
 
+    const optionId = (i) => `${id}-opt-${i}`;
     const draw = () => {
         if (!el) return;
         el.innerHTML = '';
         el.hidden = items.length === 0;
         items.forEach((item, i) => {
             const row = document.createElement('div');
+            row.id = optionId(i);
             row.className = `mention-suggestion${i === selected ? ' selected' : ''}`;
             row.setAttribute('role', 'option');
             row.setAttribute('aria-selected', String(i === selected));
@@ -105,32 +210,54 @@ function mentionPopup() {
             row.addEventListener('mousedown', (e) => { e.preventDefault(); pick(item); });
             el.appendChild(row);
         });
+        const open = items.length > 0;
+        dom.setAttribute('aria-expanded', String(open));
+        if (open) dom.setAttribute('aria-activedescendant', optionId(selected));
+        else dom.removeAttribute('aria-activedescendant');
     };
-    const place = (clientRect) => {
+    // Fixed to the viewport: below the caret when it fits, else above it
+    // (the composer sits at the bottom of the screen), never off the edge.
+    const place = () => {
         const rect = clientRect && clientRect();
-        if (!el || !rect) return;
-        el.style.left = `${Math.round(rect.left + window.scrollX)}px`;
-        el.style.top = `${Math.round(rect.bottom + window.scrollY + 4)}px`;
+        if (!el || !rect || el.hidden) return;
+        const gap = 4;
+        const margin = 8;
+        const w = el.offsetWidth;
+        const h = el.offsetHeight;
+        const below = rect.bottom + gap + h <= window.innerHeight - margin;
+        const top = below ? rect.bottom + gap : Math.max(margin, rect.top - gap - h);
+        const left = Math.min(Math.max(margin, rect.left), Math.max(margin, window.innerWidth - w - margin));
+        el.style.top = `${Math.round(top)}px`;
+        el.style.left = `${Math.round(left)}px`;
     };
+    const onScroll = () => place();
 
     return {
         onStart(props) {
             el = document.createElement('div');
+            el.id = id;
             el.className = 'mention-suggestions rich-mention-suggestions';
             el.setAttribute('role', 'listbox');
+            el.setAttribute('aria-label', 'People to mention');
             document.body.appendChild(el);
+            dom.setAttribute('aria-controls', id);
+            dom.setAttribute('aria-autocomplete', 'list');
             items = props.items;
             selected = 0;
             pick = props.command;
+            clientRect = props.clientRect;
             draw();
-            place(props.clientRect);
+            place();
+            window.addEventListener('scroll', onScroll, true);
+            window.addEventListener('resize', onScroll);
         },
         onUpdate(props) {
             items = props.items;
             selected = Math.min(selected, Math.max(items.length - 1, 0));
             pick = props.command;
+            clientRect = props.clientRect;
             draw();
-            place(props.clientRect);
+            place();
         },
         onKeyDown({ event }) {
             if (!items.length) return false;
@@ -141,8 +268,13 @@ function mentionPopup() {
             return false;
         },
         onExit() {
+            window.removeEventListener('scroll', onScroll, true);
+            window.removeEventListener('resize', onScroll);
             if (el) el.remove();
             el = null;
+            dom.removeAttribute('aria-controls');
+            dom.removeAttribute('aria-activedescendant');
+            dom.setAttribute('aria-expanded', 'false');
         },
     };
 }
@@ -163,6 +295,10 @@ function keysExtension({ onSubmit, onEscape }) {
     });
 }
 
+// Autolink only what is unmistakably a link: a scheme, or www. Bare
+// `main.py` or `config.yaml` stays text.
+const shouldAutoLink = (url) => /^(https?:\/\/|mailto:|www\.)/i.test(url);
+
 /**
  * @param {Object} opts
  * @param {HTMLElement} opts.element - where the editor mounts
@@ -177,11 +313,18 @@ function keysExtension({ onSubmit, onEscape }) {
 export function createEditor({ element, markdown = '', placeholder = '', onUpdate, onSubmit, onEscape, getMentionItems, onFocus, onBlur }) {
     const extensions = [
         StarterKit.configure({
-            link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: 'noopener noreferrer nofollow' } },
-            // Headings in a comment are rare; keep them, but small.
+            paragraph: false,
+            link: {
+                openOnClick: false,
+                autolink: true,
+                linkOnPaste: true,
+                shouldAutoLink,
+                HTMLAttributes: { rel: 'noopener noreferrer nofollow' },
+            },
             heading: { levels: [1, 2, 3] },
             underline: false,
         }),
+        SafeParagraph,
         TaskList,
         TaskItem.configure({ nested: true }),
         TableKit,
@@ -194,8 +337,6 @@ export function createEditor({ element, markdown = '', placeholder = '', onUpdat
     const editor = new Editor({
         element,
         extensions,
-        content: markdown || '',
-        contentType: 'markdown',
         editorProps: {
             attributes: {
                 class: 'rich-editor-content markdown-body',
@@ -208,10 +349,26 @@ export function createEditor({ element, markdown = '', placeholder = '', onUpdat
         onFocus: () => { if (onFocus) onFocus(); },
         onBlur: () => { if (onBlur) onBlur(); },
     });
+    installTextEscaping(editor);
+    if (markdown) editor.commands.setContent(markdown, { contentType: 'markdown', emitUpdate: false });
     return editor;
 }
 
-/** Toolbar commands, by name, so the app's buttons stay data. */
+/**
+ * A URL as the person typed it, made safe to sit in `[text](url)`: spaces
+ * and parentheses would end the link early.
+ */
+function cleanHref(href) {
+    return href.trim().replace(/\s/g, '%20').replace(/\(/g, '%28').replace(/\)/g, '%29');
+}
+
+/** http(s), mailto, or a relative link; nothing that runs or embeds. */
+export function isSafeHref(url) {
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url);
+    return !scheme || ['http', 'https', 'mailto'].includes(scheme[1].toLowerCase());
+}
+
+/** Toolbar commands, by name, so the app's buttons stay data. Each returns whether it applied. */
 export const COMMANDS = {
     bold: (ed) => ed.chain().focus().toggleBold().run(),
     italic: (ed) => ed.chain().focus().toggleItalic().run(),
@@ -220,9 +377,22 @@ export const COMMANDS = {
     orderedList: (ed) => ed.chain().focus().toggleOrderedList().run(),
     blockquote: (ed) => ed.chain().focus().toggleBlockquote().run(),
     codeBlock: (ed) => ed.chain().focus().toggleCodeBlock().run(),
+    /**
+     * Link the selection, or the link at the caret. With nothing selected
+     * and no link there, insert the URL itself as a link. An empty href
+     * removes the link. False when the URL is refused (javascript:, data:).
+     */
     link: (ed, href) => {
-        const chain = ed.chain().focus().extendMarkRange('link');
-        return href ? chain.setLink({ href }).run() : chain.unsetLink().run();
+        const url = cleanHref(href || '');
+        if (!url) return ed.chain().focus().extendMarkRange('link').unsetLink().run();
+        if (!isSafeHref(url)) return false;
+        if (!ed.isActive('link') && ed.state.selection.empty) {
+            return ed.chain().focus()
+                .insertContent([{ type: 'text', text: url, marks: [{ type: 'link', attrs: { href: url } }] }])
+                .unsetMark('link')
+                .run();
+        }
+        return ed.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
     },
 };
 

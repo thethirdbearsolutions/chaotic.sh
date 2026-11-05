@@ -17,6 +17,9 @@ export default defineConfig({
       fileName: () => 'editor.bundle.js',
       formats: ['iife'],
     },
+    // No down-levelled class-field helpers as top-level vars, which could
+    // collide with app.bundle.js's own (PR #534 review).
+    target: 'es2022',
     rollupOptions: { output: { inlineDynamicImports: true } },
   },
 });

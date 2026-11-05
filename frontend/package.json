@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@tiptap/core": "^3.32.3",
-    "@tiptap/extension-mention": "^3.32.3",
+    "@tiptap/extension-list": "^3.32.3",
+    "@tiptap/extension-paragraph": "^3.32.3",
     "@tiptap/extension-table": "^3.32.3",
     "@tiptap/extensions": "^3.32.3",
     "@tiptap/markdown": "^3.32.3",

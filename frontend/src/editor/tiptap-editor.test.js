@@ -2,6 +2,13 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { marked } from 'marked';
 import { createEditor, getMarkdown, roundTripsCleanly, COMMANDS, activeMarks } from './tiptap-editor.js';
 
+// jsdom has no ClipboardEvent; ProseMirror's pasteText makes one.
+if (typeof globalThis.ClipboardEvent === 'undefined') {
+    globalThis.ClipboardEvent = class ClipboardEvent extends Event {
+        constructor(type, init = {}) { super(type, init); this.clipboardData = init.clipboardData || null; }
+    };
+}
+
 let editor;
 const mount = (opts = {}) => {
     const element = document.createElement('div');
@@ -154,6 +161,145 @@ describe('mentions', () => {
         ed.commands.focus();
         ed.commands.setCodeBlock();
         ed.commands.insertContent('@sa');
+        await new Promise(r => setTimeout(r, 0));
+        expect(document.querySelector('.rich-mention-suggestions')).toBeNull();
+    });
+});
+
+// What a reader of the posted comment sees, as text.
+const shown = (md) => {
+    const div = document.createElement('div');
+    div.innerHTML = render(md);
+    return div;
+};
+
+describe('markdown out renders as what was typed (PR #534 review C2, I1, I2)', () => {
+    const typed = (text) => {
+        const ed = mount();
+        ed.commands.focus();
+        ed.view.pasteText(text);
+        return getMarkdown(ed);
+    };
+
+    it('a pasted plain-text traceback keeps its text and does not become a code block', () => {
+        const tb = 'Traceback (most recent call last):\n    File "app/main.py", line 3, in <module>\n      foo_bar()\nValueError: bad value';
+        const md = typed(tb);
+        const out = shown(md);
+        expect(out.querySelector('pre, code')).toBeNull();
+        expect(out.querySelector('a')).toBeNull(); // main.py is not a link
+        const text = out.textContent.replace(/\u00a0/g, ' ');
+        expect(text).toContain('File "app/main.py", line 3, in <module>');
+        expect(text).toContain('foo_bar()');
+        expect(text).not.toMatch(/\\_|&lt;/);
+    });
+
+    it.each([
+        ['1. not a list', 'ol'],
+        ['+ not a list', 'ul'],
+        ['- not a list', 'ul'],
+        ['# not a heading', 'h1'],
+        ['> not a quote', 'blockquote'],
+        ['---', 'hr'],
+    ])('a line starting %j stays text', (line, tag) => {
+        const ed = mount();
+        ed.commands.focus();
+        ed.commands.insertContent([{ type: 'text', text: line }]);
+        const out = shown(getMarkdown(ed));
+        expect(out.querySelector(tag)).toBeNull();
+        expect(out.textContent.trim()).toBe(line);
+    });
+
+    it('text after a hard break is not read as block syntax', () => {
+        const ed = mount();
+        ed.commands.focus();
+        ed.commands.insertContent([{ type: 'text', text: 'Title' }, { type: 'hardBreak' }, { type: 'text', text: '---' }]);
+        expect(shown(getMarkdown(ed)).querySelector('h2, hr')).toBeNull();
+        ed.commands.setContent('');
+        ed.commands.insertContent([{ type: 'text', text: 'steps' }, { type: 'hardBreak' }, { type: 'text', text: '1. next' }]);
+        expect(shown(getMarkdown(ed)).querySelector('ol')).toBeNull();
+    });
+
+    it('a handle with an underscore is written as typed, so the server reads it', () => {
+        const ed = mount({ markdown: 'ping @first_last and @a.b-c' });
+        expect(getMarkdown(ed)).toBe('ping @first_last and @a.b-c');
+    });
+
+    it('a bare URL or email at the end keeps its underscores', () => {
+        const ed = mount();
+        ed.commands.focus();
+        ed.view.pasteText('see https://github.com/a/b_c_d/x_y');
+        let md = getMarkdown(ed);
+        expect(md).not.toContain('\\_');
+        expect(shown(md).querySelector('a').getAttribute('href')).toBe('https://github.com/a/b_c_d/x_y');
+        ed.commands.setContent('');
+        ed.commands.insertContent([{ type: 'text', text: 'mail a_b@example.com' }]);
+        md = getMarkdown(ed);
+        expect(md).toBe('mail a_b@example.com');
+    });
+
+    it('still escapes emphasis characters in ordinary text', () => {
+        const ed = mount();
+        ed.commands.insertContent([{ type: 'text', text: 'a *literal* star and [brackets]' }]);
+        expect(shown(getMarkdown(ed)).querySelector('em')).toBeNull();
+        expect(shown(getMarkdown(ed)).textContent.trim()).toBe('a *literal* star and [brackets]');
+    });
+
+    it('leaves < and & readable when they cannot start a tag or entity', () => {
+        const ed = mount();
+        ed.commands.insertContent([{ type: 'text', text: 'a < b && R&D, but <b>not bold</b> &amp;' }]);
+        const md = getMarkdown(ed);
+        expect(md.startsWith('a < b && R&D')).toBe(true);
+        expect(shown(md).querySelector('b')).toBeNull();
+        expect(shown(md).textContent.trim()).toBe('a < b && R&D, but <b>not bold</b> &amp;');
+    });
+
+    it('keeps a code span as typed', () => {
+        expect(getMarkdown(mount({ markdown: 'run `foo_bar(*a)`' }))).toBe('run `foo_bar(*a)`');
+    });
+});
+
+describe('roundTripsCleanly edge cases (PR #534 review)', () => {
+    it('accepts trailing whitespace', () => {
+        expect(roundTripsCleanly(mount(), 'I think ', render)).toBe(true);
+    });
+
+    it('counts a throw as not clean, and keeps the editor content', () => {
+        const ed = mount({ markdown: 'keep' });
+        const boom = () => { throw new Error('boom'); };
+        expect(roundTripsCleanly(ed, 'x', boom)).toBe(false);
+        expect(getMarkdown(ed)).toBe('keep');
+    });
+});
+
+describe('link command (PR #534 review minor 4)', () => {
+    it('inserts the URL as a link when nothing is selected', () => {
+        const ed = mount();
+        ed.commands.focus();
+        expect(COMMANDS.link(ed, 'https://example.com/a b')).toBe(true);
+        expect(getMarkdown(ed)).toBe('[https://example.com/a%20b](https://example.com/a%20b)');
+    });
+
+    it('refuses scripts and data URLs', () => {
+        const ed = mount({ markdown: 'x' });
+        ed.commands.selectAll();
+        expect(COMMANDS.link(ed, 'javascript:alert(1)')).toBe(false);
+        expect(COMMANDS.link(ed, 'data:text/html,hi')).toBe(false);
+        expect(getMarkdown(ed)).toBe('x');
+    });
+});
+
+describe('mention list and blur (PR #534 review I4)', () => {
+    it('closes when the editor loses focus', async () => {
+        const people = [{ handle: 'sam', name: 'Sam Example' }];
+        const ed = mount({ getMentionItems: (q) => people.filter(p => p.handle.startsWith(q)) });
+        ed.commands.focus();
+        ed.commands.insertContent('@s');
+        await new Promise(r => setTimeout(r, 0));
+        expect(document.querySelector('.rich-mention-suggestions')).not.toBeNull();
+        expect(ed.view.dom.getAttribute('aria-expanded')).toBe('true');
+        expect(ed.view.dom.getAttribute('aria-activedescendant')).toMatch(/-opt-0$/);
+        ed.commands.blur();
+        ed.view.dom.dispatchEvent(new FocusEvent('blur'));
         await new Promise(r => setTimeout(r, 0));
         expect(document.querySelector('.rich-mention-suggestions')).toBeNull();
     });

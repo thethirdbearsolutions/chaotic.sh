@@ -3,20 +3,22 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 vi.mock('./mention-autocomplete.js', () => ({
     mentionSuggestions: (q) => [{ handle: 'sam', name: 'Sam Example', isAgent: false }].filter(m => m.handle.startsWith(q)),
 }));
+vi.mock('./ui.js', () => ({ showToast: vi.fn() }));
 vi.mock('./rich-text.js', async () => {
     const { marked } = await import('marked');
     return { renderCommentContent: (md) => marked.parse(md || '') };
 });
 
 import * as editorBundle from './editor/tiptap-editor.js';
-import { attachRichComposer, focusComposer, isRichComposerBusy, editorBundleUrl, loadEditorBundle } from './rich-composer.js';
+import { attachRichComposer, focusComposer, isRichComposerBusy, editorBundleUrl, loadEditorBundle, captureComposerFocus } from './rich-composer.js';
+import { showToast } from './ui.js';
 import { setComposerMode } from './storage.js';
 
 const tick = () => new Promise(r => setTimeout(r, 0));
 
 function renderForm(value = '') {
     document.body.innerHTML = `
-        <meta name="chaotic-version" content="abc" data-bundle="b1" data-editor="abc123">
+        <meta name="chaotic-version" content="abc" data-bundle="b1" data-editor="abc12345">
         <form class="comment-form">
             <textarea id="new-comment" placeholder="Write a comment..."></textarea>
             <button type="submit">Comment</button>
@@ -41,7 +43,7 @@ afterEach(() => {
 describe('editorBundleUrl', () => {
     it('carries the editor bundle\'s own hash', () => {
         renderForm();
-        expect(editorBundleUrl()).toBe('/static/js/editor.bundle.js?v=abc123');
+        expect(editorBundleUrl()).toBe('/static/js/editor.bundle.js?v=abc12345');
     });
 
     it('has no query without a hash', () => {
@@ -142,9 +144,9 @@ describe('attachRichComposer', () => {
         const state = attachRichComposer('new-comment', { signal: controller.signal });
         await tick();
         state.editor.commands.selectAll();
-        document.querySelector('.rich-tool[data-tool="bold"]').click();
+        document.querySelector('.icon-btn[data-tool="bold"]').click();
         expect(textarea.value).toBe('**word**');
-        expect(document.querySelector('.rich-tool[data-tool="bold"]').getAttribute('aria-pressed')).toBe('true');
+        expect(document.querySelector('.icon-btn[data-tool="bold"]').getAttribute('aria-pressed')).toBe('true');
     });
 
     it('Cmd/Ctrl+Enter submits the form', async () => {
@@ -204,8 +206,133 @@ describe('focusComposer and isRichComposerBusy', () => {
         expect(isRichComposerBusy()).toBe(false);
         state.editor.commands.focus();
         state.editor.commands.insertContent('@s');
-        await tick();
+        await new Promise(r => setTimeout(r, 50));
         expect(document.querySelector('.rich-mention-suggestions')).not.toBeNull();
         expect(isRichComposerBusy()).toBe(true);
+    });
+});
+
+describe('PR #534 review fixes', () => {
+    it('C1: a re-render puts the caret back in the editor', async () => {
+        renderForm('hello world');
+        const first = attachRichComposer('new-comment', { signal: controller.signal });
+        await tick();
+        first.editor.commands.focus();
+        first.editor.commands.setTextSelection(3);
+        await new Promise(r => setTimeout(r, 50));
+        const snap = captureComposerFocus('new-comment');
+        expect(snap).toEqual({ from: 3, to: 3 });
+
+        // The view re-renders: old composer torn down, new textarea with the draft.
+        controller.abort();
+        controller = new AbortController();
+        renderForm('hello world');
+        const second = attachRichComposer('new-comment', { signal: controller.signal, restore: snap });
+        expect(second.editor).not.toBeNull(); // mounted at once: the bundle is loaded
+        await new Promise(r => setTimeout(r, 50));
+        expect(document.activeElement).toBe(second.editor.view.dom);
+        expect(second.editor.state.selection.from).toBe(3);
+        expect(document.querySelector('form').classList.contains('composer-active')).toBe(true);
+    });
+
+    it('C1: nothing to restore when the editor does not have focus', async () => {
+        renderForm('x');
+        attachRichComposer('new-comment', { signal: controller.signal });
+        await tick();
+        expect(captureComposerFocus('new-comment')).toBeNull();
+    });
+
+    it('I3: the toggle mounts the editor when markdown was the saved choice', async () => {
+        setComposerMode('markdown');
+        const textarea = renderForm('**b**');
+        const state = attachRichComposer('new-comment', { signal: controller.signal });
+        await tick();
+        expect(state.editor).toBeNull();
+        const toggle = document.querySelector('.rich-mode-toggle');
+        expect(toggle.getAttribute('aria-pressed')).toBe('true');
+        expect([...document.querySelectorAll('.icon-btn')].every(b => b.disabled && b.hidden)).toBe(true);
+        toggle.click();
+        await tick();
+        expect(state.editor).not.toBeNull();
+        expect(textarea.hidden).toBe(true);
+        expect(toggle.getAttribute('aria-pressed')).toBe('false');
+        expect(state.editor.getHTML()).toContain('<strong>b</strong>');
+    });
+
+    it('says why a comment stays as markdown', async () => {
+        renderForm('see <details><summary>x</summary>y</details>');
+        attachRichComposer('new-comment', { signal: controller.signal });
+        await tick();
+        const note = document.querySelector('.rich-composer-note');
+        expect(note.hidden).toBe(false);
+        expect(note.getAttribute('role')).toBe('status');
+        expect(note.textContent).toMatch(/stays as markdown/);
+    });
+
+    it('a failed load takes its script tag back out', async () => {
+        delete window.ChaoticEditor;
+        renderForm();
+        const p = loadEditorBundle();
+        const script = document.head.querySelector('script[src*="editor.bundle.js"]');
+        script.onerror();
+        await expect(p).rejects.toThrow();
+        expect(document.head.querySelector('script[src*="editor.bundle.js"]')).toBeNull();
+    });
+
+    it('refuses an editor bundle of another version', async () => {
+        window.ChaoticEditor = { ...editorBundle, API_VERSION: 999 };
+        const textarea = renderForm('x');
+        attachRichComposer('new-comment', { signal: controller.signal });
+        await tick();
+        expect(textarea.hidden).toBe(false);
+        expect(document.querySelector('.rich-editor-content')).toBeNull();
+    });
+
+    it('puts the toolbar after the Comment button, with one tab stop', async () => {
+        renderForm();
+        attachRichComposer('new-comment', { signal: controller.signal });
+        await tick();
+        const form = document.querySelector('form');
+        const kids = [...form.children].map(el => el.tagName === 'BUTTON' ? 'submit' : el.className.split(' ')[0]);
+        expect(kids.indexOf('submit')).toBeLessThan(kids.indexOf('toolbar'));
+        const stops = [...document.querySelectorAll('.toolbar button')].filter(b => b.tabIndex === 0);
+        expect(stops).toHaveLength(1);
+    });
+
+    it('arrow keys move along the toolbar', async () => {
+        renderForm();
+        attachRichComposer('new-comment', { signal: controller.signal });
+        await tick();
+        const [bold, italic] = document.querySelectorAll('.toolbar .icon-btn');
+        bold.focus();
+        bold.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+        expect(document.activeElement).toBe(italic);
+        expect(italic.tabIndex).toBe(0);
+        expect(bold.tabIndex).toBe(-1);
+    });
+
+    it('a refused link says so', async () => {
+        const toast = vi.spyOn(window, 'prompt').mockReturnValue('javascript:alert(1)');
+        renderForm('x');
+        const state = attachRichComposer('new-comment', { signal: controller.signal });
+        await tick();
+        state.editor.commands.selectAll();
+        document.querySelector('.icon-btn[data-tool="link"]').click();
+        expect(showToast).toHaveBeenCalledWith(expect.stringMatching(/can’t be added/), 'error');
+        toast.mockRestore();
+    });
+
+    it('the mention list does not hold off refreshes once the editor has lost focus', async () => {
+        renderForm();
+        const state = attachRichComposer('new-comment', { signal: controller.signal });
+        await tick();
+        state.editor.commands.focus();
+        state.editor.commands.insertContent('@s');
+        await new Promise(r => setTimeout(r, 50));
+        expect(isRichComposerBusy()).toBe(true);
+        state.editor.commands.blur();
+        state.editor.view.dom.blur();
+        await new Promise(r => setTimeout(r, 20));
+        expect(isRichComposerBusy()).toBe(false);
     });
 });

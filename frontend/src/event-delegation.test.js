@@ -229,6 +229,23 @@ describe('event-delegation', () => {
             expect(handler).not.toHaveBeenCalled();
         });
 
+        it('does NOT fire parent data-action on keydown from a content-editable editor (CHT-2028)', () => {
+            const handler = vi.fn();
+            registerActions({ 'open-row': handler });
+
+            document.body.innerHTML = `
+                <div data-action="open-row" tabindex="0">
+                    <div class="editor" contenteditable="true">typing here</div>
+                </div>
+            `;
+            const editor = document.querySelector('.editor');
+            // jsdom does not compute isContentEditable.
+            Object.defineProperty(editor, 'isContentEditable', { value: true });
+            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+            expect(handler).not.toHaveBeenCalled();
+        });
+
         it('does NOT fire parent data-action on keydown from input', () => {
             const handler = vi.fn();
             registerActions({ 'search-form': handler });
