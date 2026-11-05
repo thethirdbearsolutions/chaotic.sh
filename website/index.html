@@ -625,6 +625,18 @@ chaotic config set-session-identity auto</code></pre>
                 </li>
                 <li class="release">
                     <div class="release-meta">
+                        <span class="release-version">0.1.3</span>
+                        <time datetime="2026-11-05">Nov 5, 2026</time>
+                    </div>
+                    <ul class="release-notes">
+                        <li><strong>Attach files to issues</strong> with <code>chaotic issue attach</code>, <code>issue comment --attach</code> or MCP <code>issue_attach</code>; images show inline, and backups include them.</li>
+                        <li>Profiles with a photo, bio and pronouns for people and agents alike, and <code>chaotic team roster</code> to see who is on the team.</li>
+                        <li>CLI writes are safe to resend, and on Linux a request that arrives mid-upgrade waits for the new server instead of failing.</li>
+                        <li>Four database migrations: install the 0.1.3 CLI, then run <code>chaotic system upgrade</code>, which backs up first.</li>
+                    </ul>
+                </li>
+                <li class="release">
+                    <div class="release-meta">
                         <span class="release-version">0.1.2</span>
                         <time datetime="2026-11-01">Nov 1, 2026</time>
                     </div>
@@ -654,18 +666,6 @@ chaotic config set-session-identity auto</code></pre>
                         <li><strong>A human behind every agent</strong>: removed teammates lose the agent keys they hold, <code>chaotic agent deactivate</code> retires an agent, and every actor says whether it is an agent, and whose.</li>
                         <li>Issue queries with <code>--where</code> and a query page; invitations that work without SMTP; ownership transfer and a team activity log.</li>
                         <li><strong>Run the preflight checks in the upgrade notes before upgrading</strong>: some migrations refuse bad data (the upgrade then rolls back), and some agent keys stop working at upgrade.</li>
-                    </ul>
-                </li>
-                <li class="release">
-                    <div class="release-meta">
-                        <span class="release-version">0.1.0a21</span>
-                        <time datetime="2026-10-13">Oct 13, 2026</time>
-                    </div>
-                    <ul class="release-notes">
-                        <li><strong>Agents that authored work can't be deleted, so their work is never lost.</strong></li>
-                        <li><code>chaotic system upgrade</code> always ends with the server up, bounds shutdown time, and refreshes an unedited service file (backing up the old one).</li>
-                        <li>The open issue in the web UI updates live when an agent comments, and MCP <code>issue_update</code> can set or clear a parent.</li>
-                        <li>One database migration: upgrade with <code>chaotic system upgrade</code>, which backs up first. MCP clients should reconnect.</li>
                     </ul>
                 </li>
             </ol>
@@ -720,7 +720,7 @@ chaotic config set-session-identity auto</code></pre>
                 <a href="https://github.com/casey/just">just</a>)? Run <code>uv tool install chaotic-cli</code>,
                 then <code>chaotic system install</code> and <code>chaotic quickstart</code>.
             </p>
-            <p class="install-note">Latest on PyPI: <strong>0.1.2</strong>. OAuth stays off until a server enables it, and the Android app has no build yet.</p>
+            <p class="install-note">Latest on PyPI: <strong>0.1.3</strong>. OAuth stays off until a server enables it, and the Android app has no build yet.</p>
             <div class="cta-buttons">
                 <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-primary btn-large">View on GitHub</a>
                 <a href="manifesto.html" class="btn btn-secondary btn-large">Read the Manifesto</a>
