@@ -10288,7 +10288,7 @@ body.theme-light {
     box-shadow: 0 0 0 2px var(--accent-border);
 }
 .attachments-add { position: relative; }
-.attachments-add:focus-within { color: var(--text-primary); outline: 2px solid var(--accent-border); outline-offset: 2px; border-radius: var(--radius-sm); }
+.attachments-add:has(:focus-visible) { color: var(--text-primary); outline: 2px solid var(--accent-border); outline-offset: 2px; border-radius: var(--radius-sm); }
 .attachments-hint {
     margin: 0;
     padding: var(--space-md) 0;
@@ -10297,6 +10297,7 @@ body.theme-light {
     font-size: var(--font-sm);
     color: var(--text-muted);
 }
+.attachments .related-head h3:focus { outline: none; }
 .attachments-status { font-size: var(--font-sm); color: var(--text-secondary); }
 .attachments-status:not(:empty) { margin-bottom: var(--space-sm); }
 .attachment-grid {
@@ -10311,7 +10312,7 @@ body.theme-light {
 .attachment-open {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--space-xs);
     width: 100%;
     padding: var(--space-xs);
     border: 1px solid var(--border-color);
@@ -10328,7 +10329,6 @@ body.theme-light {
     display: grid;
     place-items: center;
     height: 88px;
-    margin-bottom: var(--space-xs);
     border-radius: var(--radius-sm);
     background: var(--bg-tertiary);
     color: var(--text-muted);
@@ -10347,10 +10347,10 @@ body.theme-light {
 .attachment-meta { font-size: var(--font-xs); color: var(--text-muted); }
 .attachment-delete {
     position: absolute;
-    top: 8px;
-    right: 8px;
+    top: var(--space-md);
+    right: var(--space-md);
     display: inline-grid;
-    padding: 4px;
+    padding: var(--space-xs);
     border: 0;
     border-radius: var(--radius-sm);
     background: var(--bg-secondary);
@@ -10359,7 +10359,8 @@ body.theme-light {
     opacity: 0;
 }
 .attachment-item:hover .attachment-delete,
-.attachment-delete:focus { opacity: 1; }
+.attachment-delete:focus-visible { opacity: 1; }
+.attachment-delete:focus-visible { outline: 2px solid var(--accent-border); outline-offset: 1px; }
 .attachment-delete:hover { color: var(--danger-fg); }
 @media (hover: none) {
     .attachment-delete { opacity: 1; }

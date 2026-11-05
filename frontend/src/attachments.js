@@ -171,6 +171,7 @@ export function initAttachmentImages() {
     if (observer || typeof MutationObserver === 'undefined' || !document.body) return;
     observer = new MutationObserver(scheduleSweep);
     observer.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener('auxclick', handleAuxClick);
     scheduleSweep();
 }
 
@@ -178,6 +179,10 @@ export function initAttachmentImages() {
 export function _resetAttachmentsForTest() {
     observer?.disconnect();
     observer = null;
+    document.removeEventListener('auxclick', handleAuxClick);
+    viewerWatch?.disconnect();
+    viewerWatch = null;
+    uploadChain = Promise.resolve();
     for (const id of [...blobs.keys()]) forget(id);
     known.clear();
     current = null;
@@ -207,6 +212,25 @@ export async function downloadAttachment(id, filename) {
     }
 }
 
+// Watches the modal overlay while the viewer is open, to drop the viewer
+// (and so its blob URL) as soon as the modal closes.
+let viewerWatch = null;
+
+function clearViewerOnClose() {
+    viewerWatch?.disconnect();
+    viewerWatch = null;
+    const overlay = document.getElementById('modal-overlay');
+    if (!overlay || typeof MutationObserver === 'undefined') return;
+    viewerWatch = new MutationObserver(() => {
+        if (!overlay.classList.contains('hidden')) return;
+        viewerWatch.disconnect();
+        viewerWatch = null;
+        document.querySelector('#modal-content .attachment-viewer')?.remove();
+        releaseUnused();
+    });
+    viewerWatch.observe(overlay, { attributes: true, attributeFilter: ['class'] });
+}
+
 function showViewer(id, filename) {
     document.getElementById('modal-title').textContent = filename || 'Attachment';
     document.getElementById('modal-content').innerHTML = `
@@ -218,6 +242,9 @@ function showViewer(id, filename) {
         </figure>`;
     document.querySelector('.modal')?.classList.add('modal-wide');
     showModal();
+    clearViewerOnClose();
+    // showModal focuses the first input, and the viewer has none.
+    document.querySelector('#modal-content .attachment-viewer-actions button')?.focus();
     hydrateAttachments(document.getElementById('modal-content'));
 }
 
@@ -258,7 +285,8 @@ export function formatFileSize(bytes) {
 }
 
 function canDelete(attachment, { userId, isAdmin }) {
-    return isAdmin || (!!userId && attachment.uploader_id === userId);
+    // isAdmin null: not known here, so offer it and let the server decide.
+    return isAdmin !== false || (!!userId && attachment.uploader_id === userId);
 }
 
 function renderItem(a, who) {
@@ -277,45 +305,88 @@ function renderItem(a, who) {
         </li>`;
 }
 
+// What the server accepts (CHT-1996): checked here first so a file it
+// would refuse is not sent at all, and the reason is plain. The server
+// stays the authority (it sniffs the bytes, and its limit is configurable).
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const ACCEPTED_TYPES = new Set([...INLINE_IMAGE_TYPES, 'application/pdf', 'text/plain', 'text/markdown', 'text/csv', 'text/x-log']);
+export const ACCEPT_ATTR = 'image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,.txt,.md,.log,.csv';
+// A lost answer is resent with the same key, but not a large body: a
+// browser streaming one when the server refuses it often reports a reset.
+const RESEND_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Why a file cannot be attached, or null when it can be sent.
+ * @param {File} file
+ * @returns {string|null}
+ */
+export function uploadRefusal(file) {
+    const name = file?.name || 'file';
+    const type = mediaType(file?.type);
+    if (!file || (file.size === 0 && !type)) return `${name} is empty or a folder`;
+    if (file.size > MAX_UPLOAD_BYTES) {
+        return `${name} is ${formatFileSize(file.size)}; the limit is ${formatFileSize(MAX_UPLOAD_BYTES)}`;
+    }
+    // No type: an extension the browser does not know. The server decides.
+    if (type && !ACCEPTED_TYPES.has(type)) {
+        return `${name} can't be attached: only PNG, JPEG, GIF, WebP, PDF or plain text`;
+    }
+    return null;
+}
+
+const HINT_EMPTY = 'Drop files here, or use Add. PNG, JPEG, GIF, WebP, PDF or text, up to 10 MB.';
+
+function renderBody(attachments, who) {
+    if (attachments === null) return '<p class="attachments-hint">Attachments could not be loaded.</p>';
+    if (!attachments.length) return `<p class="attachments-hint">${HINT_EMPTY}</p>`;
+    return `<ul class="attachment-grid">${attachments.map(a => renderItem(a, who)).join('')}</ul>`;
+}
+
 /**
  * The Attachments section of the issue page.
  * @param {string} issueId
  * @param {Array|null} attachments - null when the list could not be loaded
- * @param {{userId?: string, isAdmin?: boolean, uploading?: string}} [who]
+ * @param {{userId?: string, isAdmin?: boolean|null}} [who] - isAdmin null:
+ *   unknown (an issue of another team), so Delete is offered and the server decides
  */
-export function renderAttachmentsSection(issueId, attachments, { userId = null, isAdmin = false, uploading = '' } = {}) {
-    const list = attachments || [];
-    current = { issueId, attachments: attachments ? [...list] : null, userId, isAdmin };
-    rememberAttachments(list);
-    let body;
-    if (attachments === null) {
-        body = '<p class="attachments-hint">Attachments could not be loaded.</p>';
-    } else if (list.length) {
-        body = `<ul class="attachment-grid">${list.map(a => renderItem(a, { userId, isAdmin })).join('')}</ul>`;
-    } else {
-        body = '<p class="attachments-hint">Drop files here, or use Add. PNG, JPEG, GIF, WebP, PDF or text.</p>';
-    }
+export function renderAttachmentsSection(issueId, attachments, { userId = null, isAdmin = false } = {}) {
+    current = { issueId, attachments: attachments ? [...attachments] : null, userId, isAdmin };
+    rememberAttachments(attachments || []);
+    const count = attachments?.length || 0;
     return `
         <section class="attachments" id="issue-attachments" aria-label="Attachments" data-issue-id="${escapeAttr(issueId)}">
             <div class="related-head">
-                <h3>Attachments${list.length ? ` <span class="section-count">${list.length}</span>` : ''}</h3>
+                <h3 id="attachments-heading" tabindex="-1">Attachments <span class="section-count">${count || ''}</span></h3>
                 <label class="ticket-gate-text-btn attachments-add">
                     + Add
-                    <input type="file" multiple class="sr-only" data-action="pick-attachments" data-issue-id="${escapeAttr(issueId)}" aria-label="Attach files">
+                    <input type="file" multiple accept="${ACCEPT_ATTR}" class="sr-only" data-action="pick-attachments" data-issue-id="${escapeAttr(issueId)}" aria-label="Attach files">
                 </label>
             </div>
-            <div class="attachments-status" role="status" aria-live="polite">${uploading ? escapeHtml(uploading) : ''}</div>
-            ${body}
+            <div class="attachments-status" role="status" aria-live="polite"></div>
+            <div class="attachments-body">${renderBody(current.attachments, { userId, isAdmin })}</div>
         </section>`;
 }
 
-function rerender(uploading = '') {
-    if (!current) return;
+function strip() {
     const section = document.getElementById('issue-attachments');
-    if (!section || section.dataset.issueId !== current.issueId) return;
-    const { issueId, attachments, userId, isAdmin } = current;
-    section.outerHTML = renderAttachmentsSection(issueId, attachments, { userId, isAdmin, uploading });
-    hydrateAttachments(document.getElementById('issue-attachments'));
+    return section && current && section.dataset.issueId === current.issueId ? section : null;
+}
+
+/** Say something in the strip's live region, which stays in place. */
+function setStatus(text) {
+    const status = strip()?.querySelector('.attachments-status');
+    if (status) status.textContent = text;
+}
+
+/** Redraw the list only: the heading, Add and the live region stay. */
+function refreshList() {
+    const section = strip();
+    if (!section) return;
+    const { attachments, userId, isAdmin } = current;
+    section.querySelector('.section-count').textContent = attachments?.length ? String(attachments.length) : '';
+    const body = section.querySelector('.attachments-body');
+    body.innerHTML = renderBody(attachments, { userId, isAdmin });
+    hydrateAttachments(body);
 }
 
 function uuid4() {
@@ -329,16 +400,49 @@ function uuid4() {
     return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// How long to wait before asking again about a write still in progress,
+// and how many times (tests shorten the wait).
+export const _timing = { inFlightRetryMs: 1000, inFlightTries: 3 };
+
+const inFlight = (e) => e?.detail?.error_code === 'idempotency_in_flight';
+
 async function uploadOne(issueId, file) {
     const idempotencyKey = uuid4();
+    const send = () => api.uploadAttachment(issueId, file, { idempotencyKey });
     try {
-        return await api.uploadAttachment(issueId, file, { idempotencyKey });
+        return await send();
     } catch (e) {
-        // No answer: it may have been stored. The same key resends safely.
-        if (!e?.isNetworkError) throw e;
-        return api.uploadAttachment(issueId, file, { idempotencyKey });
+        // No answer: it may have been stored. The same key resends safely,
+        // but a large body is not sent twice.
+        if (!e?.isNetworkError || file.size > RESEND_MAX_BYTES) throw e;
+    }
+    // The resend can find the first send still being stored (409
+    // in-flight): its answer comes shortly, under the same key.
+    for (let tries = 1; ; tries++) {
+        try {
+            return await send();
+        } catch (e) {
+            if (!inFlight(e) || tries >= _timing.inFlightTries) throw e;
+            await wait(_timing.inFlightRetryMs);
+        }
     }
 }
+
+async function relist(issueId) {
+    try {
+        const list = await api.getAttachments(issueId);
+        rememberAttachments(list);
+        if (current?.issueId === issueId) current.attachments = [...list];
+        return list;
+    } catch {
+        return null;
+    }
+}
+
+// Uploads run one batch after another, so two drops never interleave or
+// clear each other's status.
+let uploadChain = Promise.resolve();
 
 /**
  * Upload files to an issue one at a time, then show them in the strip.
@@ -346,14 +450,24 @@ async function uploadOne(issueId, file) {
  * @param {FileList|File[]} files
  * @returns {Promise<number>} how many were attached
  */
-export async function uploadAttachments(issueId, files) {
+export function uploadAttachments(issueId, files) {
     const queue = [...(files || [])];
+    const run = uploadChain.then(() => uploadBatch(issueId, queue));
+    uploadChain = run.catch(() => 0);
+    return run;
+}
+
+async function uploadBatch(issueId, queue) {
     if (!queue.length) return 0;
     let attached = 0;
+    let unsure = false;
     for (const [i, file] of queue.entries()) {
-        if (current?.issueId === issueId) {
-            rerender(queue.length > 1 ? `Uploading ${file.name} (${i + 1} of ${queue.length})…` : `Uploading ${file.name}…`);
+        const refusal = uploadRefusal(file);
+        if (refusal) {
+            showToast(refusal, 'error');
+            continue;
         }
+        setStatus(queue.length > 1 ? `Uploading ${file.name} (${i + 1} of ${queue.length})…` : `Uploading ${file.name}…`);
         try {
             const attachment = await uploadOne(issueId, file);
             attached += 1;
@@ -362,10 +476,21 @@ export async function uploadAttachments(issueId, files) {
                 current.attachments = [...current.attachments.filter(a => a.id !== attachment.id), attachment];
             }
         } catch (e) {
-            showApiError(`attach ${file.name}`, e);
+            if (e?.isNetworkError || inFlight(e)) {
+                // It may be stored after all: the list will tell.
+                unsure = true;
+                showToast(`${file.name} may not have been attached; the list shows what was`, 'error');
+            } else {
+                showApiError(`attach ${file.name}`, e);
+            }
         }
     }
-    if (current?.issueId === issueId) rerender();
+    // A list that failed to load, or an upload with no answer: ask again.
+    if (current?.issueId === issueId && (unsure || (attached && current.attachments === null))) {
+        await relist(issueId);
+    }
+    refreshList();
+    setStatus(attached ? (attached === 1 ? '1 file attached' : `${attached} files attached`) : '');
     if (attached) showToast(attached === 1 ? 'File attached' : `${attached} files attached`, 'success');
     return attached;
 }
@@ -380,8 +505,22 @@ export async function deleteAttachment(id, filename) {
         return false;
     }
     known.delete(id);
-    if (current?.attachments) current.attachments = current.attachments.filter(a => a.id !== id);
-    rerender();
+    // Where focus goes once the tile is gone: the next tile, else the
+    // previous one, else the heading.
+    const list = current?.attachments || [];
+    const index = list.findIndex(a => a.id === id);
+    if (current?.attachments) current.attachments = list.filter(a => a.id !== id);
+    refreshList();
+    const section = strip();
+    if (section) {
+        const left = current.attachments || [];
+        const next = left[Math.min(Math.max(index, 0), left.length - 1)];
+        const target = next
+            ? section.querySelector(`.attachment-open[data-attachment-id="${next.id}"]`)
+            : section.querySelector('#attachments-heading');
+        target?.focus();
+        setStatus(`${filename || 'Attachment'} deleted`);
+    }
     // Inline copies of it stay as they are until the next render; the
     // cached URL goes once nothing shows it.
     showToast('Attachment deleted', 'success');
@@ -390,6 +529,8 @@ export async function deleteAttachment(id, filename) {
 
 /**
  * Accept files dropped anywhere on `zone` (the issue page's main column).
+ * A file dropped anywhere else on the page is refused, never opened by
+ * the browser in place of the app.
  * @param {Element} zone
  * @param {string} issueId
  * @param {AbortSignal} signal
@@ -414,6 +555,14 @@ export function setupAttachmentDrop(zone, issueId, signal) {
         mark(false);
         uploadAttachments(issueId, e.dataTransfer.files);
     }, { signal });
+    for (const type of ['dragover', 'drop']) {
+        document.addEventListener(type, (e) => {
+            if (!hasFiles(e) || zone.contains(e.target)) return;
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+            if (type === 'drop') mark(false);
+        }, { signal });
+    }
 }
 
 // Act on a click, or on Enter/Space on an element with no click of its
@@ -422,16 +571,33 @@ export function setupAttachmentDrop(zone, issueId, signal) {
 const activated = (event, target) => event.type === 'click'
     || (event.type === 'keydown' && target.tagName !== 'A' && target.tagName !== 'BUTTON');
 
+function openFrom(target) {
+    openAttachment(target.dataset.attachmentId || target.dataset.attachmentRef, {
+        filename: target.dataset.filename || target.getAttribute('alt') || '',
+        contentType: target.dataset.contentType || '',
+    });
+}
+
+/**
+ * A middle click on an attachment link would open its address in a new
+ * tab without the token (a 401 page): open it here instead.
+ * @param {MouseEvent} event
+ */
+export function handleAuxClick(event) {
+    if (event.button !== 1) return;
+    const target = event.target?.closest?.('[data-action="open-attachment"]');
+    if (!target) return;
+    event.preventDefault();
+    openFrom(target);
+}
+
 registerActions({
     'open-attachment': (event, data, target) => {
         if (!activated(event, target)) return;
         // Every activation, a modified click too: the link's own address
         // would open without the token and answer 401.
         event.preventDefault();
-        openAttachment(data.attachmentId || data.attachmentRef, {
-            filename: data.filename || target.getAttribute('alt') || '',
-            contentType: data.contentType || '',
-        });
+        openFrom(target);
     },
     'download-attachment': (event, data, target) => {
         if (!activated(event, target)) return;

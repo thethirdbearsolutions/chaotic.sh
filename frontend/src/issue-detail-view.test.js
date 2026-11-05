@@ -553,6 +553,29 @@ describe('issue-detail-view', () => {
             expect(document.querySelector('#issue-attachments .attachments-hint').textContent).toMatch(/could not be loaded/);
         });
 
+        it('reads admin from the issue\'s own team, and says unknown for another team (CHT-1996)', async () => {
+            const { attachmentViewer } = await import('./issue-detail-view.js');
+            const { getProjects } = await import('./projects.js');
+            const { getMembers } = await import('./teams.js');
+            const { getCurrentUser, getCurrentTeam } = await import('./state.js');
+            const [savedUser, savedTeam] = [getCurrentUser(), getCurrentTeam()];
+            setCurrentUser({ id: 'u1', name: 'Sam' });
+            setCurrentTeam({ id: 't1', name: 'Team' });
+            getProjects.mockReturnValue([{ id: 'p1', team_id: 't1' }, { id: 'p2', team_id: 't2' }]);
+            getMembers.mockReturnValue([{ user_id: 'u1', role: 'admin' }]);
+            expect(attachmentViewer({ project_id: 'p1' })).toEqual({ userId: 'u1', isAdmin: true });
+            getMembers.mockReturnValue([{ user_id: 'u1', role: 'member' }]);
+            expect(attachmentViewer({ project_id: 'p1' })).toEqual({ userId: 'u1', isAdmin: false });
+            // Another team's issue, or one whose project is not loaded: the
+            // current team's roles say nothing about it.
+            expect(attachmentViewer({ project_id: 'p2' }).isAdmin).toBeNull();
+            expect(attachmentViewer({ project_id: 'p9' }).isAdmin).toBeNull();
+            getProjects.mockReturnValue([]);
+            getMembers.mockReturnValue([]);
+            setCurrentUser(savedUser);
+            setCurrentTeam(savedTeam);
+        });
+
         it('updates browser history by default', async () => {
             const pushStateSpy = vi.spyOn(history, 'pushState');
 

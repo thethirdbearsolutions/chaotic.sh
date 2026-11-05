@@ -28,7 +28,8 @@ import { renderMarkdown } from './gate-approvals.js';
 import {
     hydrateAttachments, releaseUnused, renderAttachmentsSection, uploadAttachments,
     deleteAttachment, openAttachment, formatFileSize, rememberAttachments,
-    initAttachmentImages, _resetAttachmentsForTest,
+    initAttachmentImages, _resetAttachmentsForTest, setupAttachmentDrop, uploadRefusal,
+    handleAuxClick, MAX_UPLOAD_BYTES, _timing,
 } from './attachments.js';
 
 const actions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
@@ -132,6 +133,41 @@ describe('rendered markdown', () => {
         expect(html).not.toContain(`src="${PATH}"`);
         expect(html).toContain(`data-attachment-id="${ID}"`);
         expect(html).toContain(`data-attachment-ref="${ID}"`);
+    });
+
+    it('drops data-* from content, so a comment cannot plant a working control', () => {
+        const html = renderCommentContent([
+            `<button data-action="delete-attachment" data-attachment-id="${ID}" data-filename="old">Show more</button>`,
+            '<label>Logs<input type="file" data-action="pick-attachments" data-issue-id="other"></label>',
+            '<button data-action="approve-ritual" data-ritual-id="r1">Looks good</button>',
+            `<img data-attachment-id="${ID2}" data-attachment-state="loaded">`,
+            '',
+            `![shot.png](${PATH})`,
+        ].join('\n'));
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        expect(div.querySelectorAll('[data-action]:not(img.attachment-inline)')).toHaveLength(0);
+        expect(div.querySelectorAll('[data-attachment-state], [data-ritual-id], [data-issue-id]')).toHaveLength(0);
+        // What the app adds after sanitising is still there.
+        const marked = div.querySelectorAll('img.attachment-inline');
+        expect(marked).toHaveLength(1);
+        expect(marked[0].dataset.attachmentId).toBe(ID);
+        expect(marked[0].dataset.action).toBe('open-attachment');
+    });
+
+    it('an inline image is a labelled control; inside a link, the link is', () => {
+        const div = document.createElement('div');
+        div.innerHTML = renderCommentContent(`![shot.png](${PATH})\n\n[![wrapped.png](${PATH})](${PATH})`);
+        const [alone, wrapped] = div.querySelectorAll('img');
+        expect(alone.getAttribute('role')).toBe('button');
+        expect(alone.getAttribute('aria-label')).toBe('View shot.png');
+        expect(alone.getAttribute('tabindex')).toBe('0');
+        expect(wrapped.hasAttribute('data-action')).toBe(false);
+        expect(wrapped.hasAttribute('tabindex')).toBe(false);
+        expect(wrapped.dataset.attachmentId).toBe(ID);
+        const link = wrapped.closest('a');
+        expect(link.dataset.action).toBe('open-attachment');
+        expect(link.dataset.attachmentRef).toBe(ID);
     });
 
     it('still links issue ids and mentions', () => {
@@ -386,6 +422,251 @@ describe('opening an attachment', () => {
         expect(prevent).not.toHaveBeenCalled();
         actions['open-attachment']({ type: 'click', preventDefault: prevent }, link.dataset, link);
         expect(prevent).toHaveBeenCalled();
+    });
+});
+
+describe('the strip keeps focus and its live region', () => {
+    const tile = (id, name) => ({ id, issue_id: 'i1', uploader_id: 'u1', uploader_name: 'Sam', filename: name, content_type: 'application/pdf', size: 10, created_at: new Date().toISOString() });
+    const ID3 = '9b2e5a3c-1d4f-4e6a-8b7c-0a1b2c3d4e5f';
+
+    beforeEach(() => vi.spyOn(window, 'confirm').mockReturnValue(true));
+
+    it('after a delete, focus moves to the next tile, then the previous, then the heading', async () => {
+        document.body.innerHTML = renderAttachmentsSection('i1', [tile(ID, 'a.pdf'), tile(ID2, 'b.pdf'), tile(ID3, 'c.pdf')], { userId: 'u1' });
+        const status = document.querySelector('.attachments-status');
+        api.deleteAttachment.mockResolvedValue(null);
+        await deleteAttachment(ID2, 'b.pdf');
+        expect(document.activeElement.dataset.attachmentId).toBe(ID3);
+        expect(document.querySelector('.attachments-status')).toBe(status);
+        expect(status.textContent).toBe('b.pdf deleted');
+        await deleteAttachment(ID3, 'c.pdf');
+        expect(document.activeElement.dataset.attachmentId).toBe(ID);
+        await deleteAttachment(ID, 'a.pdf');
+        expect(document.activeElement.id).toBe('attachments-heading');
+        expect(document.querySelector('.section-count').textContent).toBe('');
+    });
+
+    it('an upload keeps the input (and its focus) and speaks through the same live region', async () => {
+        document.body.innerHTML = renderAttachmentsSection('i1', [], { userId: 'u1' });
+        const input = document.querySelector('input[type=file]');
+        const status = document.querySelector('.attachments-status');
+        input.focus();
+        const said = [];
+        new MutationObserver(() => said.push(status.textContent)).observe(status, { childList: true, characterData: true, subtree: true });
+        api.uploadAttachment.mockResolvedValue(tile(ID, 'a.pdf'));
+        await uploadAttachments('i1', [new File(['%PDF'], 'a.pdf', { type: 'application/pdf' })]);
+        await flush();
+        expect(document.querySelector('input[type=file]')).toBe(input);
+        expect(document.activeElement).toBe(input);
+        expect(document.querySelector('.attachments-status')).toBe(status);
+        expect(said).toContain('Uploading a.pdf…');
+        expect(status.textContent).toBe('1 file attached');
+        expect(document.querySelector('.section-count').textContent).toBe('1');
+    });
+});
+
+describe('checks before an upload', () => {
+    const big = () => {
+        const f = new File(['x'], 'big.pdf', { type: 'application/pdf' });
+        Object.defineProperty(f, 'size', { value: MAX_UPLOAD_BYTES + 1 });
+        return f;
+    };
+
+    it.each([
+        ['over the limit', big(), /big\.pdf is 10\.0 MB; the limit is 10\.0 MB/],
+        ['an SVG', new File(['<svg/>'], 'logo.svg', { type: 'image/svg+xml' }), /only PNG, JPEG, GIF, WebP, PDF or plain text/],
+        ['HTML', new File(['<p>'], 'page.html', { type: 'text/html' }), /can't be attached/],
+        ['a folder', new File([], 'photos', { type: '' }), /photos is empty or a folder/],
+    ])('refuses %s without sending it', async (_label, file, message) => {
+        expect(uploadRefusal(file)).toMatch(message);
+        document.body.innerHTML = renderAttachmentsSection('i1', [], {});
+        expect(await uploadAttachments('i1', [file])).toBe(0);
+        expect(api.uploadAttachment).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledWith(expect.stringMatching(message), 'error');
+    });
+
+    it('sends an accepted type, and an unknown one for the server to judge', () => {
+        expect(uploadRefusal(new File(['a'], 'shot.png', { type: 'image/png' }))).toBeNull();
+        expect(uploadRefusal(new File(['a'], 'run.log', { type: '' }))).toBeNull();
+        expect(uploadRefusal(new File(['a'], 'notes.md', { type: 'text/markdown' }))).toBeNull();
+    });
+
+    it('the picker offers only what the server takes', () => {
+        document.body.innerHTML = renderAttachmentsSection('i1', [], {});
+        expect(document.querySelector('input[type=file]').getAttribute('accept')).toContain('image/png');
+        expect(document.querySelector('input[type=file]').getAttribute('accept')).not.toContain('svg');
+    });
+
+    it('does not send a large body twice after a lost answer', async () => {
+        document.body.innerHTML = renderAttachmentsSection('i1', [], {});
+        const f = new File(['x'], 'scan.pdf', { type: 'application/pdf' });
+        Object.defineProperty(f, 'size', { value: 5 * 1024 * 1024 });
+        api.uploadAttachment.mockRejectedValue(Object.assign(new Error('net'), { isNetworkError: true }));
+        api.getAttachments.mockResolvedValue([]);
+        await uploadAttachments('i1', [f]);
+        expect(api.uploadAttachment).toHaveBeenCalledTimes(1);
+        // No answer: the list is asked again rather than reporting a failure.
+        expect(api.getAttachments).toHaveBeenCalledWith('i1');
+    });
+});
+
+describe('a resend that finds the first send still in progress (409 in flight)', () => {
+    const inFlight = () => Object.assign(new Error('still being done'), { status: 409, detail: { error_code: 'idempotency_in_flight' } });
+    const png = { id: ID, issue_id: 'i1', uploader_id: 'u1', filename: 'shot.png', content_type: 'image/png', size: 4, created_at: new Date().toISOString() };
+    let saved;
+    beforeEach(() => { saved = { ..._timing }; _timing.inFlightRetryMs = 0; });
+    afterEach(() => Object.assign(_timing, saved));
+
+    it('asks again under the same key and shows the file', async () => {
+        document.body.innerHTML = renderAttachmentsSection('i1', [], {});
+        api.uploadAttachment
+            .mockRejectedValueOnce(Object.assign(new Error('net'), { isNetworkError: true }))
+            .mockRejectedValueOnce(inFlight())
+            .mockResolvedValueOnce(png);
+        expect(await uploadAttachments('i1', [new File(['a'], 'shot.png', { type: 'image/png' })])).toBe(1);
+        const keys = new Set(api.uploadAttachment.mock.calls.map(c => c[2].idempotencyKey));
+        expect(api.uploadAttachment).toHaveBeenCalledTimes(3);
+        expect(keys.size).toBe(1);
+        expect(document.querySelectorAll('.attachment-item')).toHaveLength(1);
+        expect(showApiError).not.toHaveBeenCalled();
+    });
+
+    it('still in flight after the tries: re-lists instead of reporting a failure', async () => {
+        document.body.innerHTML = renderAttachmentsSection('i1', [], {});
+        api.uploadAttachment
+            .mockRejectedValueOnce(Object.assign(new Error('net'), { isNetworkError: true }))
+            .mockRejectedValue(inFlight());
+        api.getAttachments.mockResolvedValue([png]);
+        await uploadAttachments('i1', [new File(['a'], 'shot.png', { type: 'image/png' })]);
+        expect(showApiError).not.toHaveBeenCalled();
+        expect(api.getAttachments).toHaveBeenCalledWith('i1');
+        expect(document.querySelectorAll('.attachment-item')).toHaveLength(1);
+    });
+
+    it('a list that failed to load is asked again after an upload', async () => {
+        document.body.innerHTML = renderAttachmentsSection('i1', null, {});
+        api.uploadAttachment.mockResolvedValue(png);
+        api.getAttachments.mockResolvedValue([png]);
+        await uploadAttachments('i1', [new File(['a'], 'shot.png', { type: 'image/png' })]);
+        expect(document.querySelector('.attachments-hint')).toBeNull();
+        expect(document.querySelectorAll('.attachment-item')).toHaveLength(1);
+    });
+
+    it('two drops run one after the other', async () => {
+        document.body.innerHTML = renderAttachmentsSection('i1', [], {});
+        const order = [];
+        api.uploadAttachment.mockImplementation(async (_i, file) => {
+            order.push(`start ${file.name}`);
+            await flush();
+            order.push(`end ${file.name}`);
+            return { ...png, id: file.name === 'a.png' ? ID : ID2, filename: file.name };
+        });
+        await Promise.all([
+            uploadAttachments('i1', [new File(['a'], 'a.png', { type: 'image/png' })]),
+            uploadAttachments('i1', [new File(['b'], 'b.png', { type: 'image/png' })]),
+        ]);
+        expect(order).toEqual(['start a.png', 'end a.png', 'start b.png', 'end b.png']);
+    });
+});
+
+describe('drag and drop', () => {
+    let controller;
+    const drag = (type, target, { files = [], types = ['Files'], relatedTarget = null } = {}) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'dataTransfer', { value: { types, files, dropEffect: 'none' } });
+        Object.defineProperty(event, 'relatedTarget', { value: relatedTarget });
+        target.dispatchEvent(event);
+        return event;
+    };
+
+    beforeEach(() => {
+        document.body.innerHTML = `<aside id="side"></aside><div class="detail-main"><p id="inside"></p>${renderAttachmentsSection('i1', [], {})}</div>`;
+        controller = new AbortController();
+        setupAttachmentDrop(document.querySelector('.detail-main'), 'i1', controller.signal);
+        api.uploadAttachment.mockResolvedValue({ id: ID, issue_id: 'i1', filename: 'a.png', content_type: 'image/png', size: 1, created_at: new Date().toISOString() });
+    });
+    afterEach(() => controller.abort());
+
+    it('a file dragged over the column highlights the strip and can drop', () => {
+        const event = drag('dragover', document.getElementById('inside'));
+        expect(event.defaultPrevented).toBe(true);
+        expect(document.getElementById('issue-attachments').classList.contains('is-dragover')).toBe(true);
+        drag('dragleave', document.querySelector('.detail-main'), { relatedTarget: document.getElementById('side') });
+        expect(document.getElementById('issue-attachments').classList.contains('is-dragover')).toBe(false);
+    });
+
+    it('a drag of text, not files, is left alone', () => {
+        const event = drag('dragover', document.getElementById('inside'), { types: ['text/plain'] });
+        expect(event.defaultPrevented).toBe(false);
+        expect(document.getElementById('issue-attachments').classList.contains('is-dragover')).toBe(false);
+    });
+
+    it('a drop uploads the files and clears the highlight', async () => {
+        drag('dragover', document.getElementById('inside'));
+        const file = new File(['a'], 'a.png', { type: 'image/png' });
+        const event = drag('drop', document.getElementById('inside'), { files: [file] });
+        expect(event.defaultPrevented).toBe(true);
+        expect(document.getElementById('issue-attachments').classList.contains('is-dragover')).toBe(false);
+        await flush();
+        expect(api.uploadAttachment).toHaveBeenCalledWith('i1', file, expect.any(Object));
+    });
+
+    it('a drop outside the column is refused, not opened by the browser', async () => {
+        const event = drag('drop', document.getElementById('side'), { files: [new File(['a'], 'a.png', { type: 'image/png' })] });
+        expect(event.defaultPrevented).toBe(true);
+        await flush();
+        expect(api.uploadAttachment).not.toHaveBeenCalled();
+    });
+
+    it('the listeners go with the page', () => {
+        controller.abort();
+        const event = drag('dragover', document.getElementById('inside'));
+        expect(event.defaultPrevented).toBe(false);
+    });
+});
+
+describe('keyboard, middle click and the viewer', () => {
+    it('Enter on a linked attachment image opens it with the token, not the raw address', async () => {
+        api.fetchAttachmentContent.mockResolvedValue(pngBlob());
+        const div = document.createElement('div');
+        div.innerHTML = renderCommentContent(`[![w.png](${PATH})](${PATH})`);
+        document.body.appendChild(div);
+        const link = div.querySelector('a');
+        const click = { type: 'click', preventDefault: vi.fn() };
+        actions['open-attachment'](click, link.dataset, link);
+        expect(click.preventDefault).toHaveBeenCalled();
+        await flush();
+        expect(api.fetchAttachmentContent).toHaveBeenCalledWith(ID);
+        expect(showModal).toHaveBeenCalled();
+    });
+
+    it('a middle click on an attachment link opens it here', async () => {
+        api.fetchAttachmentContent.mockResolvedValue(pngBlob());
+        document.body.innerHTML += `<p><a href="${PATH}" class="attachment-link" data-action="open-attachment" data-attachment-ref="${ID}">s</a></p>`;
+        const event = new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 });
+        document.querySelector('a.attachment-link').dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        handleAuxClick({ button: 1, target: document.querySelector('a.attachment-link'), preventDefault: () => { event.handled = true; } });
+        expect(event.handled).toBe(true);
+        initAttachmentImages();
+        const second = new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 });
+        document.querySelector('a.attachment-link').dispatchEvent(second);
+        expect(second.defaultPrevented).toBe(true);
+    });
+
+    it('the viewer takes focus, and drops its image (and URL) when the modal closes', async () => {
+        document.body.innerHTML = '<div id="modal-overlay" class="modal-overlay hidden"><div class="modal"><h3 id="modal-title"></h3><div id="modal-content"></div></div></div>';
+        showModal.mockImplementation(() => document.getElementById('modal-overlay').classList.remove('hidden'));
+        api.fetchAttachmentContent.mockResolvedValue(pngBlob());
+        await openAttachment(ID, { filename: 'shot.png', contentType: 'image/png' });
+        await flush();
+        expect(document.activeElement.textContent).toBe('Download');
+        expect(document.querySelector('#modal-content img').getAttribute('src')).toBe('blob:test/1');
+        document.getElementById('modal-overlay').classList.add('hidden');
+        await flush();
+        expect(document.querySelector('#modal-content .attachment-viewer')).toBeNull();
+        expect(revoked).toEqual(['blob:test/1']);
+        showModal.mockReset();
     });
 });
 

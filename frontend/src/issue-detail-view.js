@@ -295,12 +295,20 @@ function canApproveAttestations() {
 /**
  * Who is looking, for the Attachments strip: an attachment's uploader or
  * a team admin may delete it (the server decides; this only hides the
- * button from everyone else). Unlike canApproveAttestations, an unloaded
- * member list counts as not an admin: the uploader still sees theirs.
+ * button from everyone else).
  */
-function attachmentViewer() {
+export function attachmentViewer(issue) {
     const user = getCurrentUser();
-    const self = (getMembers() || []).find(m => m.user_id === user?.id);
+    const project = getProjects().find(p => p.id === issue?.project_id);
+    const team = getCurrentTeam();
+    const members = getMembers() || [];
+    // The server checks the issue's team. Only the loaded members of that
+    // same team can answer here; otherwise null (unknown): Delete is
+    // offered and a 403 explains.
+    if (!project || !team || project.team_id !== team.id || members.length === 0) {
+        return { userId: user?.id || null, isAdmin: null };
+    }
+    const self = members.find(m => m.user_id === user?.id);
     return { userId: user?.id || null, isAdmin: !!self && (self.role === 'admin' || self.role === 'owner') };
 }
 
@@ -830,7 +838,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                         </div>
                     </div>
 
-                    ${renderAttachmentsSection(issue.id, attachments, attachmentViewer())}
+                    ${renderAttachmentsSection(issue.id, attachments, attachmentViewer(issue))}
 
                     ${renderRelatedWork(issue, subIssues, relations, { formatEstimate })}
 

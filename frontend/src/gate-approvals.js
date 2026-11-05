@@ -47,7 +47,12 @@ export function renderMarkdown(content) {
         // children as raw text, not DOM nodes (CHT-829)
         const safeHtml = rawHtml.replace(/<(\/?)(?:title|style|textarea|xmp)\b[^>]*>/gi,
             (match) => match.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
-        const clean = DOMPurify.sanitize(safeHtml, { FORCE_BODY: true });
+        // No data-* attributes from content (CHT-1996 review): event
+        // delegation dispatches any [data-action] click, so markup in a
+        // comment could otherwise plant a working control (delete an
+        // attachment, approve a ritual). Every data-* the app needs is
+        // added after sanitising (attachment refs, issue links, mentions).
+        const clean = DOMPurify.sanitize(safeHtml, { FORCE_BODY: true, ALLOW_DATA_ATTR: false });
         return clean.includes('/api/attachments/') ? withAttachmentRefs(clean) : clean;
     } catch (e) {
         console.error('Markdown parsing error:', e);

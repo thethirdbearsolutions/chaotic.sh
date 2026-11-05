@@ -58,18 +58,20 @@ export function markAttachmentRefs(root) {
         img.removeAttribute('src');
         img.removeAttribute('srcset');
         img.setAttribute('data-attachment-id', id);
+        img.classList.add('attachment-inline');
+        // Inside a link the link is the control (one tab stop, and Enter
+        // on it is handled); on its own the image is.
+        if (img.closest('a[href]')) continue;
         img.setAttribute('data-action', 'open-attachment');
         img.setAttribute('tabindex', '0');
-        img.classList.add('attachment-inline');
+        img.setAttribute('role', 'button');
+        img.setAttribute('aria-label', `View ${img.getAttribute('alt') || 'image'}`);
     }
     for (const link of root.querySelectorAll('a[href]')) {
         const id = attachmentIdFromUrl(link.getAttribute('href'));
         if (!id) continue;
         link.setAttribute('data-attachment-ref', id);
-        // A link around an inline image: the image opens it.
-        if (!link.querySelector('img[data-attachment-id]')) {
-            link.setAttribute('data-action', 'open-attachment');
-        }
+        link.setAttribute('data-action', 'open-attachment');
         link.classList.add('attachment-link');
     }
 }
