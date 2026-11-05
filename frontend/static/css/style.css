@@ -7315,13 +7315,23 @@ body.theme-light .segmented-btn.active {
     margin-bottom: 6px;
 }
 
+/* One body container for every expanded row (CHT-2081): an assignment's
+   text and a review's attestation sit in the same box. */
 .inbox-expanded-body {
-    font-size: var(--font-sm);
+    max-width: 720px;
+    font-size: var(--font-md);
     color: var(--text-primary);
     white-space: pre-wrap;
     word-break: break-word;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg) 14px;
     margin-bottom: 10px;
 }
+.inbox-expanded-markdown { white-space: normal; }
+.inbox-expanded-markdown .markdown-body > :first-child { margin-top: 0; }
+.inbox-expanded-markdown .markdown-body > :last-child { margin-bottom: 0; }
+.inbox-expanded-markdown .ticket-gate-artifact { margin-top: var(--space-sm); }
 
 .inbox-action-bar {
     display: flex;
@@ -7378,16 +7388,14 @@ body.theme-light .segmented-btn.active {
 
 /* A review or gate decided in place (CHT-2031): the ticket gate's
    attestation block, what the ritual asks, and the decision buttons. */
-.inbox-decision {
+.inbox-decision-asks {
     max-width: 720px;
-    margin-bottom: 12px;
-}
-.inbox-decision .ticket-gate-attestation {
     margin-bottom: 10px;
 }
-.inbox-decision .ticket-gate-asks {
+.inbox-decision-asks-text {
     font-size: var(--font-sm);
-    margin: 0 0 10px;
+    color: var(--text-secondary);
+    margin: 0 0 4px;
 }
 .inbox-decision-asks summary {
     display: inline-block;
@@ -7406,9 +7414,13 @@ body.theme-light .segmented-btn.active {
     color: var(--text-muted);
     margin-bottom: 10px;
 }
+/* The primary step has the outlined buttons' size and shape, filled
+   (CHT-2081): one row of buttons, not two styles side by side. */
 .inbox-action-bar .btn-sm {
     height: auto;
-    padding: 6px 14px;
+    padding: 6px 10px;
+    border: 1px solid transparent;
+    border-radius: 4px;
     font-size: var(--font-sm);
     line-height: 1;
 }

@@ -101,7 +101,7 @@ function kicker(who, r) {
     return `<div class="ticket-gate-kicker">Waiting on ${escapeHtml(who)}<span class="ticket-gate-when"> · ${whenNeeded(r)}</span></div>`;
 }
 
-function renderArtifact(att) {
+export function renderArtifact(att) {
     const ref = att && att.artifact_ref;
     if (!ref || typeof ref !== 'string') return '';
     if (/^https?:\/\//i.test(ref)) {

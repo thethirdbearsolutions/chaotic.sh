@@ -147,9 +147,8 @@ describe('an open review row', () => {
     it('shows the attestation, with the prompt behind a disclosure', async () => {
         const el = await openRow(REVIEW, { pending_rituals: [RITUAL], completed_rituals: [] });
         expect(api.getTicketRitualsStatus).toHaveBeenCalledWith('issue-7');
-        const att = el.querySelector('.ticket-gate-attestation');
-        expect(att.textContent).toContain('builder-bot attested');
-        expect(att.textContent).toContain(NOTE);
+        expect(el.querySelector('.inbox-expanded-source').textContent).toContain('builder-bot attested');
+        expect(el.querySelector('.inbox-expanded-body').textContent).toContain(NOTE);
         const asks = el.querySelector('details.inbox-decision-asks');
         expect(asks).not.toBeNull();
         expect(asks.open).toBe(false);
@@ -188,7 +187,43 @@ describe('an open review row', () => {
         api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [RITUAL], completed_rituals: [] });
         press('retry-inbox-decision', { entryId: REVIEW.id });
         await flush();
-        expect(row(REVIEW.id).querySelector('.ticket-gate-attestation')).not.toBeNull();
+        expect(row(REVIEW.id).querySelector('.inbox-expanded-body').textContent).toContain(NOTE);
+    });
+});
+
+describe('one expanded layout for every kind (CHT-2081)', () => {
+    const ASSIGNED = {
+        id: 'e-assign', kind: 'assignment', title: 'Ada assigned you APP-3', body: 'Fix the login page',
+        issue_id: 'issue-3', issue_identifier: 'APP-3', source_user_id: 'u-ada', source_user_name: 'Ada',
+        created_at: '2026-11-05T09:00:00Z', read_at: null, state: 'open',
+        actions: [{ kind: 'archive', path: '/x' }],
+    };
+
+    function parts(el) {
+        const panel = el.querySelector('.inbox-row-expanded-panel');
+        return [...panel.children].map(c => c.className.split(' ')[0]);
+    }
+
+    it('gives a review and an assignment the same parts in the same order', async () => {
+        const review = await openRow(REVIEW, { pending_rituals: [RITUAL], completed_rituals: [] });
+        expect(parts(review)).toEqual(['inbox-expanded-source', 'inbox-expanded-body', 'inbox-decision-asks', 'inbox-action-bar']);
+        toggleInboxEntryExpand(REVIEW.id);
+
+        setInboxEntries([ASSIGNED]);
+        renderInbox();
+        toggleInboxEntryExpand(ASSIGNED.id);
+        const assigned = row(ASSIGNED.id);
+        expect(parts(assigned)).toEqual(['inbox-expanded-source', 'inbox-expanded-body', 'inbox-action-bar']);
+        expect(assigned.querySelector('.inbox-expanded-source').textContent).toContain('Ada assigned you this');
+    });
+
+    it('puts Send back in the row of outlined buttons, with only the decision filled', async () => {
+        const el = await openRow(REVIEW, { pending_rituals: [RITUAL], completed_rituals: [] });
+        const buttons = [...el.querySelectorAll('.inbox-action-bar button')];
+        expect(buttons[0].classList.contains('btn-primary')).toBe(true);
+        for (const b of buttons.slice(1)) {
+            expect(b.classList.contains('inbox-action-btn')).toBe(true);
+        }
     });
 });
 
@@ -343,7 +378,7 @@ describe('an open gate row', () => {
     it('shows what it asks in full and offers Sign off', async () => {
         const el = await openRow(GATE, { pending_rituals: [GATE_RITUAL], completed_rituals: [] });
         expect(el.querySelector('details.inbox-decision-asks')).toBeNull();
-        expect(el.querySelector('.ticket-gate-asks').textContent).toContain('Deployed to staging?');
+        expect(el.querySelector('.inbox-expanded-body').textContent).toContain('Deployed to staging?');
         press('sign-off-inbox-entry', {
             entryId: GATE.id, ritualId: 'gate-r', issueId: 'issue-7', ritualName: 'deploy-check', ritualArtifact: '',
         });
