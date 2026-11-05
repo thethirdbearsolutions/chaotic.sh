@@ -21,7 +21,6 @@ const dom = (html) => {
 const fmt = {
     formatText: (a) => `did ${a.activity_type}`,
     formatActor: (a) => a.user_name || 'Unknown',
-    getAssigneeById: () => null,
 };
 
 describe('renderRelatedWork', () => {
@@ -132,9 +131,17 @@ describe('renderTimeline', () => {
         expect(el.querySelector('.timeline-truncated').textContent).toBe('Older activity is not shown.');
     });
 
-    it('marks agents on event lines', () => {
-        const el = dom(renderTimeline({ activities: [{ ...created, user: { is_agent: true } }], issueId: 'i1' }, fmt));
-        expect(el.querySelector('.timeline-meta .badge-agent')).not.toBeNull();
+    it('shows no agent chip on comments or event lines, and keeps whose agent it is on hover (CHT-2026)', () => {
+        const agent = { id: 'a9', name: 'Builder', is_agent: true, kind: 'session', owner_id: 'u1', owner_name: 'Ada', registered_by_name: 'Ada' };
+        const el = dom(renderTimeline({
+            comments: [{ ...comment, author_name: 'Builder', author: agent }],
+            activities: [{ ...created, user: agent }],
+            issueId: 'i1',
+        }, fmt));
+        expect(el.querySelector('.badge')).toBeNull();
+        expect(el.textContent).not.toContain('agent');
+        expect(el.textContent).not.toContain('Ada');
+        expect(el.querySelector('.comment-author').getAttribute('title')).toBe('AI agent of Ada');
     });
 
     it('says when comments failed to load, and when there is nothing yet', () => {

@@ -10632,7 +10632,6 @@ body.theme-light {
 .timeline-event-body b,
 .timeline-event-body strong { color: var(--text-primary); font-weight: 600; }
 .timeline-meta { color: var(--text-muted); }
-.timeline-meta .badge { margin: 0 2px; vertical-align: 1px; }
 .timeline-truncated { font-size: var(--font-sm); color: var(--text-muted); margin-bottom: var(--space-sm); }
 .timeline-note { margin-top: 2px; }
 .timeline-note > summary { cursor: pointer; color: var(--text-muted); width: fit-content; }
@@ -10694,7 +10693,25 @@ body.theme-light {
     /* The composer is on this screen; the + button would cover the gate. */
     body:has(#issue-detail-view:not(.hidden)) .mobile-fab { display: none; }
 }
-.timeline-comment .comment-header { justify-content: flex-start; gap: 8px; margin-bottom: 2px; }
 .timeline-comment .comment-header .comment-date::before { content: '· '; }
-.timeline-comment .comment-content > :last-child { margin-bottom: 0; }
-.timeline .comment + .comment { padding-top: 12px; }
+
+/* Tighter timeline (CHT-2026): one rhythm for comments and events. */
+.timeline-comment.comment { padding: 8px 0; gap: 10px; }
+.timeline .comment + .comment { padding-top: 8px; border-top: 0; }
+.timeline-comment .comment-header { justify-content: flex-start; gap: 6px; margin-bottom: 0; line-height: 20px; }
+.timeline-comment .comment-author { font-size: var(--font-sm); }
+.timeline-comment .comment-date { font-size: var(--font-xs); }
+/* .comment-content is pre-wrap for plain text elsewhere; rendered markdown
+   puts a newline between blocks, which pre-wrap shows as an empty line.
+   Line breaks are already <br> (breaks: true) and <pre> keeps its own. */
+.timeline-comment .comment-content,
+.timeline-note .comment-content { white-space: normal; }
+.timeline-comment .comment-content { font-size: var(--font-base); line-height: 1.5; }
+.timeline-comment .comment-content :is(p, ul, ol, pre, blockquote) { margin: 0 0 6px; }
+.timeline-comment .comment-content :is(p, ul, ol, pre, blockquote):last-child { margin-bottom: 0; }
+.timeline-event { padding: 1px 0; gap: 10px; }
+.timeline-comment + .timeline-event { margin-top: 2px; }
+.timeline-event + .timeline-comment { margin-top: 4px; }
+.timeline-note { margin-top: 0; }
+.timeline-note .markdown-body { margin-top: 2px; font-size: var(--font-sm); }
+.timeline-note .markdown-body > :last-child { margin-bottom: 0; }
