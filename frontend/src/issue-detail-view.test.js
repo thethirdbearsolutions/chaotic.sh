@@ -13,6 +13,7 @@ vi.mock('./api.js', () => ({
         getSubIssues: vi.fn().mockResolvedValue([]),
         getRelations: vi.fn().mockResolvedValue([]),
         getTicketRitualsStatus: vi.fn().mockResolvedValue({ pending_rituals: [], completed_rituals: [] }),
+        getAttachments: vi.fn().mockResolvedValue([]),
         getSprints: vi.fn().mockResolvedValue([]),
         createComment: vi.fn().mockResolvedValue({}),
         updateIssue: vi.fn().mockResolvedValue({}),
@@ -535,6 +536,21 @@ describe('issue-detail-view', () => {
 
             const detailView = document.getElementById('issue-detail-view');
             expect(detailView.classList.contains('hidden')).toBe(false);
+        });
+
+        it('shows the Attachments strip, and a notice when its list fails (CHT-1996)', async () => {
+            api.getAttachments.mockResolvedValueOnce([{
+                id: '0f8fad5b-d9cb-469f-a165-70867728950e', issue_id: 'issue-1', uploader_id: null,
+                uploader_name: 'Sam', filename: 'shot.pdf', content_type: 'application/pdf', size: 10, created_at: new Date().toISOString(),
+            }]);
+            await viewIssue('issue-1');
+            const strip = document.getElementById('issue-attachments');
+            expect(strip.querySelector('.attachment-name').textContent).toBe('shot.pdf');
+            expect(api.getAttachments).toHaveBeenCalledWith('issue-1');
+
+            api.getAttachments.mockRejectedValueOnce(new Error('down'));
+            expect(await viewIssue('issue-1', false)).toBe('rendered');
+            expect(document.querySelector('#issue-attachments .attachments-hint').textContent).toMatch(/could not be loaded/);
         });
 
         it('updates browser history by default', async () => {

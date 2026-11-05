@@ -1,0 +1,450 @@
+/**
+ * Attachments on the issue page (CHT-1996): the Attachments strip, inline
+ * images in comments and descriptions, upload, open and delete.
+ *
+ * Attachment bytes are served only with a credential. The web app holds a
+ * bearer token, not a cookie, so every image is fetched with the token
+ * (api.fetchAttachmentContent, which only ever builds
+ * /api/attachments/<id>/content) and shown through a blob: URL. Which
+ * references get that treatment is decided in attachment-refs.js.
+ *
+ * Blob URLs: one per attachment, shared by every <img> showing it, and
+ * revoked as soon as no element in the document shows that attachment
+ * (a re-render, another issue, a closed preview). A MutationObserver on
+ * the document both loads new references wherever markdown is rendered
+ * (comments, descriptions, the editor preview, epics, documents) and
+ * releases the ones that left.
+ *
+ * Only PNG, JPEG, GIF and WebP are ever shown inline. Anything else (PDF,
+ * text) is a link that downloads the file.
+ */
+
+import { api } from './api.js';
+import { ATTACHMENT_ID_RE } from './attachment-refs.js';
+import { escapeHtml, escapeAttr, formatTimeAgo } from './utils.js';
+import { registerActions } from './event-delegation.js';
+import { showModal, showToast, showApiError } from './ui.js';
+
+export const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+const ICON = {
+    file: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+    clip: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
+    remove: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+};
+
+// What the strip knows about each attachment it listed: id -> response.
+// Lets an inline reference to a PDF become a link without fetching it.
+const known = new Map();
+
+// id -> { promise, url, type }: one fetch and one blob URL per attachment.
+const blobs = new Map();
+
+/** Remember attachments a list returned (their types and names). */
+export function rememberAttachments(list) {
+    for (const a of list || []) {
+        if (a && ATTACHMENT_ID_RE.test(a.id)) known.set(a.id, a);
+    }
+}
+
+function mediaType(type) {
+    return String(type || '').split(';')[0].trim().toLowerCase();
+}
+
+/**
+ * Fetch an attachment once and, when it is an inline image type, make
+ * its blob URL. Resolves to the cache entry ({url: null} for any other
+ * type: those bytes are dropped, not kept).
+ */
+function load(id) {
+    let entry = blobs.get(id);
+    if (entry) return entry.promise;
+    entry = { promise: null, url: null, type: null };
+    blobs.set(id, entry);
+    entry.promise = api.fetchAttachmentContent(id).then((blob) => {
+        entry.type = mediaType(blob.type);
+        // Released while it loaded (nothing shows it any more): no URL.
+        if (blobs.get(id) === entry && INLINE_IMAGE_TYPES.has(entry.type)) {
+            entry.url = URL.createObjectURL(blob);
+        }
+        return entry;
+    });
+    entry.promise.catch(() => {
+        // A failure is not cached: the next render asks again.
+        if (blobs.get(id) === entry) blobs.delete(id);
+    });
+    return entry.promise;
+}
+
+function forget(id) {
+    const entry = blobs.get(id);
+    if (entry?.url) URL.revokeObjectURL(entry.url);
+    blobs.delete(id);
+}
+
+/**
+ * Revoke the blob URL of every attachment no <img> in the document shows
+ * any more.
+ */
+export function releaseUnused() {
+    for (const id of [...blobs.keys()]) {
+        // ids are validated against ATTACHMENT_ID_RE, so safe in a selector.
+        if (!document.querySelector(`img[data-attachment-id="${id}"]`)) forget(id);
+    }
+}
+
+function attachmentPath(id) {
+    return `/api/attachments/${id}/content`;
+}
+
+function downloadLink(id, name) {
+    const link = document.createElement('a');
+    link.className = 'attachment-link';
+    link.href = attachmentPath(id);
+    link.setAttribute('data-action', 'open-attachment');
+    link.setAttribute('data-attachment-ref', id);
+    if (name) link.setAttribute('data-filename', name);
+    link.innerHTML = ICON.clip;
+    link.append(` ${name || 'Download attachment'}`);
+    return link;
+}
+
+function unavailable(error, name) {
+    const span = document.createElement('span');
+    span.className = 'attachment-unavailable';
+    const why = error?.status === 410 ? 'file no longer stored'
+        : (error?.status === 404 ? 'not found' : 'could not be loaded');
+    span.textContent = `${name || 'Attachment'}: ${why}`;
+    return span;
+}
+
+/**
+ * Load every attachment <img> under `root` that has not been loaded yet.
+ * @param {ParentNode} [root]
+ */
+export function hydrateAttachments(root = document) {
+    const imgs = root.querySelectorAll('img[data-attachment-id]:not([data-attachment-state])');
+    for (const img of imgs) {
+        const id = img.getAttribute('data-attachment-id');
+        if (!ATTACHMENT_ID_RE.test(id)) {
+            img.setAttribute('data-attachment-state', 'invalid');
+            continue;
+        }
+        const name = img.getAttribute('alt') || known.get(id)?.filename || '';
+        const listed = known.get(id);
+        if (listed && !INLINE_IMAGE_TYPES.has(mediaType(listed.content_type))) {
+            // Never inline: a link, without fetching the file.
+            img.replaceWith(downloadLink(id, listed.filename || name));
+            continue;
+        }
+        img.setAttribute('data-attachment-state', 'loading');
+        load(id).then((entry) => {
+            if (entry.url) {
+                img.src = entry.url;
+                img.setAttribute('data-attachment-state', 'loaded');
+            } else if (img.isConnected) {
+                img.replaceWith(downloadLink(id, name));
+            }
+        }, (error) => {
+            img.setAttribute('data-attachment-state', 'failed');
+            if (img.isConnected && !img.closest('.attachment-thumb')) img.replaceWith(unavailable(error, name));
+        }).finally(scheduleSweep);
+    }
+}
+
+let sweepScheduled = false;
+function scheduleSweep() {
+    if (sweepScheduled) return;
+    sweepScheduled = true;
+    queueMicrotask(() => {
+        sweepScheduled = false;
+        // The page may be gone by then (a test environment torn down).
+        if (typeof document === 'undefined') return;
+        hydrateAttachments(document);
+        releaseUnused();
+    });
+}
+
+let observer = null;
+/** Start loading and releasing attachment images as the page changes. */
+export function initAttachmentImages() {
+    if (observer || typeof MutationObserver === 'undefined' || !document.body) return;
+    observer = new MutationObserver(scheduleSweep);
+    observer.observe(document.body, { childList: true, subtree: true });
+    scheduleSweep();
+}
+
+/** For tests: forget every cached file and stop observing. */
+export function _resetAttachmentsForTest() {
+    observer?.disconnect();
+    observer = null;
+    for (const id of [...blobs.keys()]) forget(id);
+    known.clear();
+    current = null;
+}
+
+// ---------------------------------------------------------------------------
+// Open and download
+// ---------------------------------------------------------------------------
+
+/** Save an attachment's bytes as a file, fetched with the token. */
+export async function downloadAttachment(id, filename) {
+    try {
+        const blob = await api.fetchAttachmentContent(id);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename || 'attachment';
+        link.rel = 'noopener';
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        // Long enough for the browser to start the download.
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (e) {
+        showApiError('download attachment', e);
+    }
+}
+
+function showViewer(id, filename) {
+    document.getElementById('modal-title').textContent = filename || 'Attachment';
+    document.getElementById('modal-content').innerHTML = `
+        <figure class="attachment-viewer">
+            <img data-attachment-id="${escapeAttr(id)}" alt="${escapeAttr(filename || '')}">
+            <figcaption class="attachment-viewer-actions">
+                <button type="button" class="btn btn-secondary btn-sm" data-action="download-attachment" data-attachment-id="${escapeAttr(id)}" data-filename="${escapeAttr(filename || '')}">Download</button>
+            </figcaption>
+        </figure>`;
+    document.querySelector('.modal')?.classList.add('modal-wide');
+    showModal();
+    hydrateAttachments(document.getElementById('modal-content'));
+}
+
+/**
+ * Open an attachment: an image in the viewer, anything else downloaded.
+ * @param {string} id
+ * @param {{filename?: string, contentType?: string}} [hint]
+ */
+export async function openAttachment(id, { filename = '', contentType = '' } = {}) {
+    if (!ATTACHMENT_ID_RE.test(id || '')) return;
+    const listed = known.get(id);
+    const name = filename || listed?.filename || '';
+    let type = mediaType(contentType || listed?.content_type);
+    if (!type) {
+        try {
+            type = (await load(id)).type;
+        } catch (e) {
+            showApiError('open attachment', e);
+            return;
+        }
+    }
+    if (INLINE_IMAGE_TYPES.has(type)) showViewer(id, name);
+    else downloadAttachment(id, name);
+}
+
+// ---------------------------------------------------------------------------
+// The Attachments strip
+// ---------------------------------------------------------------------------
+
+// The strip on screen: { issueId, attachments, userId, isAdmin, failed }.
+let current = null;
+
+export function formatFileSize(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function canDelete(attachment, { userId, isAdmin }) {
+    return isAdmin || (!!userId && attachment.uploader_id === userId);
+}
+
+function renderItem(a, who) {
+    const image = INLINE_IMAGE_TYPES.has(mediaType(a.content_type));
+    const name = a.filename || 'attachment';
+    const meta = [formatFileSize(a.size), a.uploader_name || 'Unknown', formatTimeAgo(a.created_at)]
+        .filter(Boolean).map(escapeHtml).join(' · ');
+    return `
+        <li class="attachment-item">
+            <button type="button" class="attachment-open" data-action="open-attachment" data-attachment-id="${escapeAttr(a.id)}" data-filename="${escapeAttr(name)}" data-content-type="${escapeAttr(a.content_type || '')}" title="${image ? 'View' : 'Download'} ${escapeAttr(name)}">
+                <span class="attachment-thumb">${image ? `<img data-attachment-id="${escapeAttr(a.id)}" alt="">` : ICON.file}</span>
+                <span class="attachment-name">${escapeHtml(name)}</span>
+                <span class="attachment-meta">${meta}</span>
+            </button>
+            ${canDelete(a, who) ? `<button type="button" class="attachment-delete" data-action="delete-attachment" data-attachment-id="${escapeAttr(a.id)}" data-filename="${escapeAttr(name)}" title="Delete" aria-label="Delete ${escapeAttr(name)}">${ICON.remove}</button>` : ''}
+        </li>`;
+}
+
+/**
+ * The Attachments section of the issue page.
+ * @param {string} issueId
+ * @param {Array|null} attachments - null when the list could not be loaded
+ * @param {{userId?: string, isAdmin?: boolean, uploading?: string}} [who]
+ */
+export function renderAttachmentsSection(issueId, attachments, { userId = null, isAdmin = false, uploading = '' } = {}) {
+    const list = attachments || [];
+    current = { issueId, attachments: attachments ? [...list] : null, userId, isAdmin };
+    rememberAttachments(list);
+    let body;
+    if (attachments === null) {
+        body = '<p class="attachments-hint">Attachments could not be loaded.</p>';
+    } else if (list.length) {
+        body = `<ul class="attachment-grid">${list.map(a => renderItem(a, { userId, isAdmin })).join('')}</ul>`;
+    } else {
+        body = '<p class="attachments-hint">Drop files here, or use Add. PNG, JPEG, GIF, WebP, PDF or text.</p>';
+    }
+    return `
+        <section class="attachments" id="issue-attachments" aria-label="Attachments" data-issue-id="${escapeAttr(issueId)}">
+            <div class="related-head">
+                <h3>Attachments${list.length ? ` <span class="section-count">${list.length}</span>` : ''}</h3>
+                <label class="ticket-gate-text-btn attachments-add">
+                    + Add
+                    <input type="file" multiple class="sr-only" data-action="pick-attachments" data-issue-id="${escapeAttr(issueId)}" aria-label="Attach files">
+                </label>
+            </div>
+            <div class="attachments-status" role="status" aria-live="polite">${uploading ? escapeHtml(uploading) : ''}</div>
+            ${body}
+        </section>`;
+}
+
+function rerender(uploading = '') {
+    if (!current) return;
+    const section = document.getElementById('issue-attachments');
+    if (!section || section.dataset.issueId !== current.issueId) return;
+    const { issueId, attachments, userId, isAdmin } = current;
+    section.outerHTML = renderAttachmentsSection(issueId, attachments, { userId, isAdmin, uploading });
+    hydrateAttachments(document.getElementById('issue-attachments'));
+}
+
+function uuid4() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    // randomUUID needs a secure context; a server reached over plain http
+    // on a LAN is not one. getRandomValues works everywhere.
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+async function uploadOne(issueId, file) {
+    const idempotencyKey = uuid4();
+    try {
+        return await api.uploadAttachment(issueId, file, { idempotencyKey });
+    } catch (e) {
+        // No answer: it may have been stored. The same key resends safely.
+        if (!e?.isNetworkError) throw e;
+        return api.uploadAttachment(issueId, file, { idempotencyKey });
+    }
+}
+
+/**
+ * Upload files to an issue one at a time, then show them in the strip.
+ * @param {string} issueId
+ * @param {FileList|File[]} files
+ * @returns {Promise<number>} how many were attached
+ */
+export async function uploadAttachments(issueId, files) {
+    const queue = [...(files || [])];
+    if (!queue.length) return 0;
+    let attached = 0;
+    for (const [i, file] of queue.entries()) {
+        if (current?.issueId === issueId) {
+            rerender(queue.length > 1 ? `Uploading ${file.name} (${i + 1} of ${queue.length})…` : `Uploading ${file.name}…`);
+        }
+        try {
+            const attachment = await uploadOne(issueId, file);
+            attached += 1;
+            rememberAttachments([attachment]);
+            if (current?.issueId === issueId && current.attachments) {
+                current.attachments = [...current.attachments.filter(a => a.id !== attachment.id), attachment];
+            }
+        } catch (e) {
+            showApiError(`attach ${file.name}`, e);
+        }
+    }
+    if (current?.issueId === issueId) rerender();
+    if (attached) showToast(attached === 1 ? 'File attached' : `${attached} files attached`, 'success');
+    return attached;
+}
+
+export async function deleteAttachment(id, filename) {
+    if (!ATTACHMENT_ID_RE.test(id || '')) return false;
+    if (!confirm(`Delete ${filename || 'this attachment'}? Comments that show it will show it as missing.`)) return false;
+    try {
+        await api.deleteAttachment(id);
+    } catch (e) {
+        showApiError('delete attachment', e);
+        return false;
+    }
+    known.delete(id);
+    if (current?.attachments) current.attachments = current.attachments.filter(a => a.id !== id);
+    rerender();
+    // Inline copies of it stay as they are until the next render; the
+    // cached URL goes once nothing shows it.
+    showToast('Attachment deleted', 'success');
+    return true;
+}
+
+/**
+ * Accept files dropped anywhere on `zone` (the issue page's main column).
+ * @param {Element} zone
+ * @param {string} issueId
+ * @param {AbortSignal} signal
+ */
+export function setupAttachmentDrop(zone, issueId, signal) {
+    if (!zone) return;
+    const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+    const mark = (on) => document.getElementById('issue-attachments')?.classList.toggle('is-dragover', on);
+    zone.addEventListener('dragover', (e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        mark(true);
+    }, { signal });
+    zone.addEventListener('dragleave', (e) => {
+        if (e.relatedTarget && zone.contains(e.relatedTarget)) return;
+        mark(false);
+    }, { signal });
+    zone.addEventListener('drop', (e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        mark(false);
+        uploadAttachments(issueId, e.dataTransfer.files);
+    }, { signal });
+}
+
+// Act on a click, or on Enter/Space on an element with no click of its
+// own (an inline image). Enter on a link or a button also fires a click,
+// and a drag over the page reaches these handlers too: neither counts.
+const activated = (event, target) => event.type === 'click'
+    || (event.type === 'keydown' && target.tagName !== 'A' && target.tagName !== 'BUTTON');
+
+registerActions({
+    'open-attachment': (event, data, target) => {
+        if (!activated(event, target)) return;
+        // Every activation, a modified click too: the link's own address
+        // would open without the token and answer 401.
+        event.preventDefault();
+        openAttachment(data.attachmentId || data.attachmentRef, {
+            filename: data.filename || target.getAttribute('alt') || '',
+            contentType: data.contentType || '',
+        });
+    },
+    'download-attachment': (event, data, target) => {
+        if (!activated(event, target)) return;
+        downloadAttachment(data.attachmentId, data.filename);
+    },
+    'delete-attachment': (event, data, target) => {
+        if (!activated(event, target)) return;
+        deleteAttachment(data.attachmentId, data.filename);
+    },
+    'pick-attachments': (event, data, target) => {
+        if (event.type !== 'change') return;
+        const files = [...(target.files || [])];
+        target.value = '';
+        uploadAttachments(data.issueId, files);
+    },
+});
