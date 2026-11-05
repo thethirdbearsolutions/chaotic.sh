@@ -57,6 +57,22 @@ async def test_delete_issue_broadcasts_event(client, auth_headers, test_issue):
         mock_broadcast.assert_awaited_once()
         call_args = mock_broadcast.call_args
         assert call_args[0][1] == "deleted"
+        payload = call_args[0][2]
+        assert payload["identifier"] == test_issue.identifier
+        assert payload["title"] == test_issue.title
+        assert payload["deleted_by_id"]
+        assert payload["deleted_by_name"]
+
+
+@pytest.mark.asyncio
+async def test_delete_issue_by_agent_names_the_agent(client, agent_user, agent_headers, test_issue):
+    """An agent's delete names the agent in the broadcast (CHT-2034)."""
+    with patch("app.api.issues.broadcast_issue_event", new_callable=AsyncMock) as mock_broadcast:
+        response = await client.delete(f"/api/issues/{test_issue.id}", headers=agent_headers)
+        assert response.status_code == 204
+        payload = mock_broadcast.call_args[0][2]
+        assert payload["deleted_by_id"] == agent_user.id
+        assert payload["deleted_by_name"] == agent_user.name
 
 
 # === Activity event broadcasting ===
