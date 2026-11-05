@@ -780,6 +780,23 @@ class TestReferentsGoAway:
         await self._switch(ritual, ApprovalMode.REVIEW)
         assert pushed == [([InboxEntryKind.REVIEW_REQUESTED], test_user.id)]
 
+    async def test_a_carried_review_request_shows_the_attestation(
+        self, db, test_issue, test_user, review_close_ritual,
+    ):
+        """CHT-2031: the carried entry is the attest-time one: the note as
+        its body, the attester as its source."""
+        from app.enums import ApprovalMode
+        from app.oxyde_models.ritual import OxydeRitualAttestation
+
+        ritual = await self._review_turned_gate(test_issue, test_user, review_close_ritual)
+        await self._switch(ritual, ApprovalMode.REVIEW)
+        attestation = await OxydeRitualAttestation.objects.get(ritual_id=ritual.id, issue_id=test_issue.id)
+        entry = await OxydeInboxEntry.objects.get(
+            ritual_id=ritual.id, issue_id=test_issue.id, kind=InboxEntryKind.REVIEW_REQUESTED, resolved_at=None,
+        )
+        assert entry.body == ((attestation.note or "").strip() or None)
+        assert entry.source_user_id == attestation.attested_by
+
     async def test_the_carry_commits_with_the_mode_change(
         self, db, test_issue, test_user, gate_claim_ritual, monkeypatch,
     ):
@@ -987,11 +1004,17 @@ class TestActionsByCredential:
         assert listed[0]["actions"] == []
 
     async def test_resolved_entry_offers_archive_only(self, client, db, test_team, test_user, auth_headers):
-        """Finding 7: GET /inbox still lists it, so it can be cleared."""
+        """Finding 7, revised by CHT-2031: GET /inbox no longer lists a
+        resolved entry (it was settled elsewhere; leaving it there read as
+        a bug), but a device that still holds it can archive it."""
+        from app.api.inbox import _actions
+        from app.enums import InboxEntryState
+
         e = await _entry(test_user.id, test_team.id, kind=InboxEntryKind.GATE_REJECTED, ritual_id="r", issue_id="i")
         await InboxService().resolve_rejected(ritual_id="r", issue_id="i", recipient_user_ids=[test_user.id])
         listed = (await client.get("/api/inbox", headers=auth_headers)).json()
-        assert listed[0]["id"] == e.id and listed[0]["state"] == "resolved"
-        assert listed[0]["actions"] == [
+        assert [x["id"] for x in listed] == []
+        actions = _actions(e, InboxEntryState.RESOLVED, can_decide=True)
+        assert [a.model_dump(mode="json") for a in actions] == [
             {"kind": "archive", "method": "POST", "path": f"/api/inbox/{e.id}/archive", "note": "none"},
         ]

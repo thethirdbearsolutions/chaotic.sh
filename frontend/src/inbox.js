@@ -22,6 +22,7 @@ import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
 import { formatRelativeTime, renderMarkdown } from './gate-approvals.js';
 import { renderAttestation, isAwaitingApproval } from './ticket-gate.js';
+import { renderApprovalActions } from './components/approval-actions.js';
 import { showRejectTicketRitualModal, showCompleteTicketRitualModal } from './rituals-view.js';
 
 const KIND_LABELS = {
@@ -75,6 +76,8 @@ const decisionInFlight = new Set();
 // entry id -> comment already posted by a "Comment and approve" whose
 // approve then failed, so a retry does not post it twice.
 const decisionCommentPosted = new Map();
+// Entries whose "What X asks" disclosure is open, so a re-render keeps it.
+const asksOpen = new Set();
 
 // What this client has done locally that a fetch may not show yet (CHT-1514).
 // A fetch that was already in flight when the user archived or read an entry
@@ -108,6 +111,7 @@ export function resetInboxLocalState() {
     decisionDetails.clear();
     decisionInFlight.clear();
     decisionCommentPosted.clear();
+    asksOpen.clear();
     kindFilter = 'all';
 }
 
@@ -653,9 +657,14 @@ export function setInboxKindFilter(kind) {
  */
 async function loadDecisionDetails(entry, { force = false } = {}) {
     if (!entry || !DECISION_KINDS.has(entry.kind) || !entry.issue_id || !entry.ritual_id) return;
+    if (entry.state === 'resolved') return; // its panel says so without the ritual
+    // Every open refetches: someone else may have decided or sent it back
+    // since (PR #532 review). A ready copy stays on screen meanwhile.
     const known = decisionDetails.get(entry.id);
-    if (known && !force && known.state !== 'error') return;
-    decisionDetails.set(entry.id, { state: 'loading' });
+    const token = {};
+    decisionDetails.set(entry.id, known?.state === 'ready' && !force
+        ? { ...known, token }
+        : { state: 'loading', token });
     if (force) rerenderInboxRows([entry.id]);
     let next;
     try {
@@ -666,9 +675,10 @@ async function loadDecisionDetails(entry, { force = false } = {}) {
         next = { state: 'ready', ritual, decided };
     } catch (e) {
         console.error('Failed to load ritual for inbox entry:', e);
-        next = { state: 'error' };
+        // Keep a ready copy over an error; the next open tries again.
+        next = known?.state === 'ready' && !force ? known : { state: 'error' };
     }
-    if (decisionDetails.get(entry.id)?.state !== 'loading') return; // superseded
+    if (decisionDetails.get(entry.id)?.token !== token) return; // superseded or decided
     decisionDetails.set(entry.id, next);
     rerenderInboxRows([entry.id]);
 }
@@ -676,6 +686,11 @@ async function loadDecisionDetails(entry, { force = false } = {}) {
 /** Whether the server offers this entry's recipient the decision now. */
 function canDecide(entry) {
     return (entry.actions || []).some(a => a.kind === 'approve');
+}
+
+/** Whether this credential may write at all: the server sends no actions otherwise. */
+function canWrite(entry) {
+    return (entry.actions || []).length > 0;
 }
 
 /**
@@ -699,14 +714,19 @@ function renderDecisionBody(entry) {
     }
     const r = d.ritual;
     if (!r) {
-        const by = d.decided?.attestation?.approved_by_name;
-        return `<div class="inbox-decision-status">Already decided${by ? ` by ${escapeHtml(by)}` : ''}. Nothing is waiting on you here.</div>`;
+        if (d.decided) {
+            const by = d.decided.attestation?.approved_by_name;
+            return `<div class="inbox-decision-status">Already decided${by ? ` by ${escapeHtml(by)}` : ''}. Nothing is waiting on you here.</div>`;
+        }
+        // Not pending and not completed: the ritual no longer applies to
+        // this ticket (its conditions or group changed), or was removed.
+        return '<div class="inbox-decision-status">This ritual no longer applies to the ticket. Open it to see where it stands.</div>';
     }
     const isReview = entry.kind === 'review_requested';
     const rej = r.last_rejection && !r.last_rejection.superseded_at ? r.last_rejection : null;
     const asks = r.prompt
         ? (isReview
-            ? `<details class="inbox-decision-asks"><summary>What ${escapeHtml(r.name)} asks</summary>
+            ? `<details class="inbox-decision-asks" data-entry-id="${escapeAttr(entry.id)}"${asksOpen.has(entry.id) ? ' open' : ''}><summary>What ${escapeHtml(r.name)} asks</summary>
                    <div class="ticket-gate-asks markdown-body">${renderMarkdown(r.prompt)}</div></details>`
             : `<div class="ticket-gate-asks markdown-body">${renderMarkdown(r.prompt)}</div>`)
         : '';
@@ -737,35 +757,39 @@ function decidableRitual(entry) {
     return !r.attestation && !sentBack ? r : null;
 }
 
-function decisionData(entry, r) {
-    return `data-entry-id="${escapeAttr(entry.id)}" data-ritual-id="${escapeAttr(r.id)}" data-issue-id="${escapeAttr(entry.issue_id)}" data-ritual-name="${escapeAttr(r.name)}"`;
-}
-
 /**
- * The decision buttons for a row: Approve (or Sign off) first, then
- * Comment… and Send back…. Comment is offered on any decision row with an
- * issue, decided or not; the rest only while the server says the viewer
- * may decide and the ritual is still waiting.
+ * The decision buttons for a row: Approve (or Sign off) and Send back…
+ * from the shared approval actions, then Comment…. Comment is offered on
+ * any decision row with an issue, decided or not; the rest only while the
+ * server says the viewer may decide and the ritual is still waiting.
  */
 function renderDecisionActions(entry) {
     if (!DECISION_KINDS.has(entry.kind) || !entry.issue_id) return [];
     const r = decidableRitual(entry);
-    const busy = decisionInFlight.has(entry.id) ? ' aria-disabled="true" aria-busy="true"' : '';
-    const comment = `<button type="button" class="inbox-action-btn" data-action="comment-inbox-entry"
-        data-entry-id="${escapeAttr(entry.id)}">Comment…</button>`;
-    if (!r) return [comment];
-    const primary = entry.kind === 'review_requested'
-        ? `<button type="button" class="btn btn-primary btn-sm" data-action="approve-inbox-entry" ${decisionData(entry, r)}${busy}>Approve</button>`
-        : `<button type="button" class="btn btn-primary btn-sm" data-action="sign-off-inbox-entry" ${decisionData(entry, r)} data-ritual-artifact="${escapeAttr(r.artifact || '')}"${busy}>Sign off</button>`;
-    return [
-        primary,
-        comment,
-        `<button type="button" class="inbox-action-btn" data-action="send-back-inbox-entry" ${decisionData(entry, r)}>Send back…</button>`,
-    ];
+    const comment = canWrite(entry)
+        ? `<button type="button" class="inbox-action-btn" data-action="comment-inbox-entry"
+        data-entry-id="${escapeAttr(entry.id)}">Comment…</button>`
+        : '';
+    if (!r) return comment ? [comment] : [];
+    const isReview = entry.kind === 'review_requested';
+    const [primary, sendBack] = renderApprovalActions(isReview ? 'review' : 'gate', {
+        approveAction: isReview ? 'approve-inbox-entry' : 'sign-off-inbox-entry',
+        sendBackAction: 'send-back-inbox-entry',
+        size: 'sm',
+        busy: decisionInFlight.has(entry.id),
+        data: {
+            entryId: entry.id, ritualId: r.id, issueId: entry.issue_id, ritualName: r.name,
+            ...(isReview ? {} : { ritualArtifact: r.artifact || '' }),
+        },
+    });
+    return [primary, sendBack, comment].filter(Boolean);
 }
 
+const DECISION_BUTTONS = ['approve-inbox-entry', 'sign-off-inbox-entry', 'send-back-inbox-entry', 'comment-inbox-entry']
+    .map(a => `#inbox-list [data-action="${a}"]`).join(', ');
+
 function setDecisionBusy(entryId, busy) {
-    document.querySelectorAll('#inbox-list [data-action="approve-inbox-entry"], #inbox-list [data-action="sign-off-inbox-entry"]').forEach(btn => {
+    document.querySelectorAll(DECISION_BUTTONS).forEach(btn => {
         if (btn.dataset.entryId !== entryId) return;
         if (busy) {
             btn.setAttribute('aria-disabled', 'true');
@@ -787,7 +811,10 @@ export async function decideInboxEntry(entryId, { comment = null } = {}) {
     if (decisionInFlight.has(entryId)) return false;
     const entry = getInboxEntries().find(e => e.id === entryId);
     const r = entry ? decidableRitual(entry) : null;
-    if (!r) return false;
+    if (!r) {
+        if (entry) showToast('This is no longer waiting on a decision from you.', 'error');
+        return false;
+    }
     const isReview = entry.kind === 'review_requested';
     decisionInFlight.add(entryId);
     setDecisionBusy(entryId, true);
@@ -823,8 +850,13 @@ export async function decideInboxEntry(entryId, { comment = null } = {}) {
  * the server and the next refresh shows that.
  */
 function signOffInboxEntry(data) {
+    if (decisionInFlight.has(data.entryId)) return;
     if (data.ritualArtifact) {
-        showCompleteTicketRitualModal(data.ritualId, data.issueId, data.ritualName, data.ritualArtifact);
+        const entryId = data.entryId;
+        showCompleteTicketRitualModal(data.ritualId, data.issueId, data.ritualName, data.ritualArtifact, () => {
+            decisionDetails.delete(entryId);
+            archiveInboxEntry(entryId);
+        });
         return;
     }
     decideInboxEntry(data.entryId);
@@ -832,6 +864,7 @@ function signOffInboxEntry(data) {
 
 function sendBackInboxEntry(data) {
     const entryId = data.entryId;
+    if (decisionInFlight.has(entryId)) return;
     showRejectTicketRitualModal(data.ritualId, data.issueId, data.ritualName, () => {
         decisionDetails.delete(entryId);
         archiveInboxEntry(entryId);
@@ -845,7 +878,7 @@ function sendBackInboxEntry(data) {
  */
 export function showInboxCommentModal(entryId) {
     const entry = getInboxEntries().find(e => e.id === entryId);
-    if (!entry || !entry.issue_id) return;
+    if (!entry || !entry.issue_id || decisionInFlight.has(entryId)) return;
     const r = decidableRitual(entry);
     // A gate that needs an artifact is signed off in its own dialog.
     const canDecideHere = !!r && !(entry.kind === 'gate_pending' && r.artifact);
@@ -860,7 +893,9 @@ export function showInboxCommentModal(entryId) {
                 <label for="inbox-comment-text">Comment</label>
                 <textarea id="inbox-comment-text" rows="5" required aria-describedby="inbox-comment-help"
                     placeholder="${escapeAttr(r ? 'Questions, or what has to change.' : 'Your comment')}"></textarea>
-                <p class="form-help" id="inbox-comment-help">Posted on ${escapeHtml(ref)}.${r ? ' To stop it until something changes, use Send back instead.' : ''}</p>
+                <p class="form-help" id="inbox-comment-help">${canDecideHere && entry.kind === 'gate_pending'
+                    ? `Comment posts it on ${escapeHtml(ref)}; Comment and sign off saves it as the sign-off note.`
+                    : `Posted on ${escapeHtml(ref)}.`}${r ? ' To stop it until something changes, use Send back instead.' : ''}</p>
                 <p class="form-error hidden" id="inbox-comment-error" role="alert">Add a comment first.</p>
             </div>
             <div class="inbox-comment-actions">
@@ -897,8 +932,15 @@ export function showInboxCommentModal(entryId) {
         buttons.forEach(b => { b.disabled = true; });
         const decide = e.submitter?.value === 'decide';
         const ok = await submitInboxComment(entryId, textarea.value, { decide });
-        if (ok) closeModal();
-        else buttons.forEach(b => { if (document.contains(b)) b.disabled = false; });
+        if (ok) {
+            closeModal();
+            return;
+        }
+        buttons.forEach(b => { if (document.contains(b)) b.disabled = false; });
+        // The decision may have moved under us (someone else decided):
+        // offer only what is still possible.
+        const current = getInboxEntries().find(x => x.id === entryId);
+        if (!current || !decidableRitual(current)) form.querySelector('button[value="decide"]')?.remove();
     });
     showModal();
     textarea.focus();
@@ -914,6 +956,12 @@ export async function submitInboxComment(entryId, text, { decide = false } = {})
     const entry = getInboxEntries().find(e => e.id === entryId);
     if (!content || !entry || !entry.issue_id) return false;
     if (decide) return decideInboxEntry(entryId, { comment: content });
+    if (decisionCommentPosted.get(entryId) === content) {
+        // Already posted by a "Comment and approve" whose approve failed.
+        decisionCommentPosted.delete(entryId);
+        showToast(`Comment posted on ${entry.issue_identifier || 'the ticket'}.`, 'success');
+        return true;
+    }
     let created;
     try {
         created = await api.createComment(entry.issue_id, content);
@@ -1222,6 +1270,17 @@ function hasTextSelectionIn(rowEl) {
     const sel = typeof window !== 'undefined' ? window.getSelection?.() : null;
     if (!sel || sel.isCollapsed || sel.toString() === '' || !rowEl) return false;
     return rowEl.contains(sel.anchorNode) || rowEl.contains(sel.focusNode);
+}
+
+// Remember which "What X asks" disclosures are open (toggle does not
+// bubble, so listen in the capture phase).
+if (typeof document !== 'undefined') {
+    document.addEventListener('toggle', (e) => {
+        const el = e.target;
+        if (!el?.classList?.contains('inbox-decision-asks') || !el.dataset.entryId) return;
+        if (el.open) asksOpen.add(el.dataset.entryId);
+        else asksOpen.delete(el.dataset.entryId);
+    }, true);
 }
 
 registerActions({

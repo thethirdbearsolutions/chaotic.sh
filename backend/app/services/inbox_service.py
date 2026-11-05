@@ -904,6 +904,10 @@ class InboxService:
             recipient_user_id=user_id,
             team_id__in=await self.current_team_ids(user_id),
             archived_at=None,  # CHT-1316: archived entries leave the inbox
+            # Settled elsewhere (a review approved on the ticket, a gate
+            # signed off): nothing is waiting any more, so it leaves too
+            # (CHT-2031). Sync still sends it, as a tombstone.
+            resolved_at=None,
         )
         if team_id:
             query = query.filter(team_id=team_id)

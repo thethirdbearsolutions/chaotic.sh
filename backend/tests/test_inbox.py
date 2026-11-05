@@ -780,6 +780,23 @@ class TestInboxApi:
         titles = [e["title"] for e in resp.json()]
         assert titles == ["unread"]
 
+    async def test_list_leaves_out_resolved_entries(
+        self, client, db, test_team, test_user, test_issue, auth_headers, review_close_ritual,
+    ):
+        """CHT-2031: a review approved on the ticket leaves the Inbox, not
+        only its unread count."""
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.REVIEW_REQUESTED,
+            team_id=test_team.id, issue_id=test_issue.id, ritual_id=review_close_ritual.id,
+            title="review",
+        )
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION, team_id=test_team.id, title="mention",
+        )
+        await InboxService().resolve_gate_or_review(ritual_id=review_close_ritual.id, issue_id=test_issue.id)
+        resp = await client.get("/api/inbox", headers=auth_headers)
+        assert [e["title"] for e in resp.json()] == ["mention"]
+
     async def test_list_kind_filter(self, client, db, test_team, test_user, auth_headers):
         """CHT-2031: the Inbox's type filter asks the server, so a page of
         mentions can't hide the approvals behind it."""

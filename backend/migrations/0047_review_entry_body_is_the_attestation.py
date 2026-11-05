@@ -31,8 +31,12 @@ _ATTESTER = (
     "WHERE a.ritual_id = inbox_entries.ritual_id AND a.issue_id = inbox_entries.issue_id)"
 )
 
+# TRIM with every whitespace character str.strip() removes at runtime,
+# not just spaces (PR #532 review).
+_WS = "' ' || char(9) || char(10) || char(11) || char(12) || char(13)"
+
 _NOTE = (
-    "(SELECT NULLIF(TRIM(a.note), '') FROM ritual_attestations a "
+    f"(SELECT NULLIF(TRIM(a.note, {_WS}), '') FROM ritual_attestations a "
     "WHERE a.ritual_id = inbox_entries.ritual_id AND a.issue_id = inbox_entries.issue_id)"
 )
 

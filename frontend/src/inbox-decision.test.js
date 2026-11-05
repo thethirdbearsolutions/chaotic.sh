@@ -154,10 +154,10 @@ describe('an open review row', () => {
         expect(asks.textContent).toContain(PROMPT);
     });
 
-    it('offers Approve first, then Comment and Send back', async () => {
+    it('offers Approve first, then Send back and Comment', async () => {
         const el = await openRow(REVIEW, { pending_rituals: [RITUAL], completed_rituals: [] });
         const labels = [...el.querySelectorAll('.inbox-action-bar button')].map(b => b.textContent.trim());
-        expect(labels.slice(0, 3)).toEqual(['Approve', 'Comment…', 'Send back…']);
+        expect(labels.slice(0, 3)).toEqual(['Approve', 'Send back…', 'Comment…']);
         expect(labels).toContain('Archive');
     });
 
@@ -187,6 +187,78 @@ describe('an open review row', () => {
         press('retry-inbox-decision', { entryId: REVIEW.id });
         await flush();
         expect(row(REVIEW.id).querySelector('.ticket-gate-attestation')).not.toBeNull();
+    });
+});
+
+describe('review fixes (PR #532)', () => {
+    it('refetches the ritual every time the row is opened', async () => {
+        await openRow(REVIEW, { pending_rituals: [RITUAL], completed_rituals: [] });
+        toggleInboxEntryExpand(REVIEW.id); // collapse
+        // Someone else approved it meanwhile.
+        const done = { ...RITUAL, attestation: { ...RITUAL.attestation, approved_at: 'x', approved_by_name: 'pat' } };
+        api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [], completed_rituals: [done] });
+        toggleInboxEntryExpand(REVIEW.id);
+        await flush();
+        expect(api.getTicketRitualsStatus).toHaveBeenCalledTimes(2);
+        expect(row(REVIEW.id).textContent).toContain('Already decided by pat');
+    });
+
+    it('does not claim a decision when the ritual simply no longer applies', async () => {
+        const el = await openRow(REVIEW, { pending_rituals: [], completed_rituals: [] });
+        expect(el.textContent).not.toContain('Already decided');
+        expect(el.textContent).toContain('no longer applies');
+    });
+
+    it('offers no Comment to a credential that cannot write', async () => {
+        const readOnly = { ...REVIEW, actions: [] };
+        const el = await openRow(readOnly, { pending_rituals: [RITUAL], completed_rituals: [] });
+        expect(el.querySelector('[data-action="comment-inbox-entry"]')).toBeNull();
+    });
+
+    it('does not fetch for a resolved entry', async () => {
+        const el = await openRow({ ...REVIEW, state: 'resolved' }, { pending_rituals: [RITUAL], completed_rituals: [] });
+        expect(api.getTicketRitualsStatus).not.toHaveBeenCalled();
+        expect(el.textContent).toContain('Already decided');
+    });
+
+    it('says so when a decision is no longer possible', async () => {
+        const viewOnly = { ...REVIEW, actions: [{ kind: 'archive', path: '/x' }] };
+        await openRow(viewOnly, { pending_rituals: [RITUAL], completed_rituals: [] });
+        expect(await decideInboxEntry(REVIEW.id)).toBe(false);
+        expect(showToast).toHaveBeenCalledWith('This is no longer waiting on a decision from you.', 'error');
+    });
+
+    it('a plain Comment after a failed Comment and approve does not post again', async () => {
+        await openRow(REVIEW, { pending_rituals: [RITUAL], completed_rituals: [] });
+        api.approveTicketRitual.mockRejectedValueOnce(new Error('409'));
+        await submitInboxComment(REVIEW.id, 'LGTM', { decide: true });
+        await flush();
+        expect(await submitInboxComment(REVIEW.id, 'LGTM')).toBe(true);
+        expect(api.createComment).toHaveBeenCalledTimes(1);
+    });
+
+    it('marks every decision button busy while approving, and ignores send back meanwhile', async () => {
+        await openRow(REVIEW, { pending_rituals: [RITUAL], completed_rituals: [] });
+        let release;
+        api.approveTicketRitual.mockReturnValueOnce(new Promise(r => { release = r; }));
+        const pending = decideInboxEntry(REVIEW.id);
+        const el = row(REVIEW.id);
+        for (const a of ['approve-inbox-entry', 'send-back-inbox-entry', 'comment-inbox-entry']) {
+            expect(el.querySelector(`[data-action="${a}"]`).getAttribute('aria-busy')).toBe('true');
+        }
+        press('send-back-inbox-entry', { entryId: REVIEW.id, ritualId: 'rit-1', issueId: 'issue-7', ritualName: 'x' });
+        expect(showRejectTicketRitualModal).not.toHaveBeenCalled();
+        release({});
+        await pending;
+    });
+
+    it('keeps the "What it asks" disclosure open across a re-render', async () => {
+        const el = await openRow(REVIEW, { pending_rituals: [RITUAL], completed_rituals: [] });
+        const details = el.querySelector('details.inbox-decision-asks');
+        details.open = true;
+        details.dispatchEvent(new Event('toggle'));
+        renderInbox();
+        expect(row(REVIEW.id).querySelector('details.inbox-decision-asks').open).toBe(true);
     });
 });
 
@@ -284,8 +356,12 @@ describe('an open gate row', () => {
         press('sign-off-inbox-entry', {
             entryId: GATE.id, ritualId: 'gate-r', issueId: 'issue-7', ritualName: 'deploy-check', ritualArtifact: 'url',
         });
-        expect(showCompleteTicketRitualModal).toHaveBeenCalledWith('gate-r', 'issue-7', 'deploy-check', 'url');
+        const [rid, iid, name, artifact, onCompleted] = showCompleteTicketRitualModal.mock.calls[0];
+        expect([rid, iid, name, artifact]).toEqual(['gate-r', 'issue-7', 'deploy-check', 'url']);
         expect(api.completeTicketGateRitual).not.toHaveBeenCalled();
+        // Completing it archives the row instead of reloading ticket state.
+        await onCompleted();
+        expect(api.archiveInbox).toHaveBeenCalledWith(GATE.id);
     });
 });
 

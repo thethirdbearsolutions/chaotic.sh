@@ -79,7 +79,8 @@ def _actions(
     if state == InboxEntryState.ARCHIVED:
         return []
     if state == InboxEntryState.RESOLVED:
-        # Still listed by GET /inbox until archived; nothing else to do.
+        # GET /inbox no longer lists it (CHT-2031); a syncing device may
+        # still hold it, so archive stays possible.
         return [InboxEntryAction(kind=InboxActionKind.ARCHIVE, path=f"/api/inbox/{entry.id}/archive")]
     actions = []
     approve = _APPROVE.get(entry.kind)

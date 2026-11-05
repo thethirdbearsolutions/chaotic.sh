@@ -32,9 +32,9 @@ def at_before(tmp_path):
     _migrate(path, target=PREVIOUS)
     with closing(sqlite3.connect(path)) as c:
         c.executemany(_ATTESTATION, [
-            ("a1", "r1", "i1", T0, "Tests pass at abc123"),
+            ("a1", "r1", "i1", T0, "Tests pass at abc123\n"),
             ("a2", "r1", "i2", T0, None),
-            ("a3", "r1", "i3", T0, "   "),
+            ("a3", "r1", "i3", T0, " \n\t "),
             ("a5", "r1", "i5", T0, "Already the note"),
             ("a6", "r1", "i6", T0, "Resolved one"),
         ])
