@@ -16,6 +16,7 @@ vi.mock('./api.js', () => ({
         approveTicketRitual: vi.fn(() => Promise.resolve({})),
         completeTicketGateRitual: vi.fn(() => Promise.resolve({})),
         createComment: vi.fn(() => Promise.resolve({ id: 'c1' })),
+        markAllInboxRead: vi.fn(() => Promise.resolve({ marked_count: 0 })),
     },
 }));
 vi.mock('./ui.js', () => ({
@@ -53,11 +54,12 @@ vi.mock('./state.js', () => {
 import { api } from './api.js';
 import { showApiError, showToast, closeModal } from './ui.js';
 import { showRejectTicketRitualModal, showCompleteTicketRitualModal } from './rituals-view.js';
-import { setInboxEntries, getInboxEntries } from './state.js';
+import { setInboxEntries, getInboxEntries, getInboxUnreadCount } from './state.js';
 import { registerActions } from './event-delegation.js';
 import {
     renderInbox, toggleInboxEntryExpand, collapseInboxExpand, resetInboxLocalState,
     decideInboxEntry, submitInboxComment, showInboxCommentModal, setInboxKindFilter, loadInbox,
+    markAllInboxRead, setInboxUnreadFilter,
 } from './inbox.js';
 
 const actions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
@@ -365,7 +367,42 @@ describe('an open gate row', () => {
     });
 });
 
+describe('a background refresh under Unread', () => {
+    it('rechecks an open decision row the server stopped listing', async () => {
+        setInboxUnreadFilter(true);
+        await flush();
+        await openRow(REVIEW, { pending_rituals: [RITUAL], completed_rituals: [] });
+        const done = { ...RITUAL, attestation: { ...RITUAL.attestation, approved_at: 'x', approved_by_name: 'pat' } };
+        api.getTicketRitualsStatus.mockResolvedValue({ pending_rituals: [], completed_rituals: [done] });
+        api.getInbox.mockResolvedValueOnce([]); // approved elsewhere: resolved, so not listed
+        await loadInbox({ background: true });
+        await flush();
+        expect(row(REVIEW.id).textContent).toContain('Already decided by pat');
+        expect(row(REVIEW.id).querySelector('[data-action="approve-inbox-entry"]')).toBeNull();
+        setInboxUnreadFilter(false);
+        await flush();
+    });
+});
+
 describe('the type filter', () => {
+    it('turns Mark all read off and hides the team-wide count while filtered', async () => {
+        document.body.insertAdjacentHTML('beforeend', `
+            <button data-action="mark-all-inbox-read"></button>
+            <span id="inbox-header-count"></span>`);
+        getInboxUnreadCount.mockReturnValue(3);
+        setInboxKindFilter('mentions');
+        await flush();
+        const btn = document.querySelector('[data-action="mark-all-inbox-read"]');
+        expect(btn.disabled).toBe(true);
+        expect(document.getElementById('inbox-header-count').textContent).toBe('');
+        await markAllInboxRead();
+        expect(api.markAllInboxRead).not.toHaveBeenCalled();
+        setInboxKindFilter('all');
+        await flush();
+        expect(btn.disabled).toBe(false);
+        expect(document.getElementById('inbox-header-count').textContent).toBe('3 unread');
+    });
+
     it('asks the server for the chosen kinds', async () => {
         document.body.insertAdjacentHTML('beforeend', `
             <button data-action="set-inbox-kind" data-kind="all" class="active"></button>

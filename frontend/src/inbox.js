@@ -191,7 +191,8 @@ export function renderInboxBadge() {
     badge.textContent = count > 99 ? '99+' : String(count);
     badge.classList.toggle('hidden', count === 0);
     const headerCount = document.getElementById('inbox-header-count');
-    if (headerCount) headerCount.textContent = count > 0 ? `${count} unread` : '';
+    // Team-wide, so only shown on the unfiltered view (PR #532 review).
+    if (headerCount) headerCount.textContent = count > 0 && kindFilter === 'all' ? `${count} unread` : '';
 }
 
 /**
@@ -344,6 +345,7 @@ function applyBackgroundRefresh(fresh, archivedIds) {
     const scrollTop = container.scrollTop;
 
     let next = fresh;
+    let refreshKept = null;
     if (expandedEntryId && !fresh.some(e => e.id === expandedEntryId)) {
         const kept = old.find(e => e.id === expandedEntryId);
         // Kept only when it merely stopped matching the filter; one archived
@@ -354,6 +356,9 @@ function applyBackgroundRefresh(fresh, archivedIds) {
             // arrived, and the day groups need the list in order (CHT-1962).
             const at = next.findIndex(e => e.created_at < kept.created_at);
             next.splice(at === -1 ? next.length : at, 0, kept);
+            // It may also have left because it was decided elsewhere:
+            // ask the ritual, so the panel stops offering the decision.
+            if (DECISION_KINDS.has(kept.kind)) refreshKept = kept;
         } else {
             expandedEntryId = null; // archived elsewhere: it really is gone
         }
@@ -361,6 +366,7 @@ function applyBackgroundRefresh(fresh, archivedIds) {
 
     setInboxEntries(next);
     renderInbox();
+    if (refreshKept) loadDecisionDetails(refreshKept);
 
     let selectedIdx = -1;
     if (selectedId) {
@@ -456,6 +462,9 @@ export async function archiveInboxEntry(entryId) {
 
     if (expandedEntryId === entryId) expandedEntryId = null; // it's leaving the list
     reassignCommentPosted.delete(entryId); // review finding 5
+    decisionDetails.delete(entryId); // PR #532 review
+    asksOpen.delete(entryId);
+    decisionCommentPosted.delete(entryId);
     archivedLocally.set(entryId, null); // until the server confirms (CHT-1514)
     setInboxEntries(entries.filter(e => e.id !== entryId));
     if (wasUnread) setInboxUnreadCount(Math.max(0, getInboxUnreadCount() - 1));
@@ -762,6 +771,13 @@ export function setInboxUnreadFilter(unreadOnly) {
 export function setInboxKindFilter(kind) {
     if (!(kind in INBOX_KIND_FILTERS) || kind === kindFilter) return;
     kindFilter = kind;
+    // Mark all read marks every kind, so it is offered only on the
+    // unfiltered view: under Mentions it would clear unseen approvals.
+    document.querySelectorAll('[data-action="mark-all-inbox-read"]').forEach(btn => {
+        btn.disabled = kindFilter !== 'all';
+        btn.title = kindFilter === 'all' ? '' : 'Only on Everything: it marks every kind read';
+    });
+    renderInboxBadge();
     document.querySelectorAll('[data-action="set-inbox-kind"]').forEach(btn => {
         const on = btn.dataset.kind === kindFilter;
         btn.classList.toggle('active', on);
@@ -1324,7 +1340,7 @@ async function markEntryRead(entryId) {
  */
 export async function markAllInboxRead() {
     const team = getCurrentTeam();
-    if (!team) return;
+    if (!team || kindFilter !== 'all') return;
     try {
         await api.markAllInboxRead(team.id);
         const now = new Date().toISOString();

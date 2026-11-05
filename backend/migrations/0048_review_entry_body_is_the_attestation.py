@@ -14,6 +14,16 @@ still unset. Each changed entry's
 updated_at moves, so the sync scan (CHT-1607) hands the new body to
 devices. Resolved and archived entries keep what they said.
 
+It also settles open GATE_PENDING and REVIEW_REQUESTED entries whose
+decision was already made: the ritual's attestation on the issue is
+approved (a review approved, or a gate completed, which writes an
+approved attestation; an unapproved one left over from REVIEW mode does
+not count). Entries
+written before resolution was tracked (CHT-1607), or whose fail-soft
+resolve hook failed, were left open, and GET /inbox now lists only
+unresolved entries, so this clears them the way InboxService._resolve
+would: resolved_at, read_at if unset, and updated_at.
+
 The downgrade does nothing: the old bodies are the ritual prompts, still
 on the rituals, and nothing reads them from the entry.
 
@@ -49,6 +59,14 @@ def upgrade(ctx):
         f"source_user_id = COALESCE(source_user_id, {_ATTESTER}), updated_at = {_NOW} "
         "WHERE kind = 'REVIEW_REQUESTED' AND resolved_at IS NULL AND archived_at IS NULL "
         f"AND (body IS NOT {_NOTE} OR (source_user_id IS NULL AND {_ATTESTER} IS NOT NULL))"
+    )
+    ctx.execute(
+        f"UPDATE inbox_entries SET read_at = COALESCE(read_at, {_NOW}), resolved_at = {_NOW}, updated_at = {_NOW} "
+        "WHERE resolved_at IS NULL AND ritual_id IS NOT NULL AND issue_id IS NOT NULL "
+        "AND kind IN ('REVIEW_REQUESTED', 'GATE_PENDING') "
+        "AND EXISTS (SELECT 1 FROM ritual_attestations a "
+        "WHERE a.ritual_id = inbox_entries.ritual_id AND a.issue_id = inbox_entries.issue_id "
+        "AND a.approved_at IS NOT NULL)"
     )
 
 

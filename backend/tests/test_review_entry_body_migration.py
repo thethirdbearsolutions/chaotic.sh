@@ -104,3 +104,35 @@ def test_source_backfilled_even_when_the_body_already_matches(tmp_path):
     _migrate(path, target=THIS)
     assert _sources(path)["e"] == "agent"
     assert _rows(path)["e"][1] > T0
+
+
+def test_entries_already_decided_are_settled(tmp_path):
+    """PR #532 review: an entry left open although its review was approved
+    (or its gate completed) leaves the Inbox; an unapproved one stays."""
+    path = str(tmp_path / "inbox.db")
+    _migrate(path, target=PREVIOUS)
+    with closing(sqlite3.connect(path)) as c:
+        c.executemany(_ATTESTATION, [
+            ("a1", "r1", "i1", T0, "approved review"),
+            ("a2", "r2", "i1", T0, "completed gate"),
+            ("a3", "r1", "i3", T0, "still waiting"),
+            ("a4", "r2", "i4", T0, "left from review mode"),
+        ])
+        c.execute("UPDATE ritual_attestations SET approved_at = ? WHERE id IN ('a1', 'a2')", (T0,))
+        c.executemany(_ENTRY, [
+            ("review-done", "REVIEW_REQUESTED", "x", T0, T0, "r1", "i1", None, None),
+            ("gate-done", "GATE_PENDING", "x", T0, T0, "r2", "i1", None, None),
+            ("review-open", "REVIEW_REQUESTED", "x", T0, T0, "r1", "i3", None, None),
+            ("gate-open", "GATE_PENDING", "x", T0, T0, "r2", "i4", None, None),
+            ("gate-none", "GATE_PENDING", "x", T0, T0, "r2", "i9", None, None),
+            ("mention", "MENTION", "x", T0, T0, "r1", "i1", None, None),
+        ])
+        c.commit()
+    _migrate(path, target=THIS)
+    with closing(sqlite3.connect(path)) as c:
+        rows = {r[0]: r[1:] for r in c.execute("SELECT id, resolved_at, read_at, updated_at FROM inbox_entries")}
+    for done in ("review-done", "gate-done"):
+        resolved_at, read_at, updated_at = rows[done]
+        assert resolved_at and read_at and updated_at > T0, done
+    for still in ("review-open", "gate-open", "gate-none", "mention"):
+        assert rows[still][0] is None, still
