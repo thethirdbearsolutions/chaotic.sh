@@ -24,7 +24,7 @@ vi.mock('./projects.js', async () => {
 });
 
 import { api } from './api.js';
-import { chooseAllProjects } from './projects.js';
+import { chooseAllProjects, syncProjectSwitcher } from './projects.js';
 import { showToast } from './ui.js';
 import { setCurrentProject, setCurrentTeam, getCurrentProject, setCurrentView } from './state.js';
 import {
@@ -294,7 +294,7 @@ describe('loadQueryView', () => {
         expect(api.queryIssues.mock.calls[0][0]).toMatchObject({ teamId: 't1', where: '' });
         expect(window.location.search).toBe('?scope=team&where=');
         // A team-wide query shows as All projects in the switcher (CHT-2058).
-        expect(getCurrentProject()).toBe(null);
+        expect(syncProjectSwitcher).toHaveBeenCalledWith(null);
 
         _resetQueryViewForTest();
         go('/query?project=unknown');
@@ -504,6 +504,36 @@ describe('review findings on PR #429', () => {
         await setQueryScope('p2');
         expect(window.location.search).toBe('?project=p2&where=status%3Dtodo');
         expect(history.length).toBe(before + 1);
+        expect(getCurrentProject()).toBe('p2');
+    });
+
+    // PR #543 review I1: a refused scope change leaves the query, and the
+    // sidebar switcher, on the scope that was showing.
+    it('a refused scope change rolls back the scope and the switcher', async () => {
+        setCurrentProject('p1');
+        api.queryIssues.mockResolvedValueOnce(response());
+        await loadQueryView();
+        syncProjectSwitcher.mockClear();
+        chooseAllProjects.mockClear();
+        api.queryIssues.mockRejectedValueOnce(Object.assign(new Error('bad'), { status: 400 }));
+        await setQueryScope('');
+        expect(syncProjectSwitcher).toHaveBeenLastCalledWith('p1');
+        expect(chooseAllProjects).not.toHaveBeenCalled();
+        // The next run is in the old scope, not the refused one.
+        api.queryIssues.mockResolvedValueOnce(response());
+        await runWhereBox();
+        expect(api.queryIssues.mock.calls.at(-1)[0]).toMatchObject({ projectId: 'p1' });
+    });
+
+    // PR #543 review I2: opening a team-wide link shows All projects in the
+    // switcher without changing the scope the other views share.
+    it('a team-wide link shows All in the switcher and leaves the shared scope', async () => {
+        setCurrentProject('p2');
+        go('/query?scope=team');
+        api.queryIssues.mockResolvedValue(response());
+        syncProjectSwitcher.mockClear();
+        await loadQueryView();
+        expect(syncProjectSwitcher).toHaveBeenCalledWith(null);
         expect(getCurrentProject()).toBe('p2');
     });
 

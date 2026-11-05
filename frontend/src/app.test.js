@@ -256,7 +256,7 @@ import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { viewDocument } from './documents.js';
 import { viewSprintByPath, viewSprint } from './sprints.js';
-import { viewProjectSettings, clearProjectSettingsState, setOnRitualsChanged, loadProjects, renderProjects, chooseAllProjects } from './projects.js';
+import { viewProjectSettings, clearProjectSettingsState, setOnRitualsChanged, loadProjects, renderProjects, chooseAllProjects, syncProjectSwitcher } from './projects.js';
 import { setQueryScope } from './query-view.js';
 import { openSelectPicker } from './select-picker.js';
 import { readSnapshot, clearSnapshot } from './boot-cache.js';
@@ -626,6 +626,8 @@ describe('app.js router configuration', () => {
         expect(setCurrentDetailSprints).toHaveBeenCalledWith(null);
         expect(closeSidebar).toHaveBeenCalled();
         expect(hideTooltip).toHaveBeenCalled();
+        // PR #543 review I1: the switcher shows the shared scope again.
+        expect(syncProjectSwitcher).toHaveBeenCalled();
     });
 });
 
@@ -680,17 +682,41 @@ describe('app.js action registrations', () => {
         getCurrentView.mockReturnValue(undefined);
     });
 
-    it('openProjectSwitcher opens the sidebar picker', () => {
+    // PR #543 review I3: a switch on a detail page goes back to its list.
+    it('switch-project on a detail page returns to the list first', () => {
+        getCurrentView.mockReturnValue('board');
+        isAnyDetailViewActive.mockReturnValueOnce(true);
+        navigateTo.mockClear();
+        registeredActions['switch-project']({ type: 'change' }, {}, { value: 'proj-5' });
+        expect(navigateTo).toHaveBeenCalledWith('board');
+        expect(setCurrentProject).toHaveBeenCalledWith('proj-5');
+        getCurrentView.mockReturnValue(undefined);
+    });
+
+    it('openProjectSwitcher opens the sidebar picker, returning focus after (review I4)', () => {
         const select = document.createElement('select');
         select.id = 'project-switcher';
         document.body.appendChild(select);
         expect(openProjectSwitcher()).toBe(true);
-        expect(openSelectPicker).toHaveBeenCalledWith(select);
+        expect(openSelectPicker).toHaveBeenCalledWith(select, { returnFocus: true });
         select.remove();
     });
 });
 
 describe('app.js command palette registration', () => {
+    it('offers Switch project on P and Projects on G P (CHT-2058)', () => {
+        const byId = Object.fromEntries(commandPaletteCommands.map(c => [c.id, c]));
+        expect(byId['switch-project'].shortcut).toBe('P');
+        expect(byId['nav-projects'].shortcut).toBe('G P');
+        openSelectPicker.mockClear();
+        const select = document.createElement('select');
+        select.id = 'project-switcher';
+        document.body.appendChild(select);
+        byId['switch-project'].action();
+        expect(openSelectPicker).toHaveBeenCalledWith(select, { returnFocus: true });
+        select.remove();
+    });
+
     it('registers navigation commands', () => {
         const navCommands = commandPaletteCommands.filter(c => c.category === 'Navigation');
         expect(navCommands.length).toBeGreaterThanOrEqual(10);

@@ -176,11 +176,6 @@ describe('issues-view', () => {
                 <span class="multi-select-label">Exclude Labels</span>
                 <div class="multi-select-options hidden"></div>
             </div>
-            <select id="project-filter">
-                <option value="">All</option>
-                <option value="proj-1">Project One</option>
-                <option value="p-1">Test</option>
-            </select>
             <select id="assignee-filter">
                 <option value="">All</option>
                 <option value="me">Me</option>
@@ -742,12 +737,43 @@ describe('issues-view', () => {
             expect(doneCheckbox.checked).toBe(true);
         });
 
-        it('applies project filter from URL', () => {
+        it('applies project filter from URL before the project list loads', () => {
+            getProjects.mockReturnValue([]);
             Object.defineProperty(window, 'location', {
                 value: { search: '?project=proj-1', pathname: '/issues', href: 'http://localhost/issues' },
                 writable: true,
                 configurable: true,
             });
+
+            loadFiltersFromUrl();
+
+            expect(setCurrentProject).toHaveBeenCalledWith('proj-1');
+        });
+
+        // PR #543 review C1: a stale or hand-edited id, such as a saved
+        // "all", must not become every view's scope.
+        it('ignores a project the team does not have', () => {
+            getProjects.mockReturnValue([{ id: 'proj-1' }]);
+            Object.defineProperty(window, 'location', {
+                value: { search: '?project=all', pathname: '/issues', href: 'http://localhost/issues' },
+                writable: true,
+                configurable: true,
+            });
+            setCurrentProject.mockClear();
+
+            loadFiltersFromUrl();
+
+            expect(setCurrentProject).not.toHaveBeenCalled();
+        });
+
+        it('applies a project the team has', () => {
+            getProjects.mockReturnValue([{ id: 'proj-1' }]);
+            Object.defineProperty(window, 'location', {
+                value: { search: '?project=proj-1', pathname: '/issues', href: 'http://localhost/issues' },
+                writable: true,
+                configurable: true,
+            });
+            setCurrentProject.mockClear();
 
             loadFiltersFromUrl();
 
@@ -981,11 +1007,12 @@ describe('issues-view', () => {
             });
             getCurrentTeam.mockReturnValue(null);
             localStorage.setItem('chaotic_issues_filters_team-1', 'project=proj-1');
+            setCurrentProject.mockClear();
 
             loadFiltersFromUrl();
 
             // Should not apply the saved filter
-            expect(document.getElementById('project-filter').value).toBe('');
+            expect(setCurrentProject).not.toHaveBeenCalled();
             getCurrentTeam.mockReturnValue({ id: 'team-1' });
             localStorage.removeItem('chaotic_issues_filters_team-1');
         });

@@ -291,16 +291,23 @@ function writeUrl(mode) {
 }
 
 /**
- * The sidebar switcher shows the query's scope (CHT-2058): a team-wide
- * query is "All projects", whatever project the other views last showed.
+ * The sidebar switcher shows the query's scope (CHT-2058). A team-wide
+ * query shows as "All projects" there without changing the scope the
+ * other views share: opening a team-wide link is not choosing All for
+ * them (PR #543 review I2). Leaving Query puts the switcher back.
  */
+function showScopeInSwitcher() {
+    if (!state) return;
+    syncProjectSwitcher(state.teamScope ? null : state.projectId);
+}
+
+/** On load: a project-scoped query sets the shared scope, as it always has on a change. */
 function syncScopeToSwitcher() {
     if (!state) return;
-    if (state.teamScope) {
-        if (getCurrentProject()) setCurrentProject(null);
-        else syncProjectSwitcher(null);
-    } else if (state.projectId !== getCurrentProject()) {
+    if (!state.teamScope && state.projectId !== getCurrentProject()) {
         setCurrentProject(state.projectId);
+    } else {
+        showScopeInSwitcher();
     }
 }
 
@@ -448,6 +455,7 @@ export function runWhereBox() {
 /** Change the scope: a project id, or '' for every project of the team. */
 export function setQueryScope(projectId) {
     if (!state) return;
+    const previous = { teamScope: state.teamScope, projectId: state.projectId, page: state.page };
     state.teamScope = !projectId;
     if (projectId) state.projectId = projectId;
     state.page = 1;
@@ -458,6 +466,13 @@ export function setQueryScope(projectId) {
         onSuccess: () => {
             if (projectId) setCurrentProject(projectId);
             else chooseAllProjects();
+            showScopeInSwitcher();
+        },
+        // Refused: stay on the scope that was showing, in the query and in
+        // the switcher (PR #543 review I1).
+        onFailure: () => {
+            Object.assign(state, previous);
+            showScopeInSwitcher();
         },
     });
 }

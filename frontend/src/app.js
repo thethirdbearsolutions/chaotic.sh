@@ -70,6 +70,7 @@ import {
     showCreateProjectRitualModal,
     setOnRitualsChanged,
     chooseAllProjects,
+    syncProjectSwitcher,
     PROJECT_SWITCHER_ID,
 } from './projects.js';
 import { getProjectFromUrl } from './url-helpers.js';
@@ -141,6 +142,10 @@ configureRouter({
         setCurrentDetailSprints(null);
         closeSidebar();
         hideTooltip();
+        // The switcher shows the shared scope again: a Query that showed its
+        // own, or a scope change abandoned mid-run, leaves no trace (PR #543
+        // review I1). Query re-shows its own scope when it loads.
+        syncProjectSwitcher();
     },
     detailRoute: (parts) => {
         if (parts[0] === 'epic' && parts[1]) {
@@ -541,6 +546,10 @@ function initSidebarNav() {
 export function switchProject(projectId) {
     // On a phone the switcher is in the drawer: close it to show the result.
     closeSidebar();
+    // A detail page keeps the list's view name. Go back to that list, so the
+    // switch shows (and Query does not push its URL under the detail page,
+    // PR #543 review I3).
+    if (isAnyDetailViewActive()) navigateTo(getCurrentView());
     if (getCurrentView() === 'query') {
         setQueryScope(projectId);
     } else if (projectId) {
@@ -550,9 +559,13 @@ export function switchProject(projectId) {
     }
 }
 
-/** P: open the project switcher. */
+/**
+ * P: open the project switcher. Focus goes back to where it was, not to
+ * the switcher button, whose single-key guard would swallow the next
+ * shortcut (PR #543 review I4).
+ */
 export function openProjectSwitcher() {
-    return openSelectPicker(document.getElementById(PROJECT_SWITCHER_ID));
+    return openSelectPicker(document.getElementById(PROJECT_SWITCHER_ID), { returnFocus: true });
 }
 
 // Register shared delegated actions (CHT-1120: migrated from initActionButtons)
@@ -659,6 +672,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initDocumentsView();
     initThemeToggle();
     initSelectPickers();
+    document.querySelector(`[data-picker-for="${PROJECT_SWITCHER_ID}"]`)?.setAttribute('aria-keyshortcuts', 'P');
     initIssueLinkHandler();
     initIssueTooltip({ api });
     registerWsHandlers();
@@ -898,7 +912,8 @@ setCommandPaletteCommands([
     { id: 'nav-my-issues', title: 'Dashboard', subtitle: 'View issues assigned to you', icon: '👤', shortcut: 'M', action: () => navigateTo('my-issues'), category: 'Navigation' },
     { id: 'nav-issues', title: 'Issues', subtitle: 'View all issues', icon: '📋', shortcut: 'I', action: () => navigateTo('issues'), category: 'Navigation' },
     { id: 'nav-board', title: 'Board', subtitle: 'View kanban board', icon: '📊', shortcut: 'B', action: () => navigateTo('board'), category: 'Navigation' },
-    { id: 'nav-projects', title: 'Go to Projects', subtitle: 'View all projects', icon: '📁', shortcut: 'P', action: () => navigateTo('projects'), category: 'Navigation' },
+    { id: 'switch-project', title: 'Switch project', subtitle: 'Change the project every view shows', icon: '🔀', shortcut: 'P', action: () => openProjectSwitcher(), category: 'Navigation' },
+    { id: 'nav-projects', title: 'Go to Projects', subtitle: 'View all projects', icon: '📁', shortcut: 'G P', action: () => navigateTo('projects'), category: 'Navigation' },
     { id: 'nav-sprints', title: 'Go to Sprints', subtitle: 'View all sprints', icon: '🏃', shortcut: 'G S', action: () => navigateTo('sprints'), category: 'Navigation' },
     { id: 'nav-documents', title: 'Go to Documents', subtitle: 'View all documents', icon: '📄', shortcut: 'G D', action: () => navigateTo('documents'), category: 'Navigation' },
     { id: 'nav-epics', title: 'Go to Epics', subtitle: 'View all epics', icon: '🎯', shortcut: 'G E', action: () => navigateTo('epics'), category: 'Navigation' },

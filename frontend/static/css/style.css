@@ -9200,8 +9200,13 @@ body.theme-light .picker-popover {
     min-width: 0;
     max-width: none;
     height: 36px;
-    padding-right: 32px;
+    /* Room for the P chip and the chevron, so a long name stops short of them. */
+    padding-right: 52px;
     background: var(--bg-primary);
+}
+.project-switcher .picker-btn:hover,
+.project-switcher .picker-btn.open {
+    background: var(--bg-hover);
 }
 .project-switcher .picker-label {
     flex: 1;

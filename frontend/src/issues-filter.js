@@ -11,6 +11,7 @@ import { getCurrentTeam, getCurrentProject, setCurrentProject } from './state.js
 import { getIssueFilters, setIssueFilters } from './storage.js';
 import { selectAssigneeFilter } from './assignees.js';
 import { OPEN_STATUSES } from './constants.js';
+import { getProjects } from './projects.js';
 
 // ========================================
 // Filter Getter Functions
@@ -228,8 +229,12 @@ export function loadFiltersFromUrl(setSuppressProjectSubscriber) {
     }
 
     // Apply project filter — suppress subscriber to prevent sprint clearing
+    // Only a project this team has: a stale or hand-edited ?project= must
+    // not become the scope of every view (PR #543 review C1). Before the
+    // list has loaded there is nothing to check against yet.
     const project = params.get('project');
-    if (project) {
+    const known = getProjects();
+    if (project && (!known.length || known.some(p => p.id === project))) {
         setSuppressProjectSubscriber(true);
         setCurrentProject(project);
         setSuppressProjectSubscriber(false);

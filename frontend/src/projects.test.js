@@ -360,6 +360,14 @@ describe('All projects in the switcher', () => {
     expect(document.getElementById('project-switcher').value).toBe('proj-2');
   });
 
+  // PR #543 review C1: the saved marker never reaches URLs or modals.
+  it('getSavedProjectId reports nothing saved for All projects', () => {
+    chooseAllProjects();
+    expect(getSavedProjectId()).toBe(null);
+    setCurrentProject('proj-2');
+    expect(getSavedProjectId()).toBe('proj-2');
+  });
+
   it('with nothing saved, the first project is picked', () => {
     chooseCurrentProject();
     expect(getCurrentProject()).toBe('proj-1');

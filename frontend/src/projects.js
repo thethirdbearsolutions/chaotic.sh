@@ -258,7 +258,10 @@ export function updateProjectFilters() {
  * @returns {string|null} Saved project ID
  */
 export function getSavedProjectId() {
-  return getSavedProject();
+  // A saved "All projects" is not a project id: callers that build a URL
+  // or open a project from it must see nothing saved (PR #543 review C1).
+  const saved = getSavedProject();
+  return saved === ALL_PROJECTS ? null : saved;
 }
 
 /**

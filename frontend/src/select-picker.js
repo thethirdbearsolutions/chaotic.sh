@@ -65,10 +65,17 @@ export function closeSelectPicker({ restoreFocus = true } = {}) {
  * Open the picker of an enhanced select, as a click on its button would
  * (a keyboard shortcut uses it). Returns false if there is none to open.
  */
-export function openSelectPicker(select) {
+export function openSelectPicker(select, { returnFocus = false } = {}) {
     const button = select?._picker?.button;
     if (!button || button.disabled || !button.isConnected) return false;
-    if (openPicker?.select !== select) openPopover(select, button);
+    // Hidden (a closed phone drawer): there is nothing to anchor to.
+    if (typeof button.checkVisibility === 'function' && !button.checkVisibility({ visibilityProperty: true })) return false;
+    if (openPicker?.select !== select) {
+        // returnFocus: closing puts focus back where it was before, for a
+        // picker opened by a shortcut rather than from its button.
+        const before = document.activeElement;
+        openPopover(select, button, returnFocus ? (before && before !== document.body ? before : null) : undefined);
+    }
     return true;
 }
 
@@ -127,9 +134,12 @@ export function enhanceSelect(select) {
             e.preventDefault();
             e.stopPropagation();
             if (openPicker?.select !== select) openPopover(select, button);
-        } else if (e.key.length === 1) {
+        } else if (e.key.length === 1 && select.dataset.pickerKeys !== 'pass') {
             // A focused <select> kept single-key shortcuts (j/k, c, /) from
             // the global handlers; the button stands in for it, so it does too.
+            // `data-picker-keys="pass"` opts out: the sidebar's project
+            // switcher keeps focus after a pick, and must not leave the
+            // shortcuts dead until the next click (PR #543 review I4).
             e.stopPropagation();
         }
     });
@@ -160,7 +170,7 @@ function optionList(select) {
         .map(o => ({ value: o.value, text: o.textContent.trim(), hint: o.dataset.hint || '', disabled: o.disabled }));
 }
 
-function openPopover(select, button) {
+function openPopover(select, button, returnTo) {
     closeSelectPicker({ restoreFocus: false });
     const options = optionList(select);
     const listId = `picker-list-${++uid}`;
@@ -317,7 +327,10 @@ function openPopover(select, button) {
         window.removeEventListener('popstate', onNavigate);
         window.removeEventListener('resize', onReflow);
         window.removeEventListener('scroll', onReflow, true);
-        if (restoreFocus) button.focus({ preventScroll: true });
+        if (!restoreFocus) return;
+        if (returnTo === undefined) button.focus({ preventScroll: true });
+        else if (returnTo?.isConnected) returnTo.focus({ preventScroll: true });
+        else document.activeElement?.blur?.();
     }
 
     list.addEventListener('click', (e) => {

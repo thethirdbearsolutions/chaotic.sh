@@ -259,14 +259,14 @@ describe('select picker (CHT-1961)', () => {
 
     it('a pick reaches a delegated change handler on the document', () => {
         const select = makeSelect();
-        select.dataset.action = 'set-current-project';
+        select.dataset.action = 'switch-project';
         const btn = enhanceSelect(select);
         const seen = [];
         const handler = (e) => { const el = e.target.closest('[data-action]'); if (el) seen.push([el.dataset.action, el.value]); };
         document.addEventListener('change', handler);
         btn.click();
         document.querySelector('.picker-option[data-value="p1"]').click();
-        expect(seen).toEqual([['set-current-project', 'p1']]);
+        expect(seen).toEqual([['switch-project', 'p1']]);
         document.removeEventListener('change', handler);
     });
 
@@ -300,6 +300,48 @@ describe('select picker (CHT-1961)', () => {
             search.dispatchEvent(new Event('input'));
             const shown = [...popover.querySelectorAll('.picker-option')].map(li => li.dataset.value);
             expect(shown).toEqual(['p5']);
+        });
+
+        // PR #543 review I4: opened by a shortcut, closing returns focus to
+        // where it was rather than parking it on the button.
+        it('returnFocus puts focus back where it was on close', () => {
+            const select = hinted();
+            const btn = enhanceSelect(select);
+            const input = document.createElement('input');
+            document.body.appendChild(input);
+            input.focus();
+            openSelectPicker(select, { returnFocus: true });
+            key(document.querySelector('.picker-search'), 'Escape');
+            expect(document.activeElement).toBe(input);
+            // With nothing focused before, focus is not left on the button.
+            input.blur();
+            openSelectPicker(select, { returnFocus: true });
+            key(document.querySelector('.picker-search'), 'Enter');
+            expect(document.activeElement).not.toBe(btn);
+            // A click still returns to the button, as before.
+            btn.click();
+            key(document.querySelector('.picker-search'), 'Escape');
+            expect(document.activeElement).toBe(btn);
+        });
+
+        it('data-picker-keys="pass" lets single-key shortcuts through the button', () => {
+            const select = hinted();
+            select.dataset.pickerKeys = 'pass';
+            const btn = enhanceSelect(select);
+            const seen = [];
+            const onKey = (e) => seen.push(e.key);
+            document.addEventListener('keydown', onKey);
+            key(btn, 'i');
+            document.removeEventListener('keydown', onKey);
+            expect(seen).toEqual(['i']);
+        });
+
+        it('refuses to open from a hidden button (review M4)', () => {
+            const select = hinted();
+            const btn = enhanceSelect(select);
+            btn.checkVisibility = () => false;
+            expect(openSelectPicker(select)).toBe(false);
+            expect(isSelectPickerOpen()).toBe(false);
         });
 
         it('openSelectPicker opens it as a click would, and refuses a plain select', () => {
