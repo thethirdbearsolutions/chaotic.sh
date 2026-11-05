@@ -63,7 +63,7 @@ async def test_a_session_cannot_rename_another_agent(client, registrar):
 
     for target in (other["agent"]["id"], registrar["id"]):
         refused = await client.patch(
-            f"/api/agents/{target}", json={"name": "Weir"}, headers=_bearer(session["api_key"]),
+            f"/api/agents/{target}", json={"name": "Rival"}, headers=_bearer(session["api_key"]),
         )
         assert refused.status_code == 403, refused.text
 
@@ -149,15 +149,16 @@ async def test_the_name_is_stripped(client, registrar):
 async def test_a_session_may_not_take_another_agents_name_or_handle(client, registrar):
     session = await _register(client, registrar, REF)
     other = await _register(client, registrar, OTHER_REF)
-    await client.patch(
-        f"/api/agents/{other['agent']['id']}", json={"name": "Weir"}, headers=_bearer(other["api_key"]),
+    renamed = await client.patch(
+        f"/api/agents/{other['agent']['id']}", json={"name": "Rival"}, headers=_bearer(other["api_key"]),
     )
+    assert renamed.status_code == 200, renamed.text
 
     third = await _register(client, registrar, THIRD_REF)
     tail = third["agent"]["name"].rsplit(" · ", 1)[1]
 
     # The last one claims the third session's tail handle, registrar-<tail>.
-    for name in ("Weir", "weir", "Registrar", third["agent"]["name"], f"Registrar · elsewhere · {tail}"):
+    for name in ("Rival", "rival", "Registrar", third["agent"]["name"], f"Registrar · elsewhere · {tail}"):
         refused = await client.patch(
             f"/api/agents/{session['agent']['id']}", json={"name": name}, headers=_bearer(session["api_key"]),
         )

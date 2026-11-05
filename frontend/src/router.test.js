@@ -369,6 +369,16 @@ describe('router', () => {
             expect(setCurrentView).toHaveBeenCalledWith('board');
         });
 
+        it('sends the old /team address to People, rewriting it (CHT-2044)', () => {
+            registerViews({ 'my-issues': vi.fn(), 'people': vi.fn() });
+            const replace = vi.spyOn(history, 'replaceState');
+            window.location.pathname = '/team';
+            handleRoute();
+            expect(setCurrentView).toHaveBeenCalledWith('people');
+            expect(replace).toHaveBeenCalledWith({ view: 'people' }, '', expect.stringMatching(/^\/people/));
+            replace.mockRestore();
+        });
+
         it('routes unknown paths to my-issues', () => {
             window.location.pathname = '/nonexistent';
             handleRoute();

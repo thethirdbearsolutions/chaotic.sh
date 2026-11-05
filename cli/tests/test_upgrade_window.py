@@ -245,13 +245,16 @@ class TestReviewFindings:
         assert calls[0][1]["fake_initial"] is True and calls[0][1]["reinstall"] is False
         assert re.search(r"\(stop \d+\.\ds, sync\+migrate ", _flat(result.output))
 
-    def test_the_confirmation_prompt_is_its_own_step(self):
-        """Without --yes the prompt waits with the server stopped."""
+    def test_the_confirmation_prompt_is_outside_the_window(self):
+        """CHT-2025: the prompt is answered before the stop, so it is no
+        longer a step of the stopped window."""
         with patch("cli.system._confirm_action", return_value=True):
             result, _ = _upgrade(yes=False)
 
         assert result.exit_code == 0, result.output
-        assert re.search(r"\(stop \d+\.\ds, prompt \d+\.\ds, checkout ", _flat(result.output))
+        out = _flat(result.output)
+        assert re.search(r"\(stop \d+\.\ds, checkout ", out)
+        assert "prompt " not in out
 
 
 class TestQueueAfterTheStart:

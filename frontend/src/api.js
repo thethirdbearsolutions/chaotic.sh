@@ -711,6 +711,11 @@ export class ApiClient {
         return this.request('POST', `/agents/${agentId}/keys`);
     }
 
+    // Every key that signs in as the agent, active or revoked (CHT-1508).
+    async getAgentKeys(agentId) {
+        return this.request('GET', `/agents/${encodeURIComponent(agentId)}/keys`);
+    }
+
     // Inbox (CHT-1250)
     async getInbox(teamId, { unread = false, kinds = null, skip = 0, limit = 50 } = {}) {
         const params = new URLSearchParams({ team_id: teamId, skip, limit });

@@ -1,4 +1,4 @@
-"""Tests for migrations/0047_review_entry_body_is_the_attestation.py (CHT-2031).
+"""Tests for migrations/0048_review_entry_body_is_the_attestation.py (CHT-2031).
 
 Open REVIEW_REQUESTED entries take their attestation's note as body
 (NULL when it has none, or the attestation is gone); every other entry
@@ -11,8 +11,8 @@ import pytest
 
 from .test_parent_user_fk_migration import _migrate
 
-PREVIOUS = "0046_user_avatars"
-THIS = "0047_review_entry_body_is_the_attestation"
+PREVIOUS = "0047_attachments"
+THIS = "0048_review_entry_body_is_the_attestation"
 T0 = "2026-10-01 09:00:00.000000"
 
 _ENTRY = (

@@ -32,6 +32,15 @@ and this project adheres to [PEP 440](https://peps.python.org/pep-0440/) version
   window, since their clients retry with backoff well past the restart
   (CHT-2000).
 
+### Fixed
+
+- **`system upgrade` asks before it stops anything.** Without `--yes` it
+  used to stop the server and close the deploy gate, and only then ask
+  to confirm. Run over ssh with no terminal, the unanswered prompt
+  aborted and left the server down behind `~/.chaotic/deploy.hold`. The
+  confirmation now comes first: a "no" or no answer leaves the server
+  running and untouched, and the latter says to pass `--yes` (CHT-2025).
+
 ## [0.1.2] - 2026-11-01
 
 Session identities find their team and project on their own, and

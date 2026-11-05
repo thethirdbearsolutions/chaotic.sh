@@ -11,7 +11,7 @@ import {
     getCommentDraft, setCommentDraft,
     getDocumentDraft, getDocumentDraftBase, setDocumentDraft,
 } from './storage.js';
-import { getCurrentTeam, getCurrentProject, getCurrentView, setCurrentProject, setSelectedDocIndex, subscribe } from './state.js';
+import { getCurrentTeam, getCurrentProject, getCurrentView, setSelectedDocIndex, subscribe } from './state.js';
 import { registerActions } from './event-delegation.js';
 import { getProjects, getSavedProjectId } from './projects.js';
 import { renderCommentContent, renderDescriptionContent } from './rich-text.js';
@@ -171,24 +171,11 @@ export function clearDocSearch() {
 }
 
 /**
- * Clear document project filter.
- * Clears the global project selection (affects all views) — this is intentional
- * since CHT-1083 unified the project filter across all views.
- */
-export async function clearDocProjectFilter() {
-  setCurrentProject(null);
-}
-
-/**
- * Clear all document filters (search + project).
- * Clears the global project selection (affects all views) — intentional per CHT-1083.
+ * Clear all document filters. The project is not one: it is the sidebar
+ * switcher's scope, which every view shares (CHT-2058).
  */
 export async function clearAllDocFilters() {
-  const searchInput = document.getElementById('doc-search');
-  if (searchInput) {
-    searchInput.value = '';
-  }
-  setCurrentProject(null);
+  clearDocSearch();
 }
 
 /**
@@ -199,18 +186,10 @@ function updateDocFilterChips() {
   if (!chipsRow) return;
 
   const searchTerm = document.getElementById('doc-search')?.value || '';
-  const projectFilter = getCurrentProject() || '';
-
   const chips = [];
 
   if (searchTerm) {
     chips.push(`<span class="filter-chip">Search: "${escapeHtml(searchTerm)}" <button class="chip-clear" data-action="clear-doc-search">×</button></span>`);
-  }
-
-  if (projectFilter) {
-    const matchedProject = getProjects().find(p => p.id === projectFilter);
-    const projectName = matchedProject?.name || 'Project';
-    chips.push(`<span class="filter-chip">Project: ${escapeHtml(projectName)} <button class="chip-clear" data-action="clear-doc-project-filter">×</button></span>`);
   }
 
   if (chips.length > 0) {
@@ -1882,9 +1861,6 @@ registerActions({
     },
     'clear-doc-search': () => {
         clearDocSearch();
-    },
-    'clear-doc-project-filter': () => {
-        clearDocProjectFilter();
     },
     'clear-all-doc-filters': () => {
         clearAllDocFilters();

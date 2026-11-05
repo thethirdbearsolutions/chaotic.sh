@@ -322,7 +322,24 @@ describe('Keyboard Handler', () => {
             expect(actions.navigateTo).toHaveBeenCalledWith('board');
         });
 
-        it('p navigates to projects', () => {
+        it('p opens the project switcher when there is one (CHT-2058)', () => {
+            actions.openProjectSwitcher = vi.fn(() => true);
+            const event = makeEvent('p');
+            handler(event);
+            expect(actions.openProjectSwitcher).toHaveBeenCalled();
+            expect(actions.navigateTo).not.toHaveBeenCalled();
+            delete actions.openProjectSwitcher;
+        });
+
+        it('p navigates to projects when the switcher cannot open', () => {
+            actions.openProjectSwitcher = vi.fn(() => false);
+            const event = makeEvent('p');
+            handler(event);
+            expect(actions.navigateTo).toHaveBeenCalledWith('projects');
+            delete actions.openProjectSwitcher;
+        });
+
+        it('p navigates to projects without a switcher', () => {
             const event = makeEvent('p');
             handler(event);
             expect(actions.navigateTo).toHaveBeenCalledWith('projects');
@@ -416,7 +433,7 @@ describe('Keyboard Handler', () => {
             it.each([
                 ['p', 'projects'],
                 ['s', 'sprints'],
-                ['t', 'team'],
+                ['t', 'people'],
                 ['e', 'epics'],
                 ['a', 'approvals'],
                 ['w', 'inbox'],
@@ -464,10 +481,10 @@ describe('Keyboard Handler', () => {
             expect(actions.navigateTo).toHaveBeenCalledWith('documents');
         });
 
-        it('g then t navigates to team', () => {
+        it('g then t navigates to people', () => {
             handler(makeEvent('g'));
             handler(makeEvent('t'));
-            expect(actions.navigateTo).toHaveBeenCalledWith('team');
+            expect(actions.navigateTo).toHaveBeenCalledWith('people');
         });
 
         // CHT-1215: help overlay/command palette advertised these but the switch

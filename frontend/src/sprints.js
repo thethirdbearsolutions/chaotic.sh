@@ -85,7 +85,7 @@ export async function loadSprints({ fromMemory = false } = {}) {
             list.innerHTML = `
                 <div class="empty-state">
                     <h3>Select a project</h3>
-                    <p>Choose a project to view its sprints</p>
+                    <p>Sprints belong to one project. Pick one in the sidebar switcher, or press P.</p>
                 </div>
             `;
         }
@@ -1114,7 +1114,10 @@ export function clearCachedCurrentSprintIds() {
 
 registerActions({
     'retry-load-sprints': () => loadSprints(),
-    'view-sprint': (event, data) => {
+    'view-sprint': (event, data, target) => {
+        // A <button> (the Dashboard's sprint rows) turns Enter/Space into its
+        // own click: act on that, not the keydown too, or it runs twice.
+        if (event.type === 'keydown' && target?.tagName === 'BUTTON') return;
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) {
             window.open(data.sprintUrl, '_blank');
             return;

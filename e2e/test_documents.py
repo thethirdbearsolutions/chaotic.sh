@@ -208,13 +208,13 @@ class TestProjectScopedAgentDocumentCommands:
             return CliRunner().invoke(chaotic_cli, ["doc", *args])
 
     def test_show_update_and_comment_by_prefix_and_title(self, api_client, test_team, test_project):
-        agent = api_client.create_project_agent(test_project["id"], "Weir")
+        agent = api_client.create_project_agent(test_project["id"], "Rival")
         key, team_id = agent["api_key"], test_team["id"]
         # A team-level document the agent may not see, sharing the prefix
         # space: it must not make the prefix ambiguous or leak its title.
         api_client.create_document(team_id, "Team only")
 
-        created = self._doc(key, team_id, "create", "Crew playbook", "--icon", "🌊",
+        created = self._doc(key, team_id, "create", "Agent playbook", "--icon", "📘",
                             "--project", test_project["id"], "--content", "v1", "--json")
         assert created.exit_code == 0, created.output
         doc = api_client.get_documents(team_id, project_id=test_project["id"])[0]
@@ -222,13 +222,13 @@ class TestProjectScopedAgentDocumentCommands:
 
         shown = self._doc(key, team_id, "show", prefix, "--json")
         assert shown.exit_code == 0, shown.output
-        assert "Crew playbook" in shown.output and "Not authorized" not in shown.output
+        assert "Agent playbook" in shown.output and "Not authorized" not in shown.output
 
         updated = self._doc(key, team_id, "update", doc["id"], "--content", "v2")
         assert updated.exit_code == 0, updated.output
         assert api_client.get_document(doc["id"])["content"] == "v2"
 
-        commented = self._doc(key, team_id, "comment", "Crew playbook", "looks right")
+        commented = self._doc(key, team_id, "comment", "Agent playbook", "looks right")
         assert commented.exit_code == 0, commented.output
         assert [c["content"] for c in api_client.get_document_comments(doc["id"])] == ["looks right"]
 
@@ -237,7 +237,7 @@ class TestProjectScopedAgentDocumentCommands:
         for args in ([], ["--all"]):
             listed = self._doc(key, team_id, "list", *args, "--json")
             assert listed.exit_code == 0, listed.output
-            assert "Crew playbook" in listed.output and "Team only" not in listed.output
+            assert "Agent playbook" in listed.output and "Team only" not in listed.output
 
         missing = self._doc(key, team_id, "show", "Team only")
         assert missing.exit_code != 0

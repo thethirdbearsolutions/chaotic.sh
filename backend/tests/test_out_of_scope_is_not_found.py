@@ -37,6 +37,7 @@ from starlette.routing import Mount, WebSocketRoute, compile_path
 from app.api.visibility import PROJECT_SCOPED_TEAM_DATA_DETAIL, TEAM_HIDDEN_DETAIL
 from app.enums import ApprovalMode, RitualArtifact, RitualTrigger, TeamRole
 from app.mcp_server import tools
+from app.oxyde_models.attachment import OxydeAttachment
 from app.oxyde_models.document import OxydeDocument, OxydeDocumentComment
 from app.oxyde_models.issue import OxydeIssue, OxydeIssueComment, OxydeIssueRelation
 from app.oxyde_models.label import OxydeLabel
@@ -80,10 +81,16 @@ async def _project_rows(project, team, author):
         team_id=team.id, project_id=project.id, author_id=author.id, title=f"{project.key} doc", content="secret",
     )
     doc_comment = await OxydeDocumentComment.objects.create(document_id=document.id, author_id=author.id, content="c")
+    # A row only: no probe gets as far as its blob (CHT-1996).
+    attachment = await OxydeAttachment.objects.create(
+        issue_id=issue.id, comment_id=comment.id, uploader_id=author.id, sha256="0" * 64, size=1,
+        content_type="text/plain", filename="secret.txt",
+    )
     return {
         "project": project.id, "issue": issue.id, "identifier": issue.identifier,
         "comment": comment.id, "relation": relation.id, "sprint": sprint.id, "ritual": ritual.id,
         "group": group.id, "document": document.id, "doc_comment": doc_comment.id,
+        "attachment": attachment.id,
         # The names an MCP tool argument also accepts for these rows.
         "project_key": project.key, "sprint_name": sprint.name, "ritual_name": ritual.name,
         "doc_title": document.title,
@@ -238,6 +245,13 @@ ROUTES = [
     ("DELETE", "/api/issues/{issue}/comments/{comment}", None, "issue"),
     ("PATCH", "/api/issues/{own_issue}/comments/{comment}", {"content": "x"}, "comment"),
     ("DELETE", "/api/issues/{own_issue}/comments/{comment}", None, "comment"),
+    # Attachments (CHT-1996): by their issue, by their own id, and a
+    # comment named beside an issue the caller can see.
+    ("GET", "/api/issues/{issue}/attachments", None, "issue"),
+    ("POST", "/api/issues/{issue}/attachments?filename=x.txt", None, "issue"),
+    ("POST", "/api/issues/{own_issue}/attachments?filename=x.txt&comment_id={comment}", None, "comment"),
+    ("GET", "/api/attachments/{attachment}/content", None, "attachment"),
+    ("DELETE", "/api/attachments/{attachment}", None, "attachment"),
     # Relations, either end out of scope.
     ("GET", "/api/issues/{issue}/relations", None, "issue"),
     ("POST", "/api/issues/{issue}/relations", {"related_issue_id": "{own_issue}"}, "issue"),
@@ -969,6 +983,9 @@ MCP_PROBES = [
     ("issue_revisions", {"identifier": "{identifier}"}, "identifier"),
     ("issue_revision", {"identifier": "{identifier}", "version": 1}, "identifier"),
     ("issue_comment", {"identifier": "{identifier}", "content": "x"}, "identifier"),
+    ("issue_comment", {"identifier": "{identifier}", "content": "x",
+                       "attach": [{"content_base64": "aGVsbG8=", "filename": "x.txt"}]}, "identifier"),
+    ("issue_attach", {"identifier": "{identifier}", "content_base64": "aGVsbG8=", "filename": "x.txt"}, "identifier"),
     ("issue_update", {"identifier": "{identifier}", "title": "x"}, "identifier"),
     ("issue_update", {"identifier": "{own_identifier}", "parent": "{identifier}"}, "identifier"),
     ("issue_start", {"identifier": "{identifier}"}, "identifier"),
@@ -1116,6 +1133,9 @@ MCP_NOT_ROW_KEYED = {
         "status", "priority", "estimate", "title", "description", "issue_type", "no_parent",
         "follow_children")},
     ("issue_comment", "content"): _MCP_VALUE,
+    ("issue_comment", "attach"): "files the tool uploads (CHT-1996), names no row",
+    **{("issue_attach", a): "the file the tool uploads (CHT-1996), names no row" for a in (
+        "path", "content_base64", "filename")},
     ("issue_start", "lease_seconds"): _MCP_VALUE,
     **{("issue_ready", a): _MCP_VALUE for a in ("mine", "include_assigned", "all_projects")},
     **{("issue_ready", a): _MCP_PAGING for a in ("limit", "detail")},

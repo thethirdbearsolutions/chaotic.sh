@@ -17,10 +17,10 @@ devices. Resolved and archived entries keep what they said.
 The downgrade does nothing: the old bodies are the ritual prompts, still
 on the rituals, and nothing reads them from the entry.
 
-Created: 2026-11-05 11:50:00
+Created: 2026-11-05 15:20:00
 """
 
-depends_on = "0046_user_avatars"
+depends_on = "0047_attachments"
 
 
 # Stored datetime format (0040).

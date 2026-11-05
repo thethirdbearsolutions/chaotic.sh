@@ -11,7 +11,7 @@ import { registerActions } from './event-delegation.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { getProjects } from './projects.js';
 import { buildAssignees, updateAssigneeFilter } from './assignees.js';
-import { getMembers, isCurrentUserAdmin } from './teams.js';
+import { getMembers } from './teams.js';
 
 // Module state
 let agents = [];
@@ -104,57 +104,49 @@ export async function loadAgents(teamId) {
 }
 
 /**
- * Render the agents list
+ * Settings' "Your agents" (CHT-2044): the agents you own, each a link to
+ * its profile, where its keys, connected apps, scope and registrar right
+ * live. The whole team's agents are on People.
  */
 export function renderAgents() {
   const container = document.getElementById('agents-list');
   if (!container) return;
+  const me = getCurrentUser()?.id;
+  const mine = agents.filter((a) => a.parent_user_id === me && a.kind !== 'session');
 
-  if (agents.length === 0) {
+  if (mine.length === 0) {
     container.innerHTML = renderEmptyState({
       icon: EMPTY_ICONS.dashboard,
       heading: 'No agents yet',
-      description: 'Create an agent to enable CLI automation with its own identity',
+      description: 'Create an agent to give CLI automation its own identity',
     });
     return;
   }
 
-  container.innerHTML = agents
+  const projects = getProjects();
+  const scope = (projectId) => {
+    if (!projectId) return 'Team-wide';
+    const project = projects.find((p) => p.id === projectId);
+    return project ? `Project ${project.key}` : 'One project';
+  };
+  container.innerHTML = mine
     .map((agent) => {
-      const safeName = escapeHtml(agent.name);
-      const safeParentName = escapeHtml(agent.parent_user_name || 'Unknown');
-      const isSession = agent.kind === 'session';
-      const kindBadge = agent.can_register
-        ? '<span class="agent-scope" title="Registers one identity per session; cannot write as itself">Registrar</span>'
-        : isSession
-          ? `<span class="agent-scope" title="Registered by a registrar for one session">Session${agent.idle ? ' · idle' : ''}</span>`
-          : '';
-      // The toggle is for whoever the server lets change it: the agent's
-      // creator or a team admin (can_manage_agent), on an active agent
-      // that is not a registered session identity (one level deep).
-      const canToggle =
-        !isSession &&
-        agent.is_active !== false &&
-        (agent.parent_user_id === getCurrentUser()?.id || isCurrentUserAdmin());
-      const registrarToggle = !canToggle
-        ? ''
-        : `<button class="btn btn-secondary" data-action="toggle-agent-registrar" data-agent-id="${escapeAttr(agent.id)}" data-agent-name="${escapeAttr(agent.name || 'Agent')}" data-can-register="${agent.can_register ? 'true' : 'false'}">${agent.can_register ? 'Stop being a registrar' : 'Make registrar'}</button>`;
+      const id = escapeAttr(agent.id);
+      const sessions = agents.filter((a) => a.registered_by_id === agent.id).length;
+      const sub = [
+        scope(agent.agent_project_id),
+        agent.can_register ? `Registrar · ${sessions} session${sessions === 1 ? '' : 's'}` : null,
+        `Created ${formatDate(agent.created_at)}`,
+      ].filter(Boolean).join(' · ');
       return `
-      <div class="agent-item">
-        ${renderAgentAvatar(agent)}
-        <div class="agent-info">
-          <div class="agent-name">${safeName}</div>
-          <div class="agent-meta">
-            <span class="agent-scope">${agent.agent_project_id ? 'Project-scoped' : 'Team-wide'}</span>
-            ${kindBadge}
-            <span class="agent-date">Created by ${safeParentName} ${formatDate(agent.created_at)}</span>
-          </div>
+      <a class="list-row-2line agent-link-row" href="/people/${id}" data-action="view-person" data-user-id="${id}">
+        <div class="agent-link-avatar" aria-hidden="true">${renderAgentAvatar(agent)}</div>
+        <div class="list-row-main">
+          <div class="list-row-title">${escapeHtml(agent.name)}${agent.is_active === false ? ' <span class="badge badge-neutral">Deactivated</span>' : ''}</div>
+          <div class="list-row-sub">${escapeHtml(sub)}</div>
         </div>
-        ${registrarToggle}
-        <button class="btn btn-secondary" data-action="generate-agent-key" data-agent-id="${escapeAttr(agent.id)}" data-agent-name="${escapeAttr(agent.name || 'Agent')}">Generate new key</button>
-        <button class="btn btn-danger-outline" data-action="delete-agent" data-agent-id="${escapeAttr(agent.id)}" data-agent-name="${escapeAttr(agent.name || 'Agent')}">Delete</button>
-      </div>
-    `;
+        <span class="list-row-right list-row-sub">Open profile</span>
+      </a>`;
     })
     .join('');
 }
@@ -275,6 +267,9 @@ export async function handleCreateAgent(event) {
 
     // Show the API key in a new modal (only shown once)
     showAgentKeyRevealModal('Agent Created', result.api_key, Boolean(result.can_register));
+    // People lists it once the team's agents are fresh.
+    await loadAgents();
+    agentsChanged(result.id, { created: true });
   } catch (e) {
     showApiError('create agent', e);
   }
@@ -298,6 +293,9 @@ export async function generateAgentKey(agentId, agentName) {
   try {
     const result = await api.createAgentKey(agentId);
     showAgentKeyRevealModal('New Agent Key', result.key);
+    // Only its credentials changed: the profile refreshes those, not the page
+    // behind the reveal modal.
+    agentsChanged(agentId, { credentials: true });
   } catch (e) {
     showApiError('generate agent key', e);
   }
@@ -322,10 +320,21 @@ export async function setAgentRegistrar(agentId, agentName, makeRegistrar) {
   try {
     await api.updateAgent(agentId, { can_register: makeRegistrar });
     showToast(makeRegistrar ? 'Agent is now a registrar' : 'Agent is no longer a registrar', 'success');
-    loadAgents();
+    await loadAgents();
+    agentsChanged(agentId);
   } catch (e) {
     showApiError('change registrar', e);
   }
+}
+
+/**
+ * Tell whatever shows this agent (its profile page, CHT-2044) that it
+ * changed. An event rather than an import: the profile imports this module.
+ * @param {string} agentId
+ * @param {{deleted?: boolean, created?: boolean, credentials?: boolean}} [detail]
+ */
+function agentsChanged(agentId, { deleted = false, created = false, credentials = false } = {}) {
+  window.dispatchEvent(new CustomEvent('chaotic:agent-changed', { detail: { agentId, deleted, created, credentials } }));
 }
 
 /**
@@ -360,7 +369,8 @@ export async function deleteAgent(agentId, agentName) {
   try {
     await api.deleteAgent(agentId);
     showToast('Agent deleted', 'success');
-    loadAgents();
+    await loadAgents();
+    agentsChanged(agentId, { deleted: true });
   } catch (e) {
     showApiError('delete agent', e);
   }
@@ -379,13 +389,16 @@ registerActions({
         closeModal();
         loadAgents();
     },
-    'delete-agent': (_event, data) => {
+    'delete-agent': (event, data) => {
+        if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
         deleteAgent(data.agentId, data.agentName);
     },
-    'generate-agent-key': (_event, data) => {
+    'generate-agent-key': (event, data) => {
+        if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
         generateAgentKey(data.agentId, data.agentName);
     },
-    'toggle-agent-registrar': (_event, data) => {
+    'toggle-agent-registrar': (event, data) => {
+        if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
         setAgentRegistrar(data.agentId, data.agentName, data.canRegister !== 'true');
     },
 });

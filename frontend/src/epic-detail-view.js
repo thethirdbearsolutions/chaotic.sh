@@ -7,6 +7,7 @@ import {
     getActivityIcon,
     formatActivityActor,
     formatActivityText,
+    renderCommentContent,
     renderDescriptionContent,
     viewIssue,
 } from './issue-detail-view.js';
@@ -211,7 +212,7 @@ export async function viewEpic(epicId, pushHistory = true) {
                                             <span class="comment-author">${escapeHtml(comment.author_name || 'User')}</span>
                                             <span class="comment-date">${formatTimeAgo(comment.created_at)}</span>
                                         </div>
-                                        <div class="comment-content markdown-body">${escapeHtml(comment.content || '')}</div>
+                                        <div class="comment-content markdown-body">${renderCommentContent(comment.content || '')}</div>
                                     </div>
                                 </div>
                             `).join('')}

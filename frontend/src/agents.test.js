@@ -52,10 +52,8 @@ vi.mock('./assignees.js', () => ({
   buildAssignees: (...args) => mockBuildAssignees(...args),
 }));
 
-const mockIsCurrentUserAdmin = vi.fn(() => false);
 vi.mock('./teams.js', () => ({
   getMembers: vi.fn(() => []),
-  isCurrentUserAdmin: (...args) => mockIsCurrentUserAdmin(...args),
 }));
 
 describe('getAgents', () => {
@@ -209,8 +207,9 @@ describe('loadAgents', () => {
   });
 
   it('fetches and renders agents', async () => {
+    setCurrentUser({ id: 'me' });
     const agents = [
-      { id: 'agent-1', name: 'TestBot', created_at: '2024-01-01', parent_user_name: 'Admin' },
+      { id: 'agent-1', name: 'TestBot', created_at: '2024-01-01', parent_user_id: 'me', parent_user_name: 'Admin' },
     ];
     api.getTeamAgents.mockResolvedValue(agents);
     await loadAgents();
@@ -219,77 +218,78 @@ describe('loadAgents', () => {
   });
 });
 
+// Settings' "Your agents" (CHT-2044): links into each profile, no actions.
 describe('renderAgents', () => {
+  const load = async (agents) => {
+    api.getTeamAgents.mockResolvedValue(agents);
+    await loadAgents();
+    return document.getElementById('agents-list');
+  };
+
   beforeEach(() => {
     document.body.innerHTML = '<div id="agents-list"></div>';
+    setCurrentTeam({ id: 'team-1' });
+    setCurrentUser({ id: 'me' });
+  });
+
+  afterEach(() => {
+    setCurrentTeam(null);
+    setCurrentUser(null);
   });
 
   it('returns early if agents-list not found', () => {
     document.body.innerHTML = '';
-    // Should not throw
     renderAgents();
   });
 
-  it('renders empty state when no agents', async () => {
-    api.getTeamAgents.mockResolvedValue([]);
-    setCurrentTeam({ id: 'team-1' });
-    mockBuildAssignees.mockClear();
-    mockUpdateAssigneeFilter.mockClear();
-    await loadAgents();
-    const list = document.getElementById('agents-list');
+  it('renders empty state when you own no agents', async () => {
+    const list = await load([
+      { id: 'theirs', name: 'Theirs', parent_user_id: 'other', created_at: '2024-01-01' },
+    ]);
     expect(list.innerHTML).toContain('No agents yet');
-    expect(list.innerHTML).toContain('Create an agent to enable CLI automation with its own identity');
     expect(list.innerHTML).toContain('empty-state');
-    setCurrentTeam(null);
+    expect(list.innerHTML).not.toContain('Theirs');
+  });
+
+  it('lists only your own agents, sessions left to their registrar', async () => {
+    const list = await load([
+      { id: 'mine', name: 'Mine', parent_user_id: 'me', created_at: '2024-01-01' },
+      { id: 'ses', name: 'Mine · main', kind: 'session', registered_by_id: 'mine', parent_user_id: 'me', created_at: '2024-01-01' },
+      { id: 'theirs', name: 'Theirs', parent_user_id: 'other', created_at: '2024-01-01' },
+    ]);
+    const rows = list.querySelectorAll('a[data-action="view-person"]');
+    expect(Array.from(rows).map((r) => r.dataset.userId)).toEqual(['mine']);
+    expect(rows[0].getAttribute('href')).toBe('/people/mine');
+  });
+
+  it('carries no key, registrar or delete actions: those are on the profile', async () => {
+    const list = await load([
+      { id: 'mine', name: 'Mine', parent_user_id: 'me', created_at: '2024-01-01' },
+    ]);
+    expect(list.innerHTML).not.toContain('generate-agent-key');
+    expect(list.innerHTML).not.toContain('toggle-agent-registrar');
+    expect(list.innerHTML).not.toContain('delete-agent');
   });
 
   it('escapes agent name for XSS prevention', async () => {
-    const agents = [
-      { id: 'agent-1', name: '<script>xss</script>', created_at: '2024-01-01', parent_user_name: 'Admin' },
-    ];
-    api.getTeamAgents.mockResolvedValue(agents);
-    setCurrentTeam({ id: 'team-1' });
-    mockBuildAssignees.mockClear();
-    mockUpdateAssigneeFilter.mockClear();
-    await loadAgents();
-    const list = document.getElementById('agents-list');
-    // Verify the escaped version is present
+    const list = await load([
+      { id: 'agent-1', name: '<script>xss</script>', parent_user_id: 'me', created_at: '2024-01-01' },
+    ]);
     expect(list.innerHTML).toContain('&lt;script&gt;xss&lt;/script&gt;');
-    // Verify no script element was created
     expect(list.querySelector('script')).toBeNull();
-    setCurrentTeam(null);
   });
 
-  it('renders a Generate new key action for each agent', async () => {
-    const agents = [
-      { id: 'agent-1', name: 'TestBot', created_at: '2024-01-01', parent_user_name: 'Admin' },
-    ];
-    api.getTeamAgents.mockResolvedValue(agents);
-    setCurrentTeam({ id: 'team-1' });
-    mockBuildAssignees.mockClear();
-    mockUpdateAssigneeFilter.mockClear();
-    await loadAgents();
-    const list = document.getElementById('agents-list');
-    expect(list.innerHTML).toContain('data-action="generate-agent-key"');
-    expect(list.innerHTML).toContain('data-agent-id="agent-1"');
-    expect(list.innerHTML).toContain('Generate new key');
-    setCurrentTeam(null);
-  });
-
-  it('shows project-scoped vs team-wide label', async () => {
-    const agents = [
-      { id: 'agent-1', name: 'ProjectBot', agent_project_id: 'proj-1', created_at: '2024-01-01', parent_user_name: 'Admin' },
-      { id: 'agent-2', name: 'TeamBot', agent_project_id: null, created_at: '2024-01-01', parent_user_name: 'Admin' },
-    ];
-    api.getTeamAgents.mockResolvedValue(agents);
-    setCurrentTeam({ id: 'team-1' });
-    mockBuildAssignees.mockClear();
-    mockUpdateAssigneeFilter.mockClear();
-    await loadAgents();
-    const list = document.getElementById('agents-list');
-    expect(list.innerHTML).toContain('Project-scoped');
+  it('says the scope, and counts a registrar\'s sessions', async () => {
+    getProjects.mockReturnValue([{ id: 'proj-1', key: 'CHT' }]);
+    const list = await load([
+      { id: 'p', name: 'ProjectBot', agent_project_id: 'proj-1', parent_user_id: 'me', created_at: '2024-01-01' },
+      { id: 'r', name: 'Reg', can_register: true, parent_user_id: 'me', created_at: '2024-01-01' },
+      { id: 's', name: 'Reg · a', kind: 'session', registered_by_id: 'r', parent_user_id: 'me', created_at: '2024-01-01' },
+    ]);
+    expect(list.innerHTML).toContain('Project CHT');
     expect(list.innerHTML).toContain('Team-wide');
-    setCurrentTeam(null);
+    expect(list.innerHTML).toContain('Registrar · 1 session');
+    getProjects.mockReturnValue([]);
   });
 });
 
@@ -563,47 +563,6 @@ describe('registrars (CHT-1600)', () => {
     expect(document.getElementById('modal-content').innerHTML).not.toContain('set-session-identity');
   });
 
-  it('shows the kind and a toggle, but no toggle for a session identity', async () => {
-    document.body.innerHTML = '<div id="agents-list"></div>';
-    setCurrentUser({ id: 'me' });
-    api.getTeamAgents.mockResolvedValue([
-      { id: 'reg-1', name: 'Claude Code', can_register: true, kind: 'service', parent_user_id: 'me', created_at: '2024-01-01' },
-      { id: 'bot-1', name: 'bot', can_register: false, kind: 'assistant', parent_user_id: 'me', created_at: '2024-01-01' },
-      { id: 'ses-1', name: 'Claude Code · main', kind: 'session', parent_user_id: 'me', created_at: '2024-01-01' },
-    ]);
-    await loadAgents();
-    const list = document.getElementById('agents-list');
-    const toggles = list.querySelectorAll('[data-action="toggle-agent-registrar"]');
-    expect(Array.from(toggles).map((b) => [b.dataset.agentId, b.dataset.canRegister, b.textContent])).toEqual([
-      ['reg-1', 'true', 'Stop being a registrar'],
-      ['bot-1', 'false', 'Make registrar'],
-    ]);
-    expect(list.innerHTML).toContain('Registrar');
-    expect(list.innerHTML).toContain('Session');
-    setCurrentUser(null);
-  });
-
-  it('shows the toggle only to the creator or a team admin, and not on deactivated agents', async () => {
-    document.body.innerHTML = '<div id="agents-list"></div>';
-    setCurrentUser({ id: 'me' });
-    api.getTeamAgents.mockResolvedValue([
-      { id: 'mine', name: 'mine', kind: 'assistant', parent_user_id: 'me', created_at: '2024-01-01' },
-      { id: 'theirs', name: 'theirs', kind: 'assistant', parent_user_id: 'other', created_at: '2024-01-01' },
-      { id: 'off', name: 'off', kind: 'assistant', parent_user_id: 'me', is_active: false, created_at: '2024-01-01' },
-    ]);
-    const toggled = () =>
-      Array.from(document.querySelectorAll('[data-action="toggle-agent-registrar"]')).map((b) => b.dataset.agentId);
-
-    await loadAgents();
-    expect(toggled()).toEqual(['mine']);
-
-    mockIsCurrentUserAdmin.mockReturnValue(true);
-    await loadAgents();
-    expect(toggled()).toEqual(['mine', 'theirs']);
-    mockIsCurrentUserAdmin.mockReturnValue(false);
-    setCurrentUser(null);
-  });
-
   it('turns the capability on and reloads', async () => {
     api.updateAgent.mockResolvedValue({});
     api.getTeamAgents.mockResolvedValue([]);
@@ -632,5 +591,42 @@ describe('registrars (CHT-1600)', () => {
     api.updateAgent.mockRejectedValue(err);
     await setAgentRegistrar('bot-1', 'bot', true);
     expect(showApiError).toHaveBeenCalledWith('change registrar', err);
+  });
+});
+
+describe('telling the profile what changed (CHT-2044)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setCurrentTeam({ id: 'team-1' });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    api.getTeamAgents.mockResolvedValue([]);
+  });
+  afterEach(() => {
+    setCurrentTeam(null);
+    vi.restoreAllMocks();
+  });
+
+  const seen = () => {
+    const events = [];
+    const on = (e) => events.push(e.detail);
+    window.addEventListener('chaotic:agent-changed', on);
+    return { events, stop: () => window.removeEventListener('chaotic:agent-changed', on) };
+  };
+
+  it('says only the credentials changed when a key is generated', async () => {
+    api.createAgentKey.mockResolvedValue({ key: 'ck_x' });
+    document.body.innerHTML = '<div id="modal-title"></div><div id="modal-content"></div>';
+    const w = seen();
+    await generateAgentKey('a-1', 'A');
+    w.stop();
+    expect(w.events).toEqual([expect.objectContaining({ agentId: 'a-1', credentials: true })]);
+  });
+
+  it('says it was deleted', async () => {
+    api.deleteAgent.mockResolvedValue();
+    const w = seen();
+    await deleteAgent('a-1', 'A');
+    w.stop();
+    expect(w.events).toEqual([expect.objectContaining({ agentId: 'a-1', deleted: true })]);
   });
 });

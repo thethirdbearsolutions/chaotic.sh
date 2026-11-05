@@ -40,24 +40,21 @@ import {
     getExcludedLabels,
 } from './issues-view.js';
 import { loadGateApprovals } from './gate-approvals.js';
-import { loadQueryView } from './query-view.js';
+import { loadQueryView, setQueryScope } from './query-view.js';
 import { loadInbox, toggleInboxEntryElementExpand, collapseInboxExpand, archiveInboxEntryElement } from './inbox.js';
 import { showCreateEpicModal, loadEpics } from './epics.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { createKeyboardHandler, createModifierKeyHandler, createListNavigationHandler, createDocListNavigationHandler, createBoardNavigationHandler, createInboxNavigationHandler, createSidebarNavigationHandler, createSimpleListNavigationHandler, isAnyDetailViewActive, focusMainContent } from './keyboard.js';
 import { showInlineDropdown, isInlineDropdownOpen } from './inline-dropdown.js';
 import { isQuoteTooltipVisible } from './quote-comment.js';
-import { initSelectPickers } from './select-picker.js';
+import { initSelectPickers, openSelectPicker } from './select-picker.js';
 import './revisions.js';
 import {
     toggleTeamDropdown,
     toggleUserDropdown,
-    loadTeamMembers,
-    loadTeamInvitations,
     showInviteModal,
     showCreateTeamModal,
     showEditTeamModal,
-    loadTeamAgents,
 } from './teams.js';
 import { loadPeople, viewPerson } from './people.js';
 import {
@@ -72,6 +69,9 @@ import {
     saveProjectSettingsRules,
     showCreateProjectRitualModal,
     setOnRitualsChanged,
+    chooseAllProjects,
+    syncProjectSwitcher,
+    PROJECT_SWITCHER_ID,
 } from './projects.js';
 import { getProjectFromUrl } from './url-helpers.js';
 import { resetOnboarding } from './onboarding.js';
@@ -142,6 +142,10 @@ configureRouter({
         setCurrentDetailSprints(null);
         closeSidebar();
         hideTooltip();
+        // The switcher shows the shared scope again: a Query that showed its
+        // own, or a scope change abandoned mid-run, leaves no trace (PR #543
+        // review I1). Query re-shows its own scope when it loads.
+        syncProjectSwitcher();
     },
     detailRoute: (parts) => {
         if (parts[0] === 'epic' && parts[1]) {
@@ -305,11 +309,6 @@ registerViews({
         loadDocuments(null, null, { fromMemory: true });
     },
     'people': loadPeople,
-    'team': () => {
-        loadTeamMembers();
-        loadTeamAgents();
-        loadTeamInvitations();
-    },
     'settings': () => {
         loadApiKeys();
         loadConnections();
@@ -539,13 +538,44 @@ function initSidebarNav() {
     if (fab) fab.addEventListener('click', () => showCreateIssueModal());
 }
 
+/**
+ * The sidebar switcher picked a project, or '' for all of them (CHT-2058).
+ * Query keeps its scope in its own URL, so it changes the scope there and
+ * follows on success; every other view follows currentProject.
+ */
+export function switchProject(projectId) {
+    // On a phone the switcher is in the drawer: close it to show the result.
+    closeSidebar();
+    // A detail page keeps the list's view name. Go back to that list, so the
+    // switch shows (and Query does not push its URL under the detail page,
+    // PR #543 review I3).
+    if (isAnyDetailViewActive()) navigateTo(getCurrentView());
+    if (getCurrentView() === 'query') {
+        setQueryScope(projectId);
+    } else if (projectId) {
+        setCurrentProject(projectId);
+    } else {
+        chooseAllProjects();
+    }
+}
+
+/**
+ * P: open the project switcher. Focus goes back to where it was, not to
+ * the switcher button, whose single-key guard would swallow the next
+ * shortcut (PR #543 review I4).
+ */
+export function openProjectSwitcher() {
+    return openSelectPicker(document.getElementById(PROJECT_SWITCHER_ID), { returnFocus: true });
+}
+
 // Register shared delegated actions (CHT-1120: migrated from initActionButtons)
 registerActions({
     'navigate-to': (_event, data) => {
         navigateTo(data.view);
     },
-    'set-current-project': (_event, _data, target) => {
-        setCurrentProject(target.value);
+    'switch-project': (event, _data, target) => {
+        if (event.type !== 'change') return;
+        switchProject(target.value);
     },
     'showCreateIssueModal': () => showCreateIssueModal(),
     'showCreateEpicModal': () => showCreateEpicModal(),
@@ -642,6 +672,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initDocumentsView();
     initThemeToggle();
     initSelectPickers();
+    document.querySelector(`[data-picker-for="${PROJECT_SWITCHER_ID}"]`)?.setAttribute('aria-keyshortcuts', 'P');
     initIssueLinkHandler();
     initIssueTooltip({ api });
     registerWsHandlers();
@@ -839,6 +870,7 @@ document.addEventListener('keydown', createKeyboardHandler({
     closeModal,
     closeSidebar,
     navigateTo,
+    openProjectSwitcher,
     showCreateIssueModal,
     showKeyboardShortcutsHelp,
     isModalOpen,
@@ -880,14 +912,15 @@ setCommandPaletteCommands([
     { id: 'nav-my-issues', title: 'Dashboard', subtitle: 'View issues assigned to you', icon: '👤', shortcut: 'M', action: () => navigateTo('my-issues'), category: 'Navigation' },
     { id: 'nav-issues', title: 'Issues', subtitle: 'View all issues', icon: '📋', shortcut: 'I', action: () => navigateTo('issues'), category: 'Navigation' },
     { id: 'nav-board', title: 'Board', subtitle: 'View kanban board', icon: '📊', shortcut: 'B', action: () => navigateTo('board'), category: 'Navigation' },
-    { id: 'nav-projects', title: 'Go to Projects', subtitle: 'View all projects', icon: '📁', shortcut: 'P', action: () => navigateTo('projects'), category: 'Navigation' },
+    { id: 'switch-project', title: 'Switch project', subtitle: 'Change the project every view shows', icon: '🔀', shortcut: 'P', action: () => openProjectSwitcher(), category: 'Navigation' },
+    { id: 'nav-projects', title: 'Go to Projects', subtitle: 'View all projects', icon: '📁', shortcut: 'G P', action: () => navigateTo('projects'), category: 'Navigation' },
     { id: 'nav-sprints', title: 'Go to Sprints', subtitle: 'View all sprints', icon: '🏃', shortcut: 'G S', action: () => navigateTo('sprints'), category: 'Navigation' },
     { id: 'nav-documents', title: 'Go to Documents', subtitle: 'View all documents', icon: '📄', shortcut: 'G D', action: () => navigateTo('documents'), category: 'Navigation' },
     { id: 'nav-epics', title: 'Go to Epics', subtitle: 'View all epics', icon: '🎯', shortcut: 'G E', action: () => navigateTo('epics'), category: 'Navigation' },
     { id: 'nav-rituals', title: 'Go to Rituals', subtitle: 'View project rituals', icon: '🔮', shortcut: 'G R', action: () => navigateTo('rituals'), category: 'Navigation' },
     { id: 'nav-approvals', title: 'Go to Approvals', subtitle: 'Review pending approvals', icon: '✅', shortcut: 'G A', action: () => navigateTo('approvals'), category: 'Navigation' },
     { id: 'nav-inbox', title: 'Go to Inbox', subtitle: 'Gates, mentions, assignments, and reviews awaiting you', icon: '📥', shortcut: 'G W', action: () => navigateTo('inbox'), category: 'Navigation' },
-    { id: 'nav-team', title: 'Go to Team', subtitle: 'Manage team members', icon: '👥', shortcut: 'G T', action: () => navigateTo('team'), category: 'Navigation' },
+    { id: 'nav-team', title: 'Go to People', subtitle: 'Everyone on the team, people and agents', icon: '👥', shortcut: 'G T', action: () => navigateTo('people'), category: 'Navigation' },
     { id: 'nav-settings', title: 'Go to Settings', subtitle: 'Project and team settings', icon: '⚙️', shortcut: 'G ,', action: () => navigateTo('settings'), category: 'Navigation' },
 
     // Create
@@ -898,7 +931,7 @@ setCommandPaletteCommands([
 
     // Actions
     { id: 'search-issues', title: 'Search Issues', subtitle: 'Find issues by title or ID', icon: '🔍', shortcut: '/', action: focusIssueSearch, category: 'Actions' },
-    { id: 'invite-member', title: 'Invite Team Member', subtitle: 'Send an invitation', icon: '✉️', action: () => { navigateTo('team'); setTimeout(showInviteModal, 100); }, category: 'Actions' },
+    { id: 'invite-member', title: 'Invite Team Member', subtitle: 'Send an invitation', icon: '✉️', action: () => { navigateTo('people'); setTimeout(showInviteModal, 100); }, category: 'Actions' },
     { id: 'show-shortcuts', title: 'Keyboard Shortcuts', subtitle: 'View all shortcuts', icon: '⌨️', shortcut: '?', action: () => showKeyboardShortcutsHelp(), category: 'Help' },
     { id: 'show-me-around', title: 'Show Me Around', subtitle: 'Replay the onboarding tour', icon: '🎓', action: () => resetOnboarding(), category: 'Help' },
     { id: 'logout', title: 'Sign Out', subtitle: 'Log out of your account', icon: '🚪', action: () => logout(), category: 'Account' },

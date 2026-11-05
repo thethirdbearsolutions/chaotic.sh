@@ -89,6 +89,7 @@ class TestIssueViewAlias:
             "pending_rituals": [], "completed_rituals": [],
         })
         client.get_sub_issues = MagicMock(return_value=[])
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -112,6 +113,7 @@ class TestIssueViewAlias:
             "pending_rituals": [], "completed_rituals": [],
         })
         client.get_sub_issues = MagicMock(return_value=[])
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 
@@ -136,6 +138,7 @@ class TestIssueGetAlias:
             "pending_rituals": [], "completed_rituals": [],
         })
         client.get_sub_issues = MagicMock(return_value=[])
+        client.list_attachments = MagicMock(return_value=[])
         client.get_relations = MagicMock(return_value=[])
         client.get_issue_documents = MagicMock(return_value=[])
 

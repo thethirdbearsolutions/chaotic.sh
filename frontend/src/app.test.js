@@ -143,6 +143,16 @@ vi.mock('./projects.js', () => ({
     saveProjectSettingsRules: vi.fn(),
     showCreateProjectRitualModal: vi.fn(),
     setOnRitualsChanged: vi.fn(),
+    chooseAllProjects: vi.fn(),
+    syncProjectSwitcher: vi.fn(),
+    PROJECT_SWITCHER_ID: 'project-switcher',
+}));
+vi.mock('./query-view.js', () => ({ loadQueryView: vi.fn(), setQueryScope: vi.fn() }));
+vi.mock('./select-picker.js', () => ({
+    initSelectPickers: vi.fn(),
+    openSelectPicker: vi.fn(() => true),
+    isSelectPickerOpen: vi.fn(() => false),
+    closeSelectPicker: vi.fn(() => false),
 }));
 vi.mock('./url-helpers.js', () => ({ getProjectFromUrl: vi.fn() }));
 vi.mock('./onboarding.js', () => ({ resetOnboarding: vi.fn() }));
@@ -240,17 +250,18 @@ vi.mock('./utils.js', () => ({
 // Import mocked modules so we can assert on them
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
 import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showCachedIssuesOrSkeleton, getSelectedLabels, getExcludedLabels } from './issues-view.js';
-import { loadTeamMembers, loadTeamAgents, loadTeamInvitations } from './teams.js';
 import { loadApiKeys } from './api-keys.js';
 import { loadAgents } from './agents.js';
 import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { viewDocument } from './documents.js';
 import { viewSprintByPath, viewSprint } from './sprints.js';
-import { viewProjectSettings, clearProjectSettingsState, setOnRitualsChanged, loadProjects, renderProjects } from './projects.js';
+import { viewProjectSettings, clearProjectSettingsState, setOnRitualsChanged, loadProjects, renderProjects, chooseAllProjects, syncProjectSwitcher } from './projects.js';
+import { setQueryScope } from './query-view.js';
+import { openSelectPicker } from './select-picker.js';
 import { readSnapshot, clearSnapshot } from './boot-cache.js';
 import { updateUserInfo } from './auth.js';
-import { setCurrentUser, setCurrentDetailIssue, setCurrentDetailSprints, setCurrentProject } from './state.js';
+import { setCurrentUser, setCurrentDetailIssue, setCurrentDetailSprints, setCurrentProject, getCurrentView } from './state.js';
 import { loadGateApprovals } from './gate-approvals.js';
 import { loadEpics } from './epics.js';
 import { loadBoard } from './board.js';
@@ -287,7 +298,7 @@ import { handleQuickCreate } from './quick-create.js';
 import { setTheme } from './storage.js';
 
 // Import app.js — side effects run on import
-await import('./app.js');
+const { openProjectSwitcher } = await import('./app.js');
 
 // Capture import-time call args before clearing mocks
 const keyboardHandlerConfig = createKeyboardHandler.mock.calls[0]?.[0];
@@ -316,7 +327,7 @@ describe('app.js view registrations', () => {
     it('registers all expected views', () => {
         const expectedViews = [
             'my-issues', 'approvals', 'issues', 'epics', 'board',
-            'projects', 'sprints', 'rituals', 'documents', 'team', 'settings',
+            'projects', 'sprints', 'rituals', 'documents', 'people', 'settings',
         ];
         for (const view of expectedViews) {
             expect(registeredViews[view], `missing view: ${view}`).toBeDefined();
@@ -458,11 +469,8 @@ describe('app.js view registrations', () => {
         expect(loadProjects).toHaveBeenCalled();
     });
 
-    it('team view loads members, agents, and invitations', () => {
-        registeredViews['team']();
-        expect(loadTeamMembers).toHaveBeenCalled();
-        expect(loadTeamAgents).toHaveBeenCalled();
-        expect(loadTeamInvitations).toHaveBeenCalled();
+    it('has no Team view: it folded into People (CHT-2044)', () => {
+        expect(registeredViews['team']).toBeUndefined();
     });
 
     it('settings view loads API keys and agents', () => {
@@ -618,13 +626,15 @@ describe('app.js router configuration', () => {
         expect(setCurrentDetailSprints).toHaveBeenCalledWith(null);
         expect(closeSidebar).toHaveBeenCalled();
         expect(hideTooltip).toHaveBeenCalled();
+        // PR #543 review I1: the switcher shows the shared scope again.
+        expect(syncProjectSwitcher).toHaveBeenCalled();
     });
 });
 
 describe('app.js action registrations', () => {
     it('registers all expected actions', () => {
         const expectedActions = [
-            'navigate-to', 'set-current-project',
+            'navigate-to', 'switch-project',
             'showCreateIssueModal', 'showCreateEpicModal', 'showCreateProjectModal',
             'showCreateDocumentModal', 'showCreateTeamModal', 'showEditTeamModal',
             'showInviteModal', 'showCreateApiKeyModal', 'showCreateAgentModal',
@@ -640,13 +650,73 @@ describe('app.js action registrations', () => {
         expect(navigateTo).toHaveBeenCalledWith('issues');
     });
 
-    it('set-current-project action reads target value', () => {
-        registeredActions['set-current-project']({}, {}, { value: 'proj-123' });
+    // The sidebar switcher (CHT-2058).
+    it('switch-project sets the current project from the switcher', () => {
+        getCurrentView.mockReturnValue('issues');
+        registeredActions['switch-project']({ type: 'change' }, {}, { value: 'proj-123' });
         expect(setCurrentProject).toHaveBeenCalledWith('proj-123');
+        // The phone drawer closes so the switched view shows.
+        expect(closeSidebar).toHaveBeenCalled();
+    });
+
+    it('switch-project ignores the click that reaches the hidden select', () => {
+        setCurrentProject.mockClear();
+        registeredActions['switch-project']({ type: 'click' }, {}, { value: 'proj-123' });
+        expect(setCurrentProject).not.toHaveBeenCalled();
+    });
+
+    it('switch-project to all projects is remembered as a choice', () => {
+        getCurrentView.mockReturnValue('board');
+        setCurrentProject.mockClear();
+        registeredActions['switch-project']({ type: 'change' }, {}, { value: '' });
+        expect(chooseAllProjects).toHaveBeenCalled();
+        expect(setCurrentProject).not.toHaveBeenCalled();
+    });
+
+    it('switch-project on Query changes the query scope instead', () => {
+        getCurrentView.mockReturnValue('query');
+        setCurrentProject.mockClear();
+        registeredActions['switch-project']({ type: 'change' }, {}, { value: 'proj-9' });
+        expect(setQueryScope).toHaveBeenCalledWith('proj-9');
+        expect(setCurrentProject).not.toHaveBeenCalled();
+        getCurrentView.mockReturnValue(undefined);
+    });
+
+    // PR #543 review I3: a switch on a detail page goes back to its list.
+    it('switch-project on a detail page returns to the list first', () => {
+        getCurrentView.mockReturnValue('board');
+        isAnyDetailViewActive.mockReturnValueOnce(true);
+        navigateTo.mockClear();
+        registeredActions['switch-project']({ type: 'change' }, {}, { value: 'proj-5' });
+        expect(navigateTo).toHaveBeenCalledWith('board');
+        expect(setCurrentProject).toHaveBeenCalledWith('proj-5');
+        getCurrentView.mockReturnValue(undefined);
+    });
+
+    it('openProjectSwitcher opens the sidebar picker, returning focus after (review I4)', () => {
+        const select = document.createElement('select');
+        select.id = 'project-switcher';
+        document.body.appendChild(select);
+        expect(openProjectSwitcher()).toBe(true);
+        expect(openSelectPicker).toHaveBeenCalledWith(select, { returnFocus: true });
+        select.remove();
     });
 });
 
 describe('app.js command palette registration', () => {
+    it('offers Switch project on P and Projects on G P (CHT-2058)', () => {
+        const byId = Object.fromEntries(commandPaletteCommands.map(c => [c.id, c]));
+        expect(byId['switch-project'].shortcut).toBe('P');
+        expect(byId['nav-projects'].shortcut).toBe('G P');
+        openSelectPicker.mockClear();
+        const select = document.createElement('select');
+        select.id = 'project-switcher';
+        document.body.appendChild(select);
+        byId['switch-project'].action();
+        expect(openSelectPicker).toHaveBeenCalledWith(select, { returnFocus: true });
+        select.remove();
+    });
+
     it('registers navigation commands', () => {
         const navCommands = commandPaletteCommands.filter(c => c.category === 'Navigation');
         expect(navCommands.length).toBeGreaterThanOrEqual(10);

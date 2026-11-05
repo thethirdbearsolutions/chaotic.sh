@@ -2070,6 +2070,7 @@ class IssueService:
 
     async def _delete_rows(self, issue) -> None:
         """delete()'s writes, in one transaction."""
+        from app.oxyde_models.attachment import OxydeAttachment
         from app.oxyde_models.ritual import OxydeRitualAttestation, OxydeRitualRejection
 
         async with atomic():
@@ -2082,6 +2083,11 @@ class IssueService:
             await OxydeIssueRelation.objects.filter(issue_id=issue.id).delete()
             await OxydeIssueRelation.objects.filter(related_issue_id=issue.id).delete()
             await OxydeIssueDescriptionRevision.objects.filter(issue_id=issue.id).delete()
+            # Attachment rows (CHT-1996); their blobs stay for the sweep,
+            # dated now so its grace starts here.
+            from app.services.attachment_service import AttachmentService
+            await AttachmentService().release(issue_id=issue.id)
+            await OxydeAttachment.objects.filter(issue_id=issue.id).delete()
             # Ritual attestations on this issue. Without explicit
             # cleanup, orphan attestations accumulate pointing at a
             # deleted issue.

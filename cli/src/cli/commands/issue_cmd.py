@@ -1,11 +1,25 @@
 """Issue management commands."""
+import errno
+import os
 import sys
+from pathlib import Path
 
 import click
+import httpx
 from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
 from ..markup import Markup, Table, esc, markup
+
+from chaotic_mcp_tools import ToolInputError
+from chaotic_mcp_tools.attachments import (
+    check_local_file,
+    OUTCOME_UNKNOWN,
+    attachment_markdown,
+    read_local_file,
+    removal_note,
+    with_attachment_lines,
+)
 
 from ..principals import principal_markup
 from .shared import (
@@ -25,6 +39,47 @@ from .shared import (
 def _main():
     """Late-bind to cli.main for test mock compatibility."""
     return sys.modules['cli.main']
+
+
+def _read_attachment(path: str) -> tuple[bytes, str]:
+    """A file to upload (CHT-1996)."""
+    try:
+        return read_local_file(path)
+    except ToolInputError as e:
+        raise click.ClickException(str(e)) from e
+
+
+def _check_attachment(path: str) -> None:
+    """Refuse a file `_read_attachment` would, without reading it."""
+    try:
+        check_local_file(path)
+    except ToolInputError as e:
+        raise click.ClickException(str(e)) from e
+
+
+def _outcome_unknown(e: Exception) -> bool:
+    """A write that went out and got no answer (CHT-1957): it may have
+    been done. A connection refused never reached the server."""
+    detail = getattr(e, "detail", None)
+    return isinstance(detail, dict) and detail.get("error_code") == OUTCOME_UNKNOWN
+
+
+def _size_text(n) -> str:
+    if not isinstance(n, int):
+        return "?"
+    if n >= 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MiB"
+    if n >= 1024:
+        return f"{n / 1024:.1f} KiB"
+    return f"{n} B"
+
+
+def _print_attachments(attachments) -> None:
+    for a in attachments:
+        console.print(
+            f"  \u2022 {esc(a.get('filename'))} [dim]({esc(a.get('content_type'))}, "
+            f"{esc(_size_text(a.get('size')))}, id {esc(a.get('id'))})[/dim]"
+        )
 
 
 # Priority levels in order (lowest to highest)
@@ -120,6 +175,15 @@ def _relations_or_none(iss):
     """
     try:
         return _client().get_relations(iss["id"]) or []
+    except _main().APIError:
+        return None
+
+
+def _attachments_or_none(iss):
+    """The files attached to the issue (CHT-1996), or None when the call
+    failed (a server from before attachments has no such route)."""
+    try:
+        return _client().list_attachments(iss["id"]) or []
     except _main().APIError:
         return None
 
@@ -800,6 +864,7 @@ def register(cli):
                 except m.APIError:
                     iss['sub_issues'] = []
                 iss['relations'] = _relations_or_none(iss)
+                iss['attachments'] = _attachments_or_none(iss)
                 m.output_json(iss)
             else:
                 issues = [_client().get_issue_by_identifier(i) for i in identifiers]
@@ -866,6 +931,12 @@ def register(cli):
                     else:
                         console.print(f"  \u2022 [dim]{principal_markup(c.get('author'), c.get('author_name', 'User'))}:[/dim]")
                     console.print(Markdown(c.get('content', '')))
+
+            # Files attached to the issue (CHT-1996), comment or none.
+            attachments = _attachments_or_none(iss)
+            if attachments:
+                console.print("\n[bold]Attachments:[/bold]")
+                _print_attachments(attachments)
 
             # Show relations (CHT-1431): blockers matter before claiming.
             relations = _relations_or_none(iss)
@@ -1162,15 +1233,26 @@ def register(cli):
     @click.argument("content")
     @click.option("--note", "--notes", help="Additional context appended to the comment (e.g., commit hash)", callback=resolve_content_value)
     @click.option("--assign-to", help="Also assign the issue (use 'me', a user ID, or name/email)")
+    @click.option("--attach", "attach_paths", multiple=True, metavar="FILE",
+                  help="Attach a file with the comment (repeatable): PNG, JPEG, GIF, WebP, PDF or "
+                       "plain text. Images show inline.")
     @_main().json_option
     @_main().require_auth
     @_main().handle_error
     @_main().json_result()
-    def issue_comment(identifier, content, note, assign_to):
-        """Add a comment to an issue."""
+    def issue_comment(identifier, content, note, assign_to, attach_paths):
+        """Add a comment to an issue.
+
+        With --attach, the files are uploaded first and the comment ends
+        with a line linking each one. If a file is refused, nothing is
+        posted and the files already uploaded are removed again.
+        """
         m = _main()
         body = "\n".join([content, note]) if note else content
+        files = [_read_attachment(path) for path in attach_paths]
         iss = _client().get_issue_by_identifier(identifier)
+        if files:
+            return _comment_with_attachments(m, identifier, iss, body, files, assign_to)
         comment = _client().create_comment(iss["id"], body)
         console.print(f"[green]Comment added to {esc(identifier)}.[/green]")
         # @handles that reached nobody (CHT-1735); also in the --json output.
@@ -1213,6 +1295,217 @@ def register(cli):
         _client().delete_comment(iss["id"], comment_id)
         console.print(f"[green]Comment deleted from {esc(identifier)}.[/green]")
         return {"deleted": True, "id": comment_id, "issue_id": iss["id"], "identifier": identifier}
+
+    def _comment_with_attachments(m, identifier, iss, body, files, assign_to):
+        """`issue comment --attach`: upload, then post the comment linking
+        each file. A failed upload, or a comment the server refused,
+        removes what was uploaded and posts nothing; a comment that got no
+        answer keeps them, since it may be there, linking to them."""
+        assignee_id = m.resolve_assignee_id(assign_to) if assign_to else None
+        uploaded = []
+        for data, name in files:
+            try:
+                uploaded.append(_client().upload_attachment(iss["id"], data, filename=name))
+            except (m.APIError, httpx.HTTPError) as e:
+                note = _undo_uploads(uploaded)
+                if _outcome_unknown(e):
+                    note = "; ".join(filter(None, [note, f"{name} itself may have been stored: see `chaotic issue attachments {identifier}`"]))
+                raise click.ClickException(
+                    f"Could not attach {name}, so the comment was not posted: {e}" + (f" ({note})." if note else "")
+                ) from e
+            except BaseException:
+                # Ctrl-C, or anything else, between uploads: the comment is
+                # not posted, so its files go too, then the interrupt goes on.
+                note = _undo_uploads(uploaded)
+                click.echo(
+                    f"Interrupted while attaching {name}; the comment was not posted"
+                    + (f" ({note})" if note else "")
+                    + f". {name} itself may have been stored: see `chaotic issue attachments {identifier}`.",
+                    err=True,
+                )
+                raise
+            console.print(f"[dim]Uploaded {esc(name)}[/dim]")
+        try:
+            comment = _client().create_comment(iss["id"], with_attachment_lines(body, uploaded))
+        except BaseException as e:
+            if not isinstance(e, (m.APIError, httpx.HTTPError)):
+                kept = ", ".join(f"{a['filename']} ({a['id']})" for a in uploaded)
+                click.echo(f"Interrupted: the comment may or may not have been posted (its files are attached: {kept}).",
+                           err=True)
+                raise
+            if _outcome_unknown(e):
+                kept = ", ".join(f"{a['filename']} ({a['id']})" for a in uploaded)
+                raise click.ClickException(
+                    f"The comment may or may not have been posted: {e} (its files are attached: {kept})."
+                ) from e
+            note = _undo_uploads(uploaded)
+            raise click.ClickException(f"The comment was not posted: {e}" + (f" ({note})." if note else "")) from e
+        console.print(f"[green]Comment added to {esc(identifier)} with {esc(len(uploaded))} attachment(s).[/green]")
+        for warning in comment.get("warnings") or []:
+            console.print(f"[yellow]Warning: {esc(warning)}[/yellow]")
+        if assign_to:
+            _client().update_issue(iss["id"], assignee_id=assignee_id)
+            console.print(f"[green]Issue {esc(identifier)} assigned.[/green]")
+        return {**comment, "attachments": uploaded}
+
+    def _undo_uploads(uploaded) -> str:
+        """Delete what a failed `comment --attach` uploaded; what became
+        of them, for the error."""
+        m = _main()
+        removed, left = [], []
+        for attachment in uploaded:
+            try:
+                _client().delete_attachment(attachment["id"])
+            except (m.APIError, httpx.HTTPError):
+                left.append(attachment)
+            else:
+                removed.append(attachment["id"])
+        return removal_note(removed, left)
+
+    @issue.command("attach")
+    @click.argument("identifier")
+    @click.argument("files", nargs=-1, required=True, metavar="FILE...")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    @_main().json_result()
+    def issue_attach(identifier, files):
+        """Attach files to an issue, with no comment.
+
+        Each file is a PNG, JPEG, GIF, WebP, PDF or UTF-8 plain text, at
+        most 10 MiB unless the server is configured otherwise. Prints the
+        markdown that shows each in a comment (--json: a list, one entry
+        per file). To attach files with a comment, use
+        `chaotic issue comment ID "text" --attach FILE`.
+        """
+        m = _main()
+        # Each checked first, so a bad one sends nothing; then read and
+        # sent one at a time, so only one is ever held in memory.
+        for path in files:
+            _check_attachment(path)
+        iss = _client().get_issue_by_identifier(identifier)
+        attached = []
+        for path in files:
+            data, name = _read_attachment(path)
+            try:
+                attachment = _client().upload_attachment(iss["id"], data, filename=name)
+            except (m.APIError, httpx.HTTPError) as e:
+                if attached:
+                    # Each file is its own attachment: the ones before it stay.
+                    done = ", ".join(f"{a['filename']} ({a['id']})" for a in attached)
+                    raise click.ClickException(f"Could not attach {name}: {e} (attached before it: {done}).") from e
+                raise
+            attached.append({**attachment, "markdown": attachment_markdown(attachment)})
+            console.print(f"[green]Attached {esc(attachment['filename'])} to {esc(identifier)}[/green] [dim]({esc(attachment['id'])})[/dim]")
+            console.print(f"  {esc(attachment_markdown(attachment))}")
+        return attached
+
+    @issue.command("attachments")
+    @click.argument("identifier")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    @_main().json_result()
+    def issue_attachments(identifier):
+        """List the files attached to an issue."""
+        iss = _client().get_issue_by_identifier(identifier)
+        attachments = _client().list_attachments(iss["id"]) or []
+        if not attachments:
+            console.print(f"[dim]No attachments on {esc(identifier)}.[/dim]")
+        else:
+            _print_attachments(attachments)
+        return attachments
+
+    @issue.command("attachment-download")
+    @click.argument("attachment_id")
+    @click.option("--output", "-o", type=click.Path(dir_okay=True, writable=True),
+                  help="Where to save it: a file, or a directory to save it in under its name "
+                       "(default: the current directory). '-' writes to stdout.")
+    @click.option("--force", is_flag=True, help="Overwrite an existing file")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    @_main().json_result()
+    def issue_attachment_download(attachment_id, output, force):
+        """Download an attachment by its id (`chaotic issue attachments ID` lists them)."""
+        if output == "-" and _main().is_json_output():
+            raise click.UsageError("--json reports where the file was saved; it cannot go with -o -.")
+        download = _client().download_attachment(attachment_id)
+        data = download["content"]
+        if output == "-":
+            click.echo(data, nl=False)
+            return None
+        target = Path(output) if output else Path.cwd()
+        if target.is_dir():
+            target = target / _download_name(download.get("filename"), attachment_id)
+        try:
+            _save(target, data, force)
+        except FileExistsError:
+            raise click.ClickException(f"{target} already exists; pass --force to overwrite it.") from None
+        except OSError as e:
+            raise click.ClickException(f"Could not save to {target}: {e.strerror or e}") from e
+        console.print(f"[green]Saved {esc(len(data))} bytes to {esc(target)}[/green]")
+        return {"id": attachment_id, "path": str(target), "size": len(data),
+                "content_type": download.get("content_type")}
+
+    _NO_HARD_LINKS = {errno.EPERM, errno.EXDEV, getattr(errno, "ENOTSUP", errno.EPERM),
+                      getattr(errno, "EOPNOTSUPP", errno.EPERM)}
+
+    def _save(target: Path, data: bytes, force: bool) -> None:
+        """Write `data` to `target` whole or not at all, never through a
+        symbolic link there: written beside it and moved into place. With
+        `force` it replaces whatever is at `target` (a link itself, not
+        what it points to); without, anything at all there, a dangling
+        link included, is FileExistsError."""
+        temp = target.with_name(f".{target.name}.{os.getpid()}.part")
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644)
+        try:
+            with os.fdopen(fd, "wb") as out:
+                out.write(data)
+            if force:
+                os.replace(temp, target)
+            else:
+                # A hard link fails when anything is at `target`, so two
+                # downloads cannot both think they made it.
+                try:
+                    os.link(temp, target)
+                except OSError as e:
+                    if e.errno not in _NO_HARD_LINKS:
+                        raise
+                    # A filesystem without hard links: checked, then moved.
+                    if os.path.lexists(target):
+                        raise FileExistsError(target) from None
+                    os.replace(temp, target)
+        finally:
+            try:
+                os.unlink(temp)
+            except FileNotFoundError:
+                pass
+
+    def _download_name(filename: str | None, attachment_id: str) -> str:
+        """The server's name for the file as a bare file name in the
+        target directory, never a path out of it; the id when there is
+        no such name."""
+        name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+        if name in ("", ".", "..") or name.startswith("."):
+            return attachment_id
+        return name
+
+    @issue.command("attachment-delete")
+    @click.argument("attachment_id")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    @_main().json_result()
+    def issue_attachment_delete(attachment_id):
+        """Delete an attachment: its uploader or a team admin may.
+        Comments that link to it then show a broken link."""
+        m = _main()
+        if not m.confirm_action("Are you sure you want to delete this attachment?"):
+            raise SystemExit(0)
+        _client().delete_attachment(attachment_id)
+        console.print(f"[green]Attachment {esc(attachment_id)} deleted.[/green]")
+        return {"deleted": True, "id": attachment_id}
 
     @issue.command("delete")
     @click.argument("identifier")
