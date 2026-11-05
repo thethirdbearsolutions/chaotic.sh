@@ -16,6 +16,7 @@ import asyncio
 import functools
 import inspect
 import json
+import os
 import pathlib
 import re
 from contextlib import asynccontextmanager
@@ -1953,64 +1954,178 @@ async def test_issue_view_lists_attachments_and_tolerates_an_old_server():
     backend.uploaded.append({"id": "att-1"})
     assert (await _tools(backend)["issue_view"](identifier="CHT-1"))["attachments"] == [{"id": "att-1"}]
 
-    old = FakeBackend(fail_on={"list_attachments": BackendError("Not Found", 404, "Not Found")})
-    assert (await _tools(old)["issue_view"](identifier="CHT-1"))["attachments"] == []
+    for status in (404, 405):
+        old = FakeBackend(fail_on={"list_attachments": BackendError("Not Found", status, "Not Found")})
+        assert (await _tools(old)["issue_view"](identifier="CHT-1"))["attachments"] is None
 
 
-async def test_the_stdio_backend_reads_a_local_file_and_refuses_a_missing_one(tmp_path):
+async def test_issue_view_reports_a_real_attachments_failure():
+    broken = FakeBackend(fail_on={"list_attachments": BackendError("Forbidden", 403, "Forbidden")})
+
+    result = await _tools(broken)["issue_view"](identifier="CHT-1")
+
+    assert result["error"]["message"] == "Forbidden"
+
+
+@pytest.fixture
+def stdio_cwd(tmp_path, monkeypatch):
+    """A project root as the working directory, and this CLI's home
+    somewhere else, as Claude Code launches the stdio server."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("CHAOTIC_HOME", str(tmp_path / "chaotic-home"))
+    monkeypatch.delenv("CHAOTIC_MCP_ATTACH_TEXT", raising=False)
+    return root
+
+
+async def test_the_stdio_backend_reads_a_local_file_and_refuses_a_missing_one(stdio_cwd):
     from cli.mcp_backend import RestBackend
 
-    path = tmp_path / "a.txt"
-    path.write_bytes(b"hi")
+    path = stdio_cwd / "a.png"
+    path.write_bytes(PNG)
     backend = RestBackend()
-    assert await backend.read_local_file(str(path)) == (b"hi", "a.txt")
+    assert await backend.read_local_file(str(path)) == (PNG, "a.png")
+    assert await backend.read_local_file("a.png") == (PNG, "a.png")
     with pytest.raises(ToolInputError, match="No such file"):
-        await backend.read_local_file(str(tmp_path / "nope"))
+        await backend.read_local_file(str(stdio_cwd / "nope"))
+    with pytest.raises(ToolInputError, match="Not a regular file"):
+        await backend.read_local_file(str(stdio_cwd))
 
 
 @pytest.mark.parametrize("name", ["~/.ssh/id_rsa", "/home/u/.chaotic/config.json", "/srv/app/.env", "/a/.git/config"])
-async def test_the_stdio_backend_will_not_read_hidden_files(name):
+async def test_the_stdio_backend_will_not_read_hidden_files(name, stdio_cwd):
     from cli.mcp_backend import RestBackend
 
     with pytest.raises(ToolInputError, match="hidden"):
         await RestBackend().read_local_file(name)
 
 
-async def test_the_stdio_backend_follows_a_link_before_deciding(tmp_path):
+@pytest.mark.parametrize("name", [".git/config", ".claude/settings.local.json", ".claude/worktrees/w1/.env",
+                                  ".claude/worktrees/w1/.git", ".claude/worktrees/w1/.git/config"])
+async def test_hidden_files_under_the_working_directory_are_refused(name, stdio_cwd):
     from cli.mcp_backend import RestBackend
 
-    secret_dir = tmp_path / ".secrets"
+    secret = stdio_cwd / name
+    secret.parent.mkdir(parents=True, exist_ok=True)
+    secret.write_bytes(PNG)  # an image's bytes, so only the path refuses it
+
+    with pytest.raises(ToolInputError, match="hidden"):
+        await RestBackend().read_local_file(name)
+
+
+@pytest.mark.parametrize("cwd", ["repo", "repo/.claude/worktrees/w1"])
+async def test_an_agent_worktree_is_read(cwd, stdio_cwd, monkeypatch):
+    from cli.mcp_backend import RestBackend
+
+    shot = stdio_cwd / ".claude" / "worktrees" / "w1" / "out" / "shot.png"
+    shot.parent.mkdir(parents=True)
+    shot.write_bytes(PNG)
+    monkeypatch.chdir(stdio_cwd.parent / cwd)
+
+    assert await RestBackend().read_local_file(str(shot)) == (PNG, "shot.png")
+
+
+async def test_this_clis_own_home_is_refused_whatever_its_name(stdio_cwd, tmp_path):
+    from cli.mcp_backend import RestBackend
+
+    home = tmp_path / "chaotic-home"
+    home.mkdir()
+    (home / "config.json").write_bytes(PNG)
+
+    with pytest.raises(ToolInputError, match="own configuration"):
+        await RestBackend().read_local_file(str(home / "config.json"))
+
+
+async def test_text_is_refused_unless_the_user_opts_in(stdio_cwd, monkeypatch):
+    from cli.mcp_backend import RestBackend
+
+    (stdio_cwd / "terraform.tfstate").write_text('{"secret": "x"}')
+    (stdio_cwd / "doc.pdf").write_bytes(b"%PDF-1.7 ...")
+
+    with pytest.raises(ToolInputError, match="CHAOTIC_MCP_ATTACH_TEXT=1"):
+        await RestBackend().read_local_file("terraform.tfstate")
+    assert (await RestBackend().read_local_file("doc.pdf"))[1] == "doc.pdf"
+    monkeypatch.setenv("CHAOTIC_MCP_ATTACH_TEXT", "1")
+    assert await RestBackend().read_local_file("terraform.tfstate") == (b'{"secret": "x"}', "terraform.tfstate")
+
+
+async def test_the_stdio_backend_follows_a_link_before_deciding(stdio_cwd):
+    from cli.mcp_backend import RestBackend
+
+    secret_dir = stdio_cwd / ".secrets"
     secret_dir.mkdir()
-    (secret_dir / "key.txt").write_text("secret")
-    link = tmp_path / "innocent.txt"
-    link.symlink_to(secret_dir / "key.txt")
+    (secret_dir / "key.png").write_bytes(PNG)
+    link = stdio_cwd / "innocent.png"
+    link.symlink_to(secret_dir / "key.png")
 
     with pytest.raises(ToolInputError, match="hidden"):
         await RestBackend().read_local_file(str(link))
 
 
-async def test_a_hidden_directory_below_the_working_directory_is_read(tmp_path, monkeypatch):
+async def test_a_link_to_an_allowed_file_is_read_as_its_target(stdio_cwd):
     from cli.mcp_backend import RestBackend
 
-    monkeypatch.chdir(tmp_path)
-    shot = tmp_path / ".claude" / "worktrees" / "w1" / "shot.png"
-    shot.parent.mkdir(parents=True)
-    shot.write_bytes(PNG)
-    (tmp_path / ".env").write_text("SECRET=1")
+    (stdio_cwd / "real.png").write_bytes(PNG)
+    (stdio_cwd / "alias.png").symlink_to(stdio_cwd / "real.png")
 
-    assert await RestBackend().read_local_file(str(shot)) == (PNG, "shot.png")
-    with pytest.raises(ToolInputError, match="hidden"):
-        await RestBackend().read_local_file(str(tmp_path / ".env"))
+    assert await RestBackend().read_local_file("alias.png") == (PNG, "alias.png")
 
 
-async def test_a_working_directory_holding_home_exempts_nothing(tmp_path, monkeypatch):
+async def test_a_link_swapped_in_after_the_check_is_not_followed(stdio_cwd, monkeypatch):
+    """The checked path is opened with O_NOFOLLOW: a symbolic link put in
+    its place between the check and the open is refused, not read."""
+    from cli import mcp_backend
     from cli.mcp_backend import RestBackend
 
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.chdir(tmp_path)
-    key = tmp_path / ".ssh" / "id_rsa"
-    key.parent.mkdir()
-    key.write_text("secret")
+    target = stdio_cwd / "shot.png"
+    target.write_bytes(PNG)
+    secret = stdio_cwd / ".secret.png"
+    secret.write_bytes(PNG + b"secret")
+    real = mcp_backend.refused_local_path
 
-    with pytest.raises(ToolInputError, match="hidden"):
-        await RestBackend().read_local_file("~/.ssh/id_rsa")
+    def check_then_swap(path):
+        answer = real(path)
+        target.unlink()
+        target.symlink_to(secret)
+        return answer
+
+    monkeypatch.setattr(mcp_backend, "refused_local_path", check_then_swap)
+
+    with pytest.raises(ToolInputError, match="Cannot read"):
+        await RestBackend().read_local_file(str(target))
+
+
+def test_the_cli_reader_checks_the_open_file(tmp_path):
+    """A FIFO is refused without blocking, from the opened handle."""
+    from chaotic_mcp_tools.attachments import read_local_file
+
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    with pytest.raises(ToolInputError, match="Not a regular file"):
+        read_local_file(str(fifo))
+
+
+async def test_comment_attach_undoes_its_uploads_when_cancelled():
+    """A cancellation between uploads (the client gave up on the call)
+    still deletes what was uploaded, and the comment is not posted."""
+    backend = FakeBackend()
+    real = backend.upload_attachment
+    calls = []
+
+    async def upload(issue_id, data, filename):
+        calls.append(filename)
+        if len(calls) == 2:
+            raise asyncio.CancelledError()
+        return await real(issue_id, data, filename)
+
+    backend.upload_attachment = upload
+
+    with pytest.raises(asyncio.CancelledError):
+        await _tools(backend)["issue_comment"](
+            identifier="CHT-1", content="x",
+            attach=[{"content_base64": "aGk=", "filename": "a.txt"}, {"content_base64": "aGk=", "filename": "b.txt"}],
+        )
+
+    assert [name for name, *_ in backend.calls if name == "delete_attachment"] == ["delete_attachment"]
+    assert not [name for name, *_ in backend.calls if name == "create_comment"]

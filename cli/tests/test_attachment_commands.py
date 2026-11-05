@@ -82,6 +82,32 @@ class TestAttach:
         client.get_issue_by_identifier.assert_not_called()
         client.upload_attachment.assert_not_called()
 
+    def test_files_are_read_one_at_a_time(self, cli_runner, client, files, monkeypatch):
+        """Each file is read just before it is sent, so only one is held."""
+        from cli.commands import issue_cmd
+        from cli.main import cli
+
+        events = []
+        real_read = issue_cmd.read_local_file
+        monkeypatch.setattr(issue_cmd, "read_local_file",
+                            lambda path: events.append(("read", path)) or real_read(path))
+        client.upload_attachment = MagicMock(side_effect=lambda issue_id, data, filename: events.append(
+            ("upload", filename)) or _row(len(events)))
+
+        result = cli_runner.invoke(cli, ["issue", "attach", "CHT-7", str(files[0]), str(files[1])])
+
+        assert result.exit_code == 0, result.output
+        assert events == [("read", str(files[0])), ("upload", "shot.png"),
+                          ("read", str(files[1])), ("upload", "run.log")]
+
+    def test_a_bad_later_file_sends_nothing(self, cli_runner, client, files, tmp_path):
+        from cli.main import cli
+
+        result = cli_runner.invoke(cli, ["issue", "attach", "CHT-7", str(files[0]), str(tmp_path / "nope.png")])
+
+        assert result.exit_code != 0 and "No such file" in result.output
+        client.upload_attachment.assert_not_called()
+
     def test_a_directory_is_not_a_file(self, cli_runner, client, tmp_path):
         from cli.main import cli
 
@@ -167,6 +193,30 @@ class TestCommentAttach:
         assert "shot.png (att-1)" in result.output
         client.delete_attachment.assert_not_called()
 
+    def test_an_interrupt_between_uploads_removes_them_and_posts_nothing(self, cli_runner, client, files):
+        from cli.main import cli
+
+        client.upload_attachment = MagicMock(side_effect=[_row(1), KeyboardInterrupt()])
+
+        result = cli_runner.invoke(cli, ["issue", "comment", "CHT-7", "x",
+                                         "--attach", str(files[0]), "--attach", str(files[1])])
+
+        assert result.exit_code != 0
+        assert "Interrupted while attaching run.log; the comment was not posted" in result.output
+        client.delete_attachment.assert_called_once_with("att-1")
+        client.create_comment.assert_not_called()
+
+    def test_an_interrupted_comment_keeps_its_files(self, cli_runner, client, files):
+        from cli.main import cli
+
+        client.create_comment = MagicMock(side_effect=KeyboardInterrupt())
+
+        result = cli_runner.invoke(cli, ["issue", "comment", "CHT-7", "x", "--attach", str(files[0])])
+
+        assert result.exit_code != 0
+        assert "may or may not have been posted" in result.output and "shot.png (att-1)" in result.output
+        client.delete_attachment.assert_not_called()
+
     def test_without_attach_nothing_changes(self, cli_runner, client):
         from cli.main import cli
 
@@ -233,6 +283,84 @@ class TestListDownloadDelete:
         result = cli_runner.invoke(cli, ["issue", "attachment-download", "att-1", "-o", str(tmp_path / "no" / "x.png")])
 
         assert result.exit_code == 1 and "Could not save to" in result.output
+
+    def test_download_will_not_write_through_a_dangling_link(self, cli_runner, client, tmp_path):
+        from cli.main import cli
+
+        elsewhere = tmp_path / "elsewhere.txt"
+        target = tmp_path / "out.png"
+        target.symlink_to(elsewhere)
+        client.download_attachment = MagicMock(return_value={"content": PNG, "filename": "shot.png"})
+
+        refused = cli_runner.invoke(cli, ["issue", "attachment-download", "att-1", "-o", str(target)])
+        assert refused.exit_code != 0 and "already exists" in refused.output
+        assert not elsewhere.exists()
+
+        forced = cli_runner.invoke(cli, ["issue", "attachment-download", "att-1", "-o", str(target), "--force"])
+        assert forced.exit_code == 0, forced.output
+        assert not target.is_symlink() and target.read_bytes() == PNG and not elsewhere.exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["out.png"]
+
+    def test_a_failed_download_write_leaves_nothing(self, cli_runner, client, tmp_path, monkeypatch):
+        import os
+
+        from cli.main import cli
+
+        client.download_attachment = MagicMock(return_value={"content": PNG, "filename": "shot.png"})
+
+        def no_space(*a, **k):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(os, "link", no_space)
+
+        result = cli_runner.invoke(cli, ["issue", "attachment-download", "att-1", "-o", str(tmp_path)])
+
+        assert result.exit_code == 1 and "No space left on device" in result.output
+        assert list(tmp_path.iterdir()) == []
+
+    def test_download_without_hard_links_still_saves_and_still_refuses(self, cli_runner, client, tmp_path,
+                                                                        monkeypatch):
+        import errno
+        import os
+
+        from cli.main import cli
+
+        client.download_attachment = MagicMock(return_value={"content": PNG, "filename": "shot.png"})
+
+        def unsupported(*a, **k):
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(os, "link", unsupported)
+
+        saved = cli_runner.invoke(cli, ["issue", "attachment-download", "att-1", "-o", str(tmp_path)])
+        again = cli_runner.invoke(cli, ["issue", "attachment-download", "att-1", "-o", str(tmp_path)])
+
+        assert saved.exit_code == 0, saved.output
+        assert (tmp_path / "shot.png").read_bytes() == PNG
+        assert again.exit_code != 0 and "already exists" in again.output
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["shot.png"]
+
+    def test_download_json_says_where(self, cli_runner, client, tmp_path):
+        from cli.main import cli
+
+        client.download_attachment = MagicMock(return_value={"content": PNG, "filename": "shot.png",
+                                                             "content_type": "image/png"})
+
+        result = cli_runner.invoke(cli, ["issue", "attachment-download", "att-1", "-o", str(tmp_path), "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {"id": "att-1", "path": str(tmp_path / "shot.png"), "size": len(PNG),
+                                             "content_type": "image/png"}
+
+    def test_download_json_cannot_go_to_stdout(self, cli_runner, client):
+        from cli.main import cli
+
+        client.download_attachment = MagicMock()
+
+        result = cli_runner.invoke(cli, ["issue", "attachment-download", "att-1", "-o", "-", "--json"])
+
+        assert result.exit_code != 0
+        client.download_attachment.assert_not_called()
 
     def test_download_to_stdout(self, cli_runner, client):
         from cli.main import cli

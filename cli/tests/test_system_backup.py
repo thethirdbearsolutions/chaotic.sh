@@ -10,6 +10,7 @@ import io
 import os
 import sqlite3
 import tarfile
+from pathlib import Path
 
 import pytest
 
@@ -217,7 +218,50 @@ class TestAttachmentsBackup:
         assert (restored, skipped) == (1, 0)
         assert gone.read_bytes() == b"deleted since"
         assert kept.exists() and newer.exists()
-        assert list(store.rglob("*.restoring")) == []
+        assert list((store / "tmp").iterdir()) == []
+
+    def test_restore_replaces_a_blob_damaged_on_disk(self, live_db, store):
+        _, damaged = _blob(store, b"the whole screenshot")
+        backup = system.create_backup()
+        damaged.write_bytes(b"the whole")
+
+        restored, _ = system.restore_attachments(system.attachments_backup_for(backup))
+
+        assert restored == 1 and damaged.read_bytes() == b"the whole screenshot"
+
+    def test_restore_stages_each_blob_where_the_sweep_cleans_up(self, live_db, store, monkeypatch):
+        """A restore killed mid-blob leaves a `tmp/*.part`, which the
+        server's sweep deletes after a day, never a file beside the blobs."""
+        _, gone = _blob(store, b"deleted since")
+        backup = system.create_backup()
+        gone.unlink()
+        staged = []
+        real_replace = os.replace
+
+        def replace(src, dst):
+            staged.append(Path(src))
+            real_replace(src, dst)
+
+        monkeypatch.setattr(system.os, "replace", replace)
+
+        system.restore_attachments(system.attachments_backup_for(backup))
+
+        assert [p.parent for p in staged] == [store / "tmp"] and staged[0].suffix == ".part"
+        assert gone.read_bytes() == b"deleted since"
+
+    def test_an_interrupted_restore_removes_its_staged_file(self, live_db, store, monkeypatch):
+        _, gone = _blob(store, b"deleted since")
+        backup = system.create_backup()
+        gone.unlink()
+
+        def interrupted(src, dst):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(system.os, "replace", interrupted)
+
+        with pytest.raises(KeyboardInterrupt):
+            system.restore_attachments(system.attachments_backup_for(backup))
+        assert list((store / "tmp").iterdir()) == [] and not gone.exists()
 
     def test_restore_refuses_members_that_are_not_blobs_or_do_not_match(self, live_db, store, tmp_path):
         archive = tmp_path / "attachments.backup-x.tar"

@@ -1,4 +1,6 @@
 """Issue management commands."""
+import errno
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from ..markup import Markup, Table, esc, markup
 
 from chaotic_mcp_tools import ToolInputError
 from chaotic_mcp_tools.attachments import (
+    check_local_file,
     OUTCOME_UNKNOWN,
     attachment_markdown,
     read_local_file,
@@ -39,9 +42,17 @@ def _main():
 
 
 def _read_attachment(path: str) -> tuple[bytes, str]:
-    """A file to upload (CHT-1996), read before anything is sent."""
+    """A file to upload (CHT-1996)."""
     try:
         return read_local_file(path)
+    except ToolInputError as e:
+        raise click.ClickException(str(e)) from e
+
+
+def _check_attachment(path: str) -> None:
+    """Refuse a file `_read_attachment` would, without reading it."""
+    try:
+        check_local_file(path)
     except ToolInputError as e:
         raise click.ClickException(str(e)) from e
 
@@ -1302,10 +1313,26 @@ def register(cli):
                 raise click.ClickException(
                     f"Could not attach {name}, so the comment was not posted: {e}" + (f" ({note})." if note else "")
                 ) from e
+            except BaseException:
+                # Ctrl-C, or anything else, between uploads: the comment is
+                # not posted, so its files go too, then the interrupt goes on.
+                note = _undo_uploads(uploaded)
+                click.echo(
+                    f"Interrupted while attaching {name}; the comment was not posted"
+                    + (f" ({note})" if note else "")
+                    + f". {name} itself may have been stored: see `chaotic issue attachments {identifier}`.",
+                    err=True,
+                )
+                raise
             console.print(f"[dim]Uploaded {esc(name)}[/dim]")
         try:
             comment = _client().create_comment(iss["id"], with_attachment_lines(body, uploaded))
-        except (m.APIError, httpx.HTTPError) as e:
+        except BaseException as e:
+            if not isinstance(e, (m.APIError, httpx.HTTPError)):
+                kept = ", ".join(f"{a['filename']} ({a['id']})" for a in uploaded)
+                click.echo(f"Interrupted: the comment may or may not have been posted (its files are attached: {kept}).",
+                           err=True)
+                raise
             if _outcome_unknown(e):
                 kept = ", ".join(f"{a['filename']} ({a['id']})" for a in uploaded)
                 raise click.ClickException(
@@ -1352,10 +1379,14 @@ def register(cli):
         `chaotic issue comment ID "text" --attach FILE`.
         """
         m = _main()
-        read = [_read_attachment(path) for path in files]
+        # Each checked first, so a bad one sends nothing; then read and
+        # sent one at a time, so only one is ever held in memory.
+        for path in files:
+            _check_attachment(path)
         iss = _client().get_issue_by_identifier(identifier)
         attached = []
-        for data, name in read:
+        for path in files:
+            data, name = _read_attachment(path)
             try:
                 attachment = _client().upload_attachment(iss["id"], data, filename=name)
             except (m.APIError, httpx.HTTPError) as e:
@@ -1391,25 +1422,65 @@ def register(cli):
                   help="Where to save it: a file, or a directory to save it in under its name "
                        "(default: the current directory). '-' writes to stdout.")
     @click.option("--force", is_flag=True, help="Overwrite an existing file")
+    @_main().json_option
     @_main().require_auth
     @_main().handle_error
+    @_main().json_result()
     def issue_attachment_download(attachment_id, output, force):
         """Download an attachment by its id (`chaotic issue attachments ID` lists them)."""
+        if output == "-" and _main().is_json_output():
+            raise click.UsageError("--json reports where the file was saved; it cannot go with -o -.")
         download = _client().download_attachment(attachment_id)
         data = download["content"]
         if output == "-":
             click.echo(data, nl=False)
-            return
+            return None
         target = Path(output) if output else Path.cwd()
         if target.is_dir():
             target = target / _download_name(download.get("filename"), attachment_id)
-        if target.exists() and not force:
-            raise click.ClickException(f"{target} already exists; pass --force to overwrite it.")
         try:
-            target.write_bytes(data)
+            _save(target, data, force)
+        except FileExistsError:
+            raise click.ClickException(f"{target} already exists; pass --force to overwrite it.") from None
         except OSError as e:
             raise click.ClickException(f"Could not save to {target}: {e.strerror or e}") from e
         console.print(f"[green]Saved {esc(len(data))} bytes to {esc(target)}[/green]")
+        return {"id": attachment_id, "path": str(target), "size": len(data),
+                "content_type": download.get("content_type")}
+
+    _NO_HARD_LINKS = {errno.EPERM, errno.EXDEV, getattr(errno, "ENOTSUP", errno.EPERM),
+                      getattr(errno, "EOPNOTSUPP", errno.EPERM)}
+
+    def _save(target: Path, data: bytes, force: bool) -> None:
+        """Write `data` to `target` whole or not at all, never through a
+        symbolic link there: written beside it and moved into place. With
+        `force` it replaces whatever is at `target` (a link itself, not
+        what it points to); without, anything at all there, a dangling
+        link included, is FileExistsError."""
+        temp = target.with_name(f".{target.name}.{os.getpid()}.part")
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o644)
+        try:
+            with os.fdopen(fd, "wb") as out:
+                out.write(data)
+            if force:
+                os.replace(temp, target)
+            else:
+                # A hard link fails when anything is at `target`, so two
+                # downloads cannot both think they made it.
+                try:
+                    os.link(temp, target)
+                except OSError as e:
+                    if e.errno not in _NO_HARD_LINKS:
+                        raise
+                    # A filesystem without hard links: checked, then moved.
+                    if os.path.lexists(target):
+                        raise FileExistsError(target) from None
+                    os.replace(temp, target)
+        finally:
+            try:
+                os.unlink(temp)
+            except FileNotFoundError:
+                pass
 
     def _download_name(filename: str | None, attachment_id: str) -> str:
         """The server's name for the file as a bare file name in the

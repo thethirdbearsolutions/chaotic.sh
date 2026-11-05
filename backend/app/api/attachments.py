@@ -233,4 +233,4 @@ async def delete_attachment(attachment_id: str, current_user: CurrentUser) -> No
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the uploader or a team admin can delete an attachment",
         )
-    await AttachmentService.delete(attachment)
+    await AttachmentService().delete(attachment)

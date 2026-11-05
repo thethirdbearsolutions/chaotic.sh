@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
+import anyio
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..attachments import (
@@ -292,9 +293,13 @@ async def issue_view(
     iss["sub_issues"] = [compact(s, COMPACT_ISSUE_FIELDS) for s in subs]
     try:
         iss["attachments"] = list(await backend.list_attachments(iss["id"]) or [])
-    except BackendError:
-        # A server from before attachments (CHT-1996) has no such route.
-        iss["attachments"] = []
+    except BackendError as e:
+        # A server from before attachments (CHT-1996) has no such route:
+        # null, as `chaotic issue view --json` says, so it cannot read as
+        # "no files". Any other failure is the tool's error.
+        if e.http_status not in (404, 405):
+            raise
+        iss["attachments"] = None
     return iss
 
 
@@ -612,13 +617,20 @@ async def _resolve_new_assignee(backend: Backend, iss: dict, value: str) -> str 
 
 
 _PATH_DESC = (
-    "A file on the machine the MCP server runs on. Only the stdio server "
-    "(`chaotic mcp`) can read one, and not a hidden file or one in a hidden "
-    "directory outside its working directory; with the hosted server send content_base64."
+    "A file on the machine the MCP server runs on, up to the server's full limit. Only the "
+    "stdio server (`chaotic mcp`) can read one, and only an image or a PDF (text too where "
+    "CHAOTIC_MCP_ATTACH_TEXT=1 is set), not a hidden file, nor one in a hidden directory "
+    "(bar .claude/worktrees/), nor its own config; with the hosted server send content_base64."
 )
-_BASE64_DESC = "The file's bytes, base64-encoded. Give this or path, not both."
+_BASE64_DESC = (
+    "The file's bytes, base64-encoded. Give this or path, not both. The hosted server takes a "
+    "request of at most 4 MiB, so about 3 MiB of file per call, all files of one call together."
+)
 _FILENAME_DESC = "The name to show for it. Defaults to the path's file name (with content_base64: 'attachment')."
-_ATTACH_TYPES = "PNG, JPEG, GIF, WebP, PDF or UTF-8 plain text, at most 10 MiB by default"
+_ATTACH_TYPES = (
+    "PNG, JPEG, GIF, WebP, PDF or UTF-8 plain text, at most 10 MiB each by default; "
+    "as content_base64 on the hosted server, about 3 MiB for all of them together"
+)
 
 
 class AttachmentInput(BaseModel):
@@ -687,7 +699,10 @@ async def issue_attach(
 ) -> dict:
     """Attach a file to an issue with no comment: a screenshot as
     evidence, say. The file is a PNG, JPEG, GIF, WebP, PDF or UTF-8
-    plain text, at most 10 MiB by default. Returns the attachment; its
+    plain text, at most 10 MiB by default; sent as content_base64 to the
+    hosted server, whose requests are capped at 4 MiB, at most about
+    3 MiB (a larger request is refused with HTTP 413 before the tool
+    runs). Returns the attachment; its
     `markdown` is the line that shows it in a comment. To attach files
     with a comment, use issue_comment's `attach`."""
     iss = await backend.get_issue(identifier)
@@ -751,6 +766,13 @@ async def issue_comment(
             if _unanswered(e):
                 note = "; ".join(filter(None, [note, f"{name or 'that file'} itself may have been stored: see issue_view"]))
             raise _with_note(e, f"Could not attach {name or 'a file'}, so the comment was not posted: ", note) from e
+        except BaseException:
+            # Cancelled (the client gave up on the call), or anything else,
+            # between uploads: the comment is not posted, so its files go
+            # too, shielded so the cancellation does not stop the undo.
+            with anyio.CancelScope(shield=True):
+                await _remove_uploaded(backend, uploaded)
+            raise
     body = with_attachment_lines(content, uploaded)
     try:
         comment = await backend.create_comment(iss["id"], body)

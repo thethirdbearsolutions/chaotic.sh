@@ -689,6 +689,8 @@ class TestSweep:
         return BlobStore().path_for(uploaded["sha256"])
 
     async def test_an_old_orphan_is_deleted(self, client, auth_headers, test_issue):
+        """Orphaned more than 30 days ago: the delete re-dated the blob,
+        and the 30 days since then have passed."""
         path = await self._orphan(client, auth_headers, test_issue)
         _age(path, ORPHAN_GRACE_SECONDS + 60)
 
@@ -705,6 +707,41 @@ class TestSweep:
         result = await AttachmentService().sweep_orphans()
 
         assert path.exists() and result.blobs_deleted == 0
+
+    @pytest.mark.parametrize("delete", ["attachment", "issue", "project", "team"])
+    async def test_an_old_upload_orphaned_now_is_kept(self, client, auth_headers, test_issue, test_project,
+                                                      test_team, delete):
+        """The grace runs from the delete that orphaned the blob, not from
+        the upload: a restore of last night's database still finds it."""
+        uploaded = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        path = BlobStore().path_for(uploaded["sha256"])
+        _age(path, ORPHAN_GRACE_SECONDS * 2)
+        url = {
+            "attachment": f"/api/attachments/{uploaded['id']}",
+            "issue": f"/api/issues/{test_issue.id}",
+            "project": f"/api/projects/{test_project.id}",
+            "team": f"/api/teams/{test_team.id}",
+        }[delete]
+
+        assert (await client.delete(url, headers=auth_headers)).status_code == 204
+        assert await OxydeAttachment.objects.count() == 0
+        result = await AttachmentService().sweep_orphans()
+
+        assert path.exists() and result.blobs_deleted == 0
+        later = await AttachmentService().sweep_orphans(now=os.stat(path).st_mtime + ORPHAN_GRACE_SECONDS + 60)
+        assert not path.exists() and later.blobs_deleted == 1
+
+    async def test_release_takes_exactly_one_scope(self, db):
+        with pytest.raises(ValueError):
+            await AttachmentService().release()
+        with pytest.raises(ValueError):
+            await AttachmentService().release(issue_id="a", project_id="b")
+
+    async def test_releasing_a_row_whose_blob_is_gone_is_harmless(self, client, auth_headers, test_issue):
+        uploaded = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        BlobStore().path_for(uploaded["sha256"]).unlink()
+
+        assert (await client.delete(f"/api/attachments/{uploaded['id']}", headers=auth_headers)).status_code == 204
 
     async def test_an_old_blob_a_row_names_is_kept(self, client, auth_headers, test_issue):
         uploaded = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
@@ -812,6 +849,30 @@ class TestSweep:
 
         assert runs == [None]
         assert "attachment sweep failed" in caplog.text
+
+    async def test_a_database_without_the_table_is_said_once_and_quietly(self, monkeypatch, caplog):
+        import asyncio
+
+        from app.services import attachment_service
+
+        runs = []
+
+        async def sweep(self, *, now=None):
+            runs.append(1)
+            raise RuntimeError("no such table: attachments")
+
+        monkeypatch.setattr(attachment_service.AttachmentService, "sweep_orphans", sweep)
+        with caplog.at_level("DEBUG", logger=attachment_service.logger.name):
+            task = asyncio.create_task(attachment_service.run_sweeper(interval=0.01))
+            while len(runs) < 3:
+                await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        records = [r for r in caplog.records if r.name == attachment_service.logger.name]
+        assert [r.levelname for r in records] == ["DEBUG"]
+        assert "no attachments table" in records[0].getMessage()
 
     async def test_the_sweeper_repeats_on_its_interval(self, monkeypatch):
         import asyncio

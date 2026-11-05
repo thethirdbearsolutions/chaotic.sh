@@ -1498,13 +1498,18 @@ def backup_attachments(backup_path: Path) -> Path | None:
 
 def restore_attachments(archive: Path) -> tuple[int, int]:
     """Put the blobs in `archive` back into the store: each one missing
-    there, checked against its sha256 name first. A blob already there
-    is the same bytes (its name is its hash) and is left alone, as is
-    every blob not in the archive (one no row of the restored database
-    names is an orphan the server's sweep deletes later). Returns
-    (restored, skipped): skipped counts members that are not blobs or
-    whose bytes do not match their name. Raises OSError or
-    tarfile.TarError when the archive cannot be read."""
+    there, or there at another size than the archive's (truncated or
+    damaged on disk), checked against its sha256 name first. A blob
+    already there at its size is taken to be the same bytes (its name is
+    its hash) and is left alone, as is every blob not in the archive (one
+    no row of the restored database names is an orphan the server's
+    sweep deletes later). Returns (restored, skipped): skipped counts
+    members that are not blobs or whose bytes do not match their name.
+    Raises OSError or tarfile.TarError when the archive cannot be read.
+
+    Each blob is written to `<store>/tmp/<random>.part` first and moved
+    into place, so a restore that is killed leaves only `.part` files,
+    which the server's sweep deletes once they are a day old."""
     store = attachments_dir()
     restored = skipped = 0
     with tarfile.open(archive, "r") as tar:
@@ -1515,14 +1520,15 @@ def restore_attachments(archive: Path) -> tuple[int, int]:
                 continue
             shard, sha = parts
             final = store / shard / sha
-            if final.is_file():
+            if final.is_file() and final.stat().st_size == member.size:
                 continue
             source = tar.extractfile(member)
             if source is None:  # pragma: no cover -- a regular member always has a file
                 skipped += 1
                 continue
             final.parent.mkdir(parents=True, exist_ok=True)
-            partial = final.with_name(f".{sha}.restoring")
+            (store / "tmp").mkdir(parents=True, exist_ok=True)
+            partial = store / "tmp" / f"{uuid.uuid4().hex}.part"
             digest = hashlib.sha256()
             try:
                 with source, open(partial, "wb") as out:

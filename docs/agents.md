@@ -248,10 +248,21 @@ one of them (there is deliberately no count here to rot, CHT-1395):
 `issue_attach` puts a file on a ticket with no comment; `issue_comment`
 with `attach` uploads the files, then posts the comment with a line
 linking each (images show inline in the web view). Each file is a
-`path`, which only the stdio server can read (it runs on your machine;
-it refuses hidden files, and files in hidden directories outside its
-working directory, where credentials live), or `content_base64` with a
-`filename`, which either server takes (CHT-1996).
+`path`, which only the stdio server can read, or `content_base64` with a
+`filename`, which either server takes (CHT-1996). The stdio server runs
+on your machine as you, and a request to attach a file may come from
+text the agent read, so through `path` it reads only an image or a PDF
+(text as well where `CHAOTIC_MCP_ATTACH_TEXT=1` is set in its
+environment), and never a hidden file, a file in a hidden directory
+other than an agent worktree under `.claude/worktrees/`, or its own
+configuration (`CHAOTIC_HOME`): that is where keys and tokens live
+(`~/.ssh`, `.git/config`, `.claude/settings.local.json`, `.env`). A
+file is at most 10 MiB unless the server is configured otherwise, but
+the hosted server takes a request of at most 4 MiB, so there a file
+sent as `content_base64` can be about 3 MiB, all the files of one
+`issue_comment` together; a larger request is refused with HTTP 413
+before any tool runs. Send a larger file through the stdio server's
+`path`, or with `chaotic issue attach`.
 
 The sprint and ritual groups exist because governance state can block
 the rest of this surface: arrears stops ticket transitions project-wide
@@ -834,9 +845,11 @@ and is for comparing a server against itself across an upgrade.
 Protocol notes: the server is built on mcp 2.x, so it negotiates both
 the 2025-06-18 protocol revision and the 2026-07-28 "modern" era --
 any current client works, no version pinning needed. Request bodies are
-capped at 4 MiB per call (a 413 if exceeded); the only tools that can
-plausibly approach that are `doc_create`/`doc_update` with a very large
-`content`, so split enormous documents rather than sending one body.
+capped at 4 MiB per call (a 413 if exceeded). The tools that can
+approach that are `doc_create`/`doc_update` with a very large
+`content`, so split enormous documents rather than sending one body,
+and `issue_attach`/`issue_comment` with `content_base64`, which fits
+about 3 MiB of file (base64 is a third larger than the bytes).
 
 ### Connecting: add by URL and authorize (OAuth)
 

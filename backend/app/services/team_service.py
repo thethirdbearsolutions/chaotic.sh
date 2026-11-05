@@ -189,6 +189,10 @@ class TeamService:
                 team_id=team.id, project_ids=project_ids, actor_id=actor_id, reason=REASON_TEAM_DELETED,
             )
             await OxydeTeamMember.objects.filter(team_id=team.id).delete()
+            # Its issues' attachment rows go by cascade; their blobs stay
+            # for the sweep, dated now so its grace starts here (CHT-1996).
+            from app.services.attachment_service import AttachmentService
+            await AttachmentService().release(team_id=team.id)
             await team.delete()
 
     async def get_user_teams(self, user_id: str) -> list[OxydeTeam]:

@@ -30,9 +30,13 @@ name it, and a database restored from a backup may still need it.
 
 The sweep (``AttachmentService.sweep_orphans``, run at startup and every
 ``attachment_sweep_interval_seconds`` by ``run_sweeper``) deletes a blob
-once no row names it and it has not been written or reused for
+once no row names it and it has not been written, reused or let go for
 ``ORPHAN_GRACE_SECONDS`` (30 days), so a database restored from a recent
-backup still finds its files. It also deletes ``tmp/*.part`` files a
+backup still finds its files. "Let go" is a delete of a row naming it:
+``AttachmentService.release`` re-dates the blobs of the rows a delete is
+about to remove (an attachment's, or an issue's, project's or team's,
+whose rows go with it), so the grace runs from when a blob may have
+become an orphan, not from when it was uploaded. It also deletes ``tmp/*.part`` files a
 killed upload left behind, once they are a day old. The last check of
 each blob, its references and then its age, is made holding the
 database's writer lock, which an upload also holds from its quota check
@@ -247,6 +251,13 @@ class BlobStore:
         os.replace(staged.temp_path, final)
         return final
 
+    def touch(self, sha256: str) -> None:
+        """Date the blob now, if it is there."""
+        try:
+            os.utime(self.path_for(sha256))
+        except FileNotFoundError:
+            pass
+
     @staticmethod
     def discard(staged: StagedBlob) -> None:
         staged.temp_path.unlink(missing_ok=True)
@@ -427,10 +438,38 @@ class AttachmentService:
     async def get(attachment_id: str) -> OxydeAttachment | None:
         return await OxydeAttachment.objects.filter(id=attachment_id).first()
 
-    @staticmethod
-    async def delete(attachment: OxydeAttachment) -> None:
-        """Delete the row. The blob stays for the sweep (module docstring)."""
+    async def delete(self, attachment: OxydeAttachment) -> None:
+        """Delete the row. The blob stays for the sweep, dated now so its
+        grace starts here (module docstring)."""
+        await self.release(attachment_id=attachment.id)
         await OxydeAttachment.objects.filter(id=attachment.id).delete()
+
+    async def release(
+        self, *, attachment_id: str | None = None, issue_id: str | None = None,
+        project_id: str | None = None, team_id: str | None = None,
+    ) -> None:
+        """Re-date the blobs of the attachment rows about to be deleted
+        with that attachment, issue, project or team (exactly one), so
+        the sweep's grace counts from now. Call it before the delete: a
+        blob dated and then not orphaned after all only waits longer."""
+        keys = [(k, v) for k, v in (("attachment", attachment_id), ("issue", issue_id),
+                                    ("project", project_id), ("team", team_id)) if v is not None]
+        if len(keys) != 1:
+            raise ValueError("release takes exactly one of attachment_id, issue_id, project_id or team_id")
+        (key, value), = keys
+        where = {
+            "attachment": "a.id = ?",
+            "issue": "a.issue_id = ?",
+            "project": "i.project_id = ?",
+            "team": "i.project_id IN (SELECT id FROM projects WHERE team_id = ?)",
+        }[key]
+        rows = await execute_raw(
+            f"SELECT DISTINCT a.sha256 FROM attachments a JOIN issues i ON i.id = a.issue_id WHERE {where}",
+            [value],
+        )
+        shas = [row["sha256"] for row in rows]
+        if shas:
+            await asyncio.to_thread(lambda: [self.store.touch(sha) for sha in shas])
 
     @staticmethod
     async def _referenced(shas: list[str]) -> set[str]:
@@ -487,10 +526,14 @@ class AttachmentService:
 async def run_sweeper(interval: float | None = None) -> None:
     """Sweep now, then every ``interval`` seconds
     (``attachment_sweep_interval_seconds``; 0 sweeps once). A failed
-    sweep is logged and tried again at the next interval. Runs until
-    cancelled (the app's lifespan does, at shutdown)."""
+    sweep is logged and tried again at the next interval. A database
+    with no ``attachments`` table (one built by hand and served as it
+    is) has nothing to sweep: that is logged once, at debug level, not
+    as a failure every interval. Runs until cancelled (the app's
+    lifespan does, at shutdown)."""
     if interval is None:
         interval = get_settings().attachment_sweep_interval_seconds
+    said_no_table = False
     while True:
         try:
             result = await AttachmentService().sweep_orphans()
@@ -501,8 +544,13 @@ async def run_sweeper(interval: float | None = None) -> None:
                 )
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.exception("attachment sweep failed")
+        except Exception as e:
+            if "no such table" in str(e).lower():
+                if not said_no_table:
+                    logger.debug("attachment sweep skipped: this database has no attachments table (%s)", e)
+                    said_no_table = True
+            else:
+                logger.exception("attachment sweep failed")
         if interval <= 0:
             return
         await asyncio.sleep(interval)

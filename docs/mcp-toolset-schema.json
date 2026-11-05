@@ -496,7 +496,7 @@
       }
     },
     "issue_attach": {
-      "description": "Attach a file to an issue with no comment: a screenshot as\nevidence, say. The file is a PNG, JPEG, GIF, WebP, PDF or UTF-8\nplain text, at most 10 MiB by default. Returns the attachment; its\n`markdown` is the line that shows it in a comment. To attach files\nwith a comment, use issue_comment's `attach`.",
+      "description": "Attach a file to an issue with no comment: a screenshot as\nevidence, say. The file is a PNG, JPEG, GIF, WebP, PDF or UTF-8\nplain text, at most 10 MiB by default; sent as content_base64 to the\nhosted server, whose requests are capped at 4 MiB, at most about\n3 MiB (a larger request is refused with HTTP 413 before the tool\nruns). Returns the attachment; its\n`markdown` is the line that shows it in a comment. To attach files\nwith a comment, use issue_comment's `attach`.",
       "inputSchema": {
         "properties": {
           "content_base64": {
@@ -509,7 +509,7 @@
               }
             ],
             "default": null,
-            "description": "The file's bytes, base64-encoded. Give this or path, not both.",
+            "description": "The file's bytes, base64-encoded. Give this or path, not both. The hosted server takes a request of at most 4 MiB, so about 3 MiB of file per call, all files of one call together.",
             "title": "Content Base64"
           },
           "filename": {
@@ -540,7 +540,7 @@
               }
             ],
             "default": null,
-            "description": "A file on the machine the MCP server runs on. Only the stdio server (`chaotic mcp`) can read one, and not a hidden file or one in a hidden directory outside its working directory; with the hosted server send content_base64.",
+            "description": "A file on the machine the MCP server runs on, up to the server's full limit. Only the stdio server (`chaotic mcp`) can read one, and only an image or a PDF (text too where CHAOTIC_MCP_ATTACH_TEXT=1 is set), not a hidden file, nor one in a hidden directory (bar .claude/worktrees/), nor its own config; with the hosted server send content_base64.",
             "title": "Path"
           }
         },
@@ -603,7 +603,7 @@
                   }
                 ],
                 "default": null,
-                "description": "The file's bytes, base64-encoded. Give this or path, not both.",
+                "description": "The file's bytes, base64-encoded. Give this or path, not both. The hosted server takes a request of at most 4 MiB, so about 3 MiB of file per call, all files of one call together.",
                 "title": "Content Base64"
               },
               "filename": {
@@ -629,7 +629,7 @@
                   }
                 ],
                 "default": null,
-                "description": "A file on the machine the MCP server runs on. Only the stdio server (`chaotic mcp`) can read one, and not a hidden file or one in a hidden directory outside its working directory; with the hosted server send content_base64.",
+                "description": "A file on the machine the MCP server runs on, up to the server's full limit. Only the stdio server (`chaotic mcp`) can read one, and only an image or a PDF (text too where CHAOTIC_MCP_ATTACH_TEXT=1 is set), not a hidden file, nor one in a hidden directory (bar .claude/worktrees/), nor its own config; with the hosted server send content_base64.",
                 "title": "Path"
               }
             },
@@ -664,7 +664,7 @@
               }
             ],
             "default": null,
-            "description": "Files to attach with the comment (PNG, JPEG, GIF, WebP, PDF or UTF-8 plain text, at most 10 MiB by default), each as {path} or {content_base64, filename}. They are uploaded first; the comment then ends with a line for each (images show inline).",
+            "description": "Files to attach with the comment (PNG, JPEG, GIF, WebP, PDF or UTF-8 plain text, at most 10 MiB each by default; as content_base64 on the hosted server, about 3 MiB for all of them together), each as {path} or {content_base64, filename}. They are uploaded first; the comment then ends with a line for each (images show inline).",
             "title": "Attach"
           },
           "content": {

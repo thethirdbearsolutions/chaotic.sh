@@ -31,6 +31,7 @@ Two mechanics worth knowing:
 from __future__ import annotations
 
 import functools
+import os
 import sys
 from pathlib import Path
 
@@ -39,7 +40,7 @@ import click
 import httpx
 
 from chaotic_mcp_tools import BackendError, Capabilities, ToolInputError, TransportError
-from chaotic_mcp_tools.attachments import read_local_file
+from chaotic_mcp_tools.attachments import binary_type, read_local_file
 
 from .client import APIError
 
@@ -49,29 +50,58 @@ def _main():
     return sys.modules['cli.main']
 
 
-def _hidden(path: str) -> bool:
-    """Whether `path`, or what it points to, is a hidden file or lies
-    inside a hidden directory. A hidden directory below the working
-    directory is allowed (an agent's worktree under `.claude/`, say),
-    unless the working directory holds the home directory, where
-    `~/.ssh` and the like would then count as "below" it."""
+# The env var that lets the stdio server's `path` read a file that is
+# not an image or a PDF (CHT-1996).
+ATTACH_TEXT_ENV = "CHAOTIC_MCP_ATTACH_TEXT"
+
+# Hidden directories a `path` may go through: agents' git worktrees,
+# which Claude Code keeps in `<repo>/.claude/worktrees/` and which may be
+# the working directory itself. Only these two components are let
+# through; the rest of the path is checked like any other.
+_ALLOWED_HIDDEN = (".claude", "worktrees")
+
+
+def _hidden(candidate: Path) -> bool:
+    """Whether `candidate` is a hidden file or lies inside a hidden
+    directory, other than through _ALLOWED_HIDDEN."""
+    if candidate.name.startswith("."):
+        return True
+    parts = list(candidate.parent.parts)
+    width = len(_ALLOWED_HIDDEN)
+    for i in range(len(parts) - width, -1, -1):
+        if tuple(parts[i:i + width]) == _ALLOWED_HIDDEN and i + width < len(parts):
+            del parts[i:i + width]
+    return any(part.startswith(".") and part not in (".", "..") for part in parts)
+
+
+def _chaotic_config(candidate: Path) -> bool:
+    """Whether `candidate` is this CLI's own home or config, whatever they
+    are named (CHAOTIC_HOME need not start with a dot)."""
+    from .config import GLOBAL_CONFIG_DIR, get_chaotic_home
+
+    for own in (get_chaotic_home(), GLOBAL_CONFIG_DIR):
+        try:
+            own = own.expanduser().resolve()
+        except (OSError, RuntimeError):
+            continue
+        if candidate == own or candidate.is_relative_to(own):
+            return True
+    return False
+
+
+def refused_local_path(path: str) -> str | None:
+    """Why the stdio server will not read `path` for an attachment, or
+    None when it may (RestBackend.read_local_file says why it asks)."""
     expanded = Path(path).expanduser().absolute()
     try:
         resolved = expanded.resolve()
     except (OSError, RuntimeError):
         resolved = expanded
-    cwd = Path.cwd().resolve()
-    home = Path.home().resolve()
-    below_cwd_counts = not (home == cwd or home.is_relative_to(cwd))
-    for candidate in (expanded, resolved):
-        if candidate.name.startswith("."):
-            return True
-        directory = candidate.parent
-        if below_cwd_counts and directory.is_relative_to(cwd):
-            continue
-        if any(part.startswith(".") and part not in (".", "..") for part in directory.parts):
-            return True
-    return False
+    if any(_hidden(candidate) for candidate in (expanded, resolved)):
+        return "it is, or is inside, a hidden file or directory, where credentials live"
+    if _chaotic_config(resolved) or _chaotic_config(expanded):
+        return "it is this CLI's own configuration, which holds its API key"
+    return None
 
 
 # The HTTP /mcp's words for a project-scoped key without a team. Such a
@@ -369,16 +399,38 @@ class RestBackend:
         # This server runs on the caller's machine, as the caller, and an
         # MCP client may have no other way to read its files. A request to
         # attach one could come from text the agent read (a ticket, a web
-        # page), so no hidden file, and nothing in a hidden directory
-        # outside the working directory, is read: that is where keys,
-        # tokens and this CLI's own credentials live (~/.ssh, ~/.chaotic,
-        # .env).
-        if _hidden(path):
+        # page), and the file then sits on a ticket the whole team can
+        # download. So, for `path` only:
+        # - no hidden file, nor anything in a hidden directory (bar an
+        #   agent's worktree under .claude/worktrees/), nor this CLI's
+        #   own home or config: keys, tokens and its API key live there
+        #   (~/.ssh, .git/config, .claude/settings.local.json, .env);
+        # - only an image or a PDF unless CHAOTIC_MCP_ATTACH_TEXT=1, since
+        #   almost every credential (/etc, /run/secrets, *.key, tfstate)
+        #   is text, and the use is screenshots;
+        # - the path checked is the path opened, with no link followed at
+        #   its last component, and the open file is what is checked.
+        target = Path(path).expanduser().absolute()
+        try:
+            target = target.resolve()
+        except (OSError, RuntimeError):
+            pass
+        reason = refused_local_path(path)
+        if reason:
             raise ToolInputError(
-                f"Not reading {path}: it is, or is inside, a hidden file or directory, where credentials "
-                "live. Copy the file somewhere else first, or send its bytes as content_base64."
+                f"Not reading {path}: {reason}. Copy the file somewhere else first, or send its bytes "
+                "as content_base64."
             )
-        return await anyio.to_thread.run_sync(read_local_file, path)
+        data, _ = await anyio.to_thread.run_sync(
+            functools.partial(read_local_file, str(target), follow_links=False)
+        )
+        if binary_type(data[:16]) is None and os.environ.get(ATTACH_TEXT_ENV) != "1":
+            raise ToolInputError(
+                f"Not reading {path}: through `path` this server attaches only images (PNG, JPEG, GIF, "
+                f"WebP) and PDFs unless {ATTACH_TEXT_ENV}=1 is set where it runs, since a text file "
+                "is where credentials usually are. Send a text file's bytes as content_base64 instead."
+            )
+        return data, Path(path).expanduser().name
 
     async def upload_attachment(self, issue_id: str, data: bytes, filename: str | None) -> dict:
         return await self._call(self._client().upload_attachment, issue_id, data, filename=filename)
