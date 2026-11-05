@@ -69,6 +69,8 @@ const untracked = (overrides = {}) => ({
 });
 
 const response = (epics, gaps = []) => ({ epics, untracked: gaps, sprint_window: 8 });
+const ago = (ms) => new Date(Date.now() - ms).toISOString();
+const MIN = 60000;
 
 describe('loadEpics', () => {
     beforeEach(() => {
@@ -122,6 +124,16 @@ describe('loadEpics', () => {
         const el = document.getElementById('epics-list');
         expect(el.innerHTML).toContain('No epics found');
         expect(el.innerHTML).toContain('Create epic');
+    });
+
+    it('lists asks under no epic even when there are no epics', async () => {
+        api.getTeamEpicProgress.mockResolvedValue(response([], [untracked({ awaiting_human: [
+            { ritual_name: 'review', approval_mode: 'review', identifier: 'CHT-5', title: 'Loose', since: ago(MIN) },
+        ] })]));
+        await loadEpics();
+        const el = document.getElementById('epics-list');
+        expect(el.innerHTML).not.toContain('No epics found');
+        expect(el.querySelector('.epic-ask-row').dataset.issueIdentifier).toBe('CHT-5');
     });
 
     it('reads the team-wide endpoint once, with no per-epic fetches', async () => {
@@ -186,8 +198,6 @@ describe('loadEpics', () => {
     });
 });
 
-const ago = (ms) => new Date(Date.now() - ms).toISOString();
-const MIN = 60000;
 const kids = (done, total, extra = {}) => ({
     total, backlog: 0, todo: total - done, in_progress: 0, in_review: 0, done, canceled: 0, ...extra,
 });
@@ -279,14 +289,14 @@ describe('renderEpics (CHT-2043)', () => {
                 ],
             }),
             epic({ id: 'e2', identifier: 'CHT-2', status: 'done', awaiting_human: [
-                { ritual_name: 'stale', approval_mode: 'review', identifier: 'CHT-99', title: 'Closed epic', since: ago(MIN) },
+                { ritual_name: 'stale', approval_mode: 'review', identifier: 'CHT-99', title: 'Closed epic', since: ago(1000) },
             ] }),
         ], [untracked({ awaiting_human: [
             { ritual_name: 'release', approval_mode: 'gate', identifier: 'CHT-39', title: 'Publish', since: ago(120 * MIN), requested_by_name: 'moss' },
         ] })]), container);
         const asks = [...container.querySelectorAll('.epic-ask-row')];
         expect(asks.map(a => a.querySelector('.list-row-title').textContent)).toEqual([
-            'Complete release: Publish', 'Approve design-review: Picker',
+            'Complete release: Publish', 'Approve design-review: Picker', 'Approve stale: Closed epic',
         ]);
         expect(asks[0].querySelector('.list-row-sub').textContent).toBe('No epic · requested by moss 2h ago');
         expect(asks[1].querySelector('.list-row-sub').textContent).toBe('Redesign · attested by ivy 25m ago');
@@ -309,6 +319,13 @@ describe('renderEpics (CHT-2043)', () => {
         expect(container.querySelector('.epic-section-waiting .section-count').textContent).toBe('1');
     });
 
+    it('keeps an ask on open work under a closed epic', () => {
+        renderEpics(response([epic({ status: 'done', title: 'Closed goal', awaiting_human: [
+            { ritual_name: 'review', approval_mode: 'review', identifier: 'CHT-77', title: 'Still open', since: ago(MIN) },
+        ] })]), container);
+        expect([...container.querySelectorAll('.epic-ask-row')].map(a => a.dataset.issueIdentifier)).toEqual(['CHT-77']);
+    });
+
     it('omits empty sections', () => {
         renderEpics(response([moving()]), container);
         expect([...container.querySelectorAll('.epic-section')].map(s => s.className)).toEqual(['epic-section epic-section-moving']);
@@ -320,6 +337,8 @@ describe('renderEpics (CHT-2043)', () => {
         }));
         renderEpics(response(closed), container);
         expect(sectionIds(container, 'shipped').length).toBe(5);
+        // The hidden ones still follow, for the epic page's prev/next and counts.
+        expect(getCurrentEpics().length).toBe(7);
         expect(container.querySelector('.epic-section-shipped .section-count').textContent).toBe('7');
         const toggle = container.querySelector('[data-epics-toggle-closed]');
         expect(toggle.textContent).toBe('Show all 7');

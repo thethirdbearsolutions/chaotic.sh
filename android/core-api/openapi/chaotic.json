@@ -10236,6 +10236,57 @@
         "title": "AuthorizationRequestView",
         "description": "GET /api/oauth/requests/{id}: what the consent page shows."
       },
+      "AwaitingHuman": {
+        "properties": {
+          "ritual_name": {
+            "type": "string",
+            "title": "Ritual Name"
+          },
+          "approval_mode": {
+            "$ref": "#/components/schemas/ApprovalMode"
+          },
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "requested_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ritual_name",
+          "approval_mode",
+          "identifier",
+          "title"
+        ],
+        "title": "AwaitingHuman",
+        "description": "A ticket ritual that only a person can clear (CHT-2043): a REVIEW\nattestation waiting for approval, or a GATE a person has to\ncomplete. The same set the ritual approvals banner reads."
+      },
       "BudgetTransactionResponse": {
         "properties": {
           "id": {
@@ -11391,6 +11442,30 @@
         "title": "EmailVerificationSent",
         "description": "A verification code was mailed (CHT-1790)."
       },
+      "EpicPerson": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "is_agent": {
+            "type": "boolean",
+            "title": "Is Agent",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "EpicPerson",
+        "description": "Who a ticket is assigned to, as the Epics list names them."
+      },
       "EpicProgress": {
         "properties": {
           "id": {
@@ -11464,6 +11539,71 @@
             },
             "type": "array",
             "title": "Sprints"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EpicPerson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "in_flight": {
+            "items": {
+              "$ref": "#/components/schemas/EpicTicket"
+            },
+            "type": "array",
+            "title": "In Flight",
+            "default": []
+          },
+          "in_flight_count": {
+            "type": "integer",
+            "title": "In Flight Count",
+            "default": 0
+          },
+          "last_shipped": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EpicTicket"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_activity_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "awaiting_human": {
+            "items": {
+              "$ref": "#/components/schemas/AwaitingHuman"
+            },
+            "type": "array",
+            "title": "Awaiting Human",
+            "default": []
           }
         },
         "type": "object",
@@ -11513,6 +11653,63 @@
           "sprint_window"
         ],
         "title": "EpicProgressResponse"
+      },
+      "EpicTicket": {
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IssueStatus"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EpicPerson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identifier",
+          "title",
+          "status"
+        ],
+        "title": "EpicTicket",
+        "description": "One ticket under an epic, as the Epics list shows it (CHT-2043):\nan in-flight one, or the one that shipped last."
       },
       "EstimateScale": {
         "type": "string",
@@ -17959,6 +18156,14 @@
             },
             "type": "array",
             "title": "Sprints"
+          },
+          "awaiting_human": {
+            "items": {
+              "$ref": "#/components/schemas/AwaitingHuman"
+            },
+            "type": "array",
+            "title": "Awaiting Human",
+            "default": []
           }
         },
         "type": "object",

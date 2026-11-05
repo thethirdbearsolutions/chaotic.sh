@@ -123,7 +123,9 @@ export async function loadEpics({ fromMemory = false } = {}) {
 
 /** The epics list for `progress`, or its empty state. */
 function paintEpics(progress, listEl) {
-    if (!progress?.epics?.length) {
+    // Work under no epic can still wait on a person (CHT-2043).
+    const asks = (progress?.untracked || []).some(u => (u.awaiting_human || []).length);
+    if (!progress?.epics?.length && !asks) {
         currentEpics = [];
         listEl.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.epics,
@@ -281,7 +283,8 @@ export function renderEpics(progress, container) {
     // Waiting on you: rituals only a person can clear, oldest first, then
     // finished epics to close.
     const asks = [
-        ...all.filter(e => !CLOSED.has(e.status)).flatMap(e => (e.awaiting_human || []).map(a => ({ a, where: keyed(e.project_key, escapeHtml(e.title)) }))),
+        // Every epic: a closed one can still have open tickets (CHT-1884).
+        ...all.flatMap(e => (e.awaiting_human || []).map(a => ({ a, where: keyed(e.project_key, escapeHtml(e.title)) }))),
         ...untracked.flatMap(u => (u.awaiting_human || []).map(a => ({ a, where: keyed(u.project_key, 'No epic') }))),
     ].sort((x, y) => time(x.a.since) - time(y.a.since));
     const askRows = asks.map(({ a, where }) => {
@@ -328,9 +331,10 @@ export function renderEpics(progress, container) {
         ? `<p class="epic-untracked-note">${loose.map(u => `${grouped ? `${escapeHtml(u.project_key)}: ` : ''}${plural(u.open, 'open ticket')}`).join(', ')} under no epic.</p>`
         : '';
 
-    // Prev/next on the epic page, and the keyboard cursor, walk the rows
-    // as shown.
-    currentEpics = [...finished, ...moving, ...quiet, ...shippedShown];
+    // The keyboard cursor walks the rows as shown, and prev/next on the
+    // epic page follows them; shipped epics past the latest few come
+    // last, so one opened by URL still finds its own progress here.
+    currentEpics = [...finished, ...moving, ...quiet, ...shipped];
 
     container.innerHTML = `
         <div class="epic-sections">

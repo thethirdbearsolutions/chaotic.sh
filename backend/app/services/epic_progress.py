@@ -352,14 +352,19 @@ async def _epic_now(scope: str, project_ids: list[str]):
     # ritual.
     pending = (
         "SELECT a.issue_id, r.name AS ritual_name, r.approval_mode, a.attested_at AS since, "
-        "a.attested_by AS by_id FROM ritual_attestations a JOIN rituals r ON r.id = a.ritual_id "
+        "a.attested_by AS by_id, r.project_id AS ritual_project_id FROM ritual_attestations a JOIN rituals r ON r.id = a.ritual_id "
         f"WHERE a.issue_id IS NOT NULL AND a.approved_at IS NULL AND r.is_active AND r.project_id IN ({scope}) "
         f"AND r.approval_mode IN ({_placeholders(_spellings(ApprovalMode.REVIEW))}) "
         "UNION ALL "
-        "SELECT l.issue_id, r.name, r.approval_mode, l.requested_at, l.requested_by_id "
+        "SELECT l.issue_id, r.name, r.approval_mode, l.requested_at, l.requested_by_id, r.project_id "
         "FROM ticket_limbo l JOIN ticket_limbo_blockers b ON b.limbo_id = l.id JOIN rituals r ON r.id = b.ritual_id "
         f"WHERE l.cleared_at IS NULL AND b.resolved_at IS NULL AND r.is_active AND r.project_id IN ({scope}) "
-        f"AND r.approval_mode IN ({_placeholders(_spellings(ApprovalMode.GATE))})"
+        f"AND r.approval_mode IN ({_placeholders(_spellings(ApprovalMode.GATE))}) "
+        # The banner first resolves a blocker whose ritual already has an
+        # approved attestation on the ticket (_cleanup_orphaned_ticket_limbo);
+        # this read leaves it as it is and skips it the same way.
+        "AND NOT EXISTS (SELECT 1 FROM ritual_attestations a2 WHERE a2.ritual_id = b.ritual_id "
+        "AND a2.issue_id = l.issue_id AND a2.approved_at IS NOT NULL)"
     )
     awaiting_rows = await execute_raw(
         _owner_cte(scope, f"project_id IN ({scope}) AND status NOT IN ({_placeholders(_CLOSED)})")
@@ -368,6 +373,7 @@ async def _epic_now(scope: str, project_ids: list[str]):
         f"FROM ({pending}) p JOIN issues i ON i.id = p.issue_id "
         "LEFT JOIN owners o ON o.issue_id = i.id LEFT JOIN users by_user ON by_user.id = p.by_id "
         f"WHERE i.project_id IN ({scope}) AND i.status NOT IN ({_placeholders(_CLOSED)}) "
+        "AND p.ritual_project_id = i.project_id "
         "ORDER BY p.since",
         [
             *project_ids, *_CLOSED, *_EPIC, *project_ids,
