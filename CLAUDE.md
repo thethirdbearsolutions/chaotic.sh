@@ -51,6 +51,17 @@
 - Address or ticket every issue found - fix, ticket, or pushback with explanation
 - Don't merge until review is complete and all issues addressed
 
+### 6. This Repo Is Public
+Chaotic's own instance tracks private work for other teams and clients.
+None of it may reach this repo: not in code, tests, fixtures, docs,
+commit messages, PR titles, PR bodies, review comments or release notes.
+- Never name a project, team key (other than `CHT`), client, person,
+  agent name or private URL from any Chaotic instance. Live data you
+  read through the MCP or CLI stays out of what you write here.
+- Describe an incident as "a project" or "a team", not by its key.
+- Use generic fixtures: teams `ENG`/`OPS`, projects `APP`/`OTH`, people
+  Alice/Bob/Ada, agents with made-up names.
+
 ## Priorities
 
 Use these priority levels:
