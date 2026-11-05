@@ -18,14 +18,20 @@ avatars, attachments, and a data fix that rewrites open review entries in
 the inbox. Upgrade with `uv tool install --force chaotic-cli==0.1.3`,
 then `chaotic system upgrade --version v0.1.3`: the upgrade runs the
 installed CLI, so installing 0.1.3 first gets the confirmation-first,
-socket-activated flow below.
+socket-activated flow below. Attachments are stored in `attachments/`
+beside the SQLite database (`CHAOTIC_ATTACHMENTS_DIR` moves it), new
+data to keep on the same disk; `chaotic system backup` now writes an
+attachments archive beside each database backup. A server whose
+`DATABASE_URL` is not SQLite must set `CHAOTIC_ATTACHMENTS_DIR` before
+upgrading, or it refuses to start.
 
 ### Added
 
 - **File attachments on issues.** `chaotic issue attach <issue> FILE...`
   uploads PNG, JPEG, GIF, WebP, PDF or plain-text files (10 MiB each by
-  default, 1 GiB per project; `CHAOTIC_ATTACHMENT_MAX_BYTES` and
-  `CHAOTIC_ATTACHMENT_PROJECT_QUOTA_BYTES` on the server), `issue comment
+  default, 1 GiB per project; `CHAOTIC_ATTACHMENT_MAX_BYTES`,
+  `CHAOTIC_ATTACHMENT_PROJECT_QUOTA_BYTES` and `CHAOTIC_ATTACHMENTS_DIR`
+  on the server), `issue comment
   --attach FILE` (repeatable) posts them with a comment, `issue
   attachments` lists them, and `issue attachment-download` (`-o` a file,
   a directory or `-`) and `issue attachment-delete` fetch and remove one.
@@ -60,9 +66,10 @@ socket-activated flow below.
   @handle, id or name; MCP has `team_roster` and `team_member`. A shared
   name is refused with the handles to use instead, and no row carries an
   email (CHT-1979, CHT-1980, CHT-1981, CHT-1982).
-- **MCP `issue_create` takes an `assignee`**, resolved within the
-  project's team. `--assignee unassigned` on the CLI means no assignee
-  (CHT-1951).
+- **`chaotic issue create --assignee` and MCP `issue_create`'s
+  `assignee`** assign the new issue: `me`, a user or agent id, or a name
+  or email, resolved within the project's team (`unassigned`, the
+  default, means none) (CHT-1951).
 
 ### Changed
 
@@ -80,6 +87,12 @@ socket-activated flow below.
   envelope, and a `team` or `project` hint a tool does not declare is
   accepted only when it agrees with where the tool will act; otherwise
   it is refused with `scope_mismatch` (CHT-1951).
+- **The inbox no longer lists resolved entries** (a review approved on
+  the ticket, a gate signed off anywhere), for `chaotic inbox list`, MCP
+  `inbox_list` and the web alike, and `GET /inbox` takes `kind`. A
+  review-requested entry's body is now the attestation's note and its
+  source is the attester; migration 0048 rewrites the open ones and
+  settles open entries whose decision was already made (CHT-2031).
 - **A claim lease that expires keeps the assignee.** The ticket goes back
   to `todo`, still assigned, instead of being unassigned; an owner who can
   no longer be assigned work in the project is still unassigned. A
@@ -90,13 +103,13 @@ socket-activated flow below.
   profiles (an agent's holds its access and credentials). The issue page
   shows attachments and inline images, rich comments (Tiptap), related
   work, ritual steps and pending attestations. The Inbox decides reviews
-  and gates in place, filters by type and drops resolved entries; the
+  and gates in place and filters by type; the
   Dashboard, Epics and board cards were reworked, and views paint from
-  the last session's data on reload (CHT-1963, CHT-1965, CHT-1971,
-  CHT-1972, CHT-1973, CHT-1984, CHT-1985, CHT-1991, CHT-2018, CHT-2020,
-  CHT-2021, CHT-2026, CHT-2027, CHT-2028, CHT-2029, CHT-2031, CHT-2034,
-  CHT-2042, CHT-2043, CHT-2044, CHT-2047, CHT-2058, CHT-2076, CHT-2081,
-  CHT-1766, CHT-1983).
+  the last session's data on reload (CHT-1766, CHT-1963, CHT-1965,
+  CHT-1971, CHT-1972, CHT-1973, CHT-1983, CHT-1984, CHT-1985, CHT-1991,
+  CHT-2018, CHT-2020, CHT-2021, CHT-2022, CHT-2023, CHT-2026, CHT-2027,
+  CHT-2028, CHT-2029, CHT-2031, CHT-2034, CHT-2042, CHT-2043, CHT-2044,
+  CHT-2047, CHT-2058, CHT-2076, CHT-2081).
 - **Linux servers run behind a systemd socket (`chaotic.socket`).**
   The socket holds the port, and uvicorn serves it (`--fd 3` in `just
   serve-prod`), so a restart no longer closes the port. A request that
