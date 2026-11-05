@@ -8,7 +8,7 @@
  */
 import { api } from './api.js';
 import {
-    showApiError, isModalOpen, showModal, closeModal, showMentionWarnings,
+    showApiError, isModalOpen, showModal, closeModal, showMentionWarnings, showToast,
 } from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
@@ -418,12 +418,15 @@ export async function archiveInboxEntry(entryId) {
     const wasUnread = !entry.read_at;
 
     if (expandedEntryId === entryId) expandedEntryId = null; // it's leaving the list
+    reassignCommentPosted.delete(entryId); // review finding 5
     archivedLocally.set(entryId, null); // until the server confirms (CHT-1514)
     setInboxEntries(entries.filter(e => e.id !== entryId));
     if (wasUnread) setInboxUnreadCount(Math.max(0, getInboxUnreadCount() - 1));
     renderInbox();
     renderInboxBadge();
-    selectInboxRow(idx); // idx now points at the next entry (clamped when last)
+    // idx now points at the next entry (clamped when last). Behind an open
+    // modal the row is selected but not focused (CHT-2029 review finding 1).
+    selectInboxRow(idx, { focus: !isModalOpen() });
 
     // CHT-1316: a real archive that persists (drops out of the list + count
     // server-side), instead of the phase-1 mark-read hack that a refetch
@@ -557,6 +560,12 @@ export function openReassignInboxDialog(entryId) {
     if (!entry || !entry.issue_id || !entry.source_user_id) return;
     const back = entry.source_user_name || 'sender';
     const ref = entry.issue_identifier || 'this ticket';
+    // A comment already posted for a reassign whose PATCH failed (review
+    // finding 2): shown again so a retry reassigns without a second comment.
+    const posted = reassignCommentPosted.get(entryId) || '';
+    const help = posted
+        ? `Already posted on ${escapeHtml(ref)}. Submitting reassigns it to ${escapeHtml(back)} without posting it again, unless you change it.`
+        : `Posted on ${escapeHtml(ref)} before it is reassigned, so ${escapeHtml(back)} knows why.`;
     document.getElementById('modal-title').textContent = `Reassign ${ref} back to ${back}`;
     document.getElementById('modal-content').innerHTML = `
         <form id="inbox-reassign-form" class="inbox-reassign-form" novalidate>
@@ -564,8 +573,8 @@ export function openReassignInboxDialog(entryId) {
                 <label for="inbox-reassign-comment">Comment for ${escapeHtml(back)}</label>
                 <textarea id="inbox-reassign-comment" rows="4" required
                     aria-describedby="inbox-reassign-help"
-                    placeholder="Why is this coming back, and what should happen next?"></textarea>
-                <p class="form-help" id="inbox-reassign-help">Posted on ${escapeHtml(ref)} before it is reassigned, so ${escapeHtml(back)} knows why.</p>
+                    placeholder="Why is this coming back, and what should happen next?">${escapeHtml(posted)}</textarea>
+                <p class="form-help" id="inbox-reassign-help">${help}</p>
                 <p class="form-error hidden" id="inbox-reassign-error" role="alert">Add a comment first.</p>
             </div>
             <div class="inbox-reassign-actions">
@@ -586,8 +595,18 @@ export function openReassignInboxDialog(entryId) {
             form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event('submit', { cancelable: true }));
         }
     });
+    // Ctrl/Cmd+Enter submits even while the button is disabled, so the
+    // dialog keeps its own flag (review finding 3).
+    let submitting = false;
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (submitting) return;
+        if (!getInboxEntries().some(x => x.id === entryId)) {
+            // Archived elsewhere or dropped by a refresh (review finding 4).
+            showToast(`That inbox item is gone, so ${ref} was not reassigned.`, 'warning');
+            if (form.isConnected) closeModal();
+            return;
+        }
         const comment = textarea.value.trim();
         if (!comment) {
             error.classList.remove('hidden');
@@ -595,11 +614,24 @@ export function openReassignInboxDialog(entryId) {
             return;
         }
         const submit = document.getElementById('inbox-reassign-submit');
+        submitting = true;
         if (submit) submit.disabled = true;
         const ok = await reassignInboxEntry(entryId, comment);
+        submitting = false;
+        // Close only our own dialog: it may have been dismissed mid-flight
+        // and another modal opened in its place (review finding 1).
+        const ours = form.isConnected && isModalOpen();
         if (ok) {
-            closeModal();
-        } else if (submit && document.contains(submit)) {
+            if (ours) {
+                closeModal();
+                // Its trigger button left with the archived row: focus the
+                // row that took its place.
+                if (!document.activeElement || document.activeElement === document.body) {
+                    const row = document.querySelector('#inbox-list .inbox-row.keyboard-selected');
+                    row?.querySelector('.inbox-row-toggle')?.focus({ preventScroll: true });
+                }
+            }
+        } else if (submit && submit.isConnected) {
             submit.disabled = false;
         }
     });

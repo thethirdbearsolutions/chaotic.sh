@@ -1,7 +1,7 @@
 /**
  * Tests for inbox.js module (CHT-1250)
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('./api.js', () => ({
     api: {
@@ -21,6 +21,7 @@ vi.mock('./ui.js', () => ({
     showModal: vi.fn(),
     closeModal: vi.fn(),
     showMentionWarnings: vi.fn(),
+    showToast: vi.fn(),
 }));
 
 vi.mock('./utils.js', () => ({
@@ -55,7 +56,7 @@ vi.mock('./state.js', () => ({
 }));
 
 import { api } from './api.js';
-import { showApiError, isModalOpen, showModal, closeModal, showMentionWarnings } from './ui.js';
+import { showApiError, isModalOpen, showModal, closeModal, showMentionWarnings, showToast } from './ui.js';
 import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
 import {
@@ -537,7 +538,9 @@ describe('openReassignInboxDialog (CHT-2029)', () => {
     beforeEach(() => {
         document.body.innerHTML += '<div id="modal-title"></div><div id="modal-content"></div>';
         getInboxEntries.mockReturnValue([{ ...ASSIGN }]);
+        isModalOpen.mockReturnValue(true); // the dialog is the open modal
     });
+    afterEach(() => isModalOpen.mockReturnValue(false));
     const submit = () => document.getElementById('inbox-reassign-form')
         .dispatchEvent(new Event('submit', { cancelable: true }));
     const flush = () => new Promise(r => setTimeout(r, 0));
@@ -596,6 +599,74 @@ describe('openReassignInboxDialog (CHT-2029)', () => {
         ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true }));
         await flush();
         expect(api.updateIssue).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not close a modal that replaced the dialog mid-flight (review finding 1)', async () => {
+        let resolve;
+        api.updateIssue.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+        openReassignInboxDialog('assign-1');
+        document.getElementById('inbox-reassign-comment').value = 'why';
+        submit();
+        await flush();
+        // Dismissed, and another modal opened in its place.
+        document.getElementById('modal-content').innerHTML = '<form id="other"></form>';
+        resolve({});
+        await flush();
+        expect(api.archiveInbox).toHaveBeenCalledWith('assign-1');
+        expect(closeModal).not.toHaveBeenCalled();
+    });
+
+    it('does not close the dialog when the comment fails to post', async () => {
+        api.createComment.mockRejectedValueOnce(new Error('nope'));
+        openReassignInboxDialog('assign-1');
+        document.getElementById('inbox-reassign-comment').value = 'why';
+        submit();
+        await flush();
+        expect(closeModal).not.toHaveBeenCalled();
+        expect(api.updateIssue).not.toHaveBeenCalled();
+    });
+
+    it('after a failed PATCH, reopening shows the posted comment and does not post it again (review finding 2)', async () => {
+        api.updateIssue.mockRejectedValueOnce(new Error('nope'));
+        openReassignInboxDialog('assign-1');
+        document.getElementById('inbox-reassign-comment').value = 'why';
+        submit();
+        await flush();
+        // Cancel, then reopen.
+        openReassignInboxDialog('assign-1');
+        expect(document.getElementById('inbox-reassign-comment').value).toBe('why');
+        expect(document.getElementById('inbox-reassign-help').textContent).toContain('Already posted');
+        submit();
+        await flush();
+        expect(api.createComment).toHaveBeenCalledTimes(1);
+        expect(api.updateIssue).toHaveBeenCalledTimes(2);
+        expect(closeModal).toHaveBeenCalled();
+    });
+
+    it('a second submit while in flight leaves the button disabled (review finding 3)', async () => {
+        let resolve;
+        api.updateIssue.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+        openReassignInboxDialog('assign-1');
+        document.getElementById('inbox-reassign-comment').value = 'why';
+        submit();
+        await flush();
+        submit();
+        await flush();
+        expect(document.getElementById('inbox-reassign-submit').disabled).toBe(true);
+        expect(api.updateIssue).toHaveBeenCalledTimes(1);
+        resolve({});
+        await flush();
+    });
+
+    it('says so and closes when the entry vanished while the dialog was open (review finding 4)', async () => {
+        openReassignInboxDialog('assign-1');
+        document.getElementById('inbox-reassign-comment').value = 'why';
+        getInboxEntries.mockReturnValue([]);
+        submit();
+        await flush();
+        expect(showToast).toHaveBeenCalledWith(expect.stringContaining('gone'), 'warning');
+        expect(closeModal).toHaveBeenCalled();
+        expect(api.createComment).not.toHaveBeenCalled();
     });
 
     it('does nothing for an entry it cannot reassign', () => {
