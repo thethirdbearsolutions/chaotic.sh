@@ -57,6 +57,11 @@ async def test_delete_issue_broadcasts_event(client, auth_headers, test_issue):
         mock_broadcast.assert_awaited_once()
         call_args = mock_broadcast.call_args
         assert call_args[0][1] == "deleted"
+        payload = call_args[0][2]
+        assert payload["identifier"] == test_issue.identifier
+        assert payload["title"] == test_issue.title
+        assert payload["deleted_by_id"]
+        assert payload["deleted_by_name"]
 
 
 # === Activity event broadcasting ===

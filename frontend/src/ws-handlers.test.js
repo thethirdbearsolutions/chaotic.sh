@@ -200,7 +200,40 @@ describe('ws-handlers.js', () => {
 
             expect(setIssues).toHaveBeenCalledWith([newIssue]);
             expect(renderIssues).toHaveBeenCalled();
-            expect(showToast).toHaveBeenCalledWith('New issue: CHT-1', 'info');
+            expect(showToast).toHaveBeenCalledWith('Someone created CHT-1: New Issue\nassigned to someone', 'info');
+        });
+
+        // CHT-2034: the toast used to read only "New issue: CHT-1".
+        it('says who created it, its title, type, priority and assignee', () => {
+            const toast = document.createElement('div');
+            const msg = document.createElement('span');
+            msg.className = 'toast-message';
+            toast.appendChild(msg);
+            showToast.mockReturnValueOnce(toast);
+            viewIssue.mockResolvedValueOnce(undefined);
+            dispatch({ type: 'created', entity: 'issue', data: {
+                ...newIssue, creator_id: 'user-3', creator_name: 'Ada',
+                issue_type: 'bug', priority: 'high', estimate: 3,
+                assignee_name: 'Grace', parent_identifier: 'CHT-9',
+            } });
+            expect(showToast).toHaveBeenCalledWith(
+                'Ada created CHT-1: New Issue\nBug · High priority · 3 pts · assigned to Grace · under CHT-9',
+                'info',
+            );
+            expect(toast.classList.contains('toast-multiline')).toBe(true);
+            expect(toast.classList.contains('toast-clickable')).toBe(true);
+            msg.click();
+            expect(viewIssue).toHaveBeenCalledWith('issue-1');
+        });
+
+        it('says "You" and "assigned to you" for the signed-in user, and skips no priority', () => {
+            dispatch({ type: 'created', entity: 'issue', data: {
+                ...newIssue, creator_id: 'user-1', creator_name: 'Me',
+                issue_type: 'task', priority: 'no_priority', assignee_id: 'user-1',
+            } });
+            expect(showToast).toHaveBeenCalledWith(
+                'You created CHT-1: New Issue\nTask · assigned to you', 'info',
+            );
         });
 
         it('skips duplicate issues', () => {
@@ -449,7 +482,21 @@ describe('ws-handlers.js', () => {
 
             expect(setIssues).toHaveBeenCalledWith([{ id: 'issue-2' }]);
             expect(setMyIssues).toHaveBeenCalledWith([]);
-            expect(showToast).toHaveBeenCalledWith('Issue CHT-1 deleted', 'info');
+            expect(showToast).toHaveBeenCalledWith('Issue CHT-1 was deleted', 'info');
+        });
+
+        // CHT-2034: say what was deleted and by whom.
+        it('names the title and who deleted it', () => {
+            dispatch({ type: 'deleted', entity: 'issue', data: {
+                ...deletedIssue, title: 'Old work', deleted_by_id: 'user-2', deleted_by_name: 'Ada',
+            } });
+            expect(showToast).toHaveBeenCalledWith('Ada deleted CHT-1: Old work', 'info');
+        });
+
+        it('falls back to the cached title for an older server', () => {
+            getIssues.mockReturnValue([{ id: 'issue-1', title: 'Cached title' }]);
+            dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
+            expect(showToast).toHaveBeenCalledWith('Issue CHT-1: Cached title was deleted', 'info');
         });
 
         // CHT-1225 item 1: same board-staleness bug as created/updated.
@@ -520,6 +567,8 @@ describe('ws-handlers.js', () => {
             dispatch({ type: 'deleted', entity: 'issue', data: deletedIssue });
 
             expect(navigateTo).toHaveBeenCalledWith('my-issues');
+            // One toast, not an info one plus a warning (CHT-2034).
+            expect(showToast).toHaveBeenCalledTimes(1);
             expect(showToast).toHaveBeenCalledWith('Issue CHT-1 was deleted', 'warning');
         });
 
@@ -844,7 +893,12 @@ describe('ws-handlers.js', () => {
 
         it('shows a toast on sprint closed', () => {
             dispatch({ type: 'closed', entity: 'sprint', data: { id: 's1', name: 'Sprint 2' } });
-            expect(showToast).toHaveBeenCalledWith('Sprint Sprint 2 closed', 'info');
+            expect(showToast).toHaveBeenCalledWith('Sprint 2 closed', 'info');
+        });
+
+        it('shows points spent against budget on sprint closed (CHT-2034)', () => {
+            dispatch({ type: 'closed', entity: 'sprint', data: { id: 's1', name: 'Sprint 2', points_spent: 21, budget: 20 } });
+            expect(showToast).toHaveBeenCalledWith('Sprint 2 closed at 21/20 points', 'info');
         });
 
         it('shows no toast on sprint updated', () => {
