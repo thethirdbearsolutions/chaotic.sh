@@ -10588,6 +10588,83 @@ body.theme-light {
 .timeline-note .markdown-body > :last-child { margin-bottom: 0; }
 
 /* ============================================================================
+   Rich comment composer (CHT-2028)
+   Layout only: the editor takes the textarea's place and looks like it, one
+   line until you come to it, then it grows and the formatting row appears
+   under the box. Typography comes from .markdown-body; the row is the
+   shared .toolbar.
+   ============================================================================ */
+.comment-form textarea[hidden] { display: none; }
+
+.rich-composer[hidden] { display: none; }
+.rich-composer {
+    flex: 1;
+    min-width: 0;
+    /* Where the form stacks in a column (phones), flex: 1 gives height, not width. */
+    width: 100%;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    transition: border-color var(--transition-fast);
+}
+.rich-composer:focus-within { border-color: var(--accent-color); }
+
+.rich-editor-content {
+    padding: 8px 12px;
+    /* One line of the prose style's 1.6 line height, so nothing clips. */
+    min-height: calc(var(--font-base) * 1.6);
+    max-height: calc(var(--font-base) * 1.6);
+    overflow: hidden;
+    outline: none;
+    font-size: var(--font-base);
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+.composer-active .rich-editor-content {
+    min-height: 62px;
+    max-height: 240px;
+    overflow-y: auto;
+}
+.rich-editor-content p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    color: var(--text-muted);
+    float: left;
+    height: 0;
+    pointer-events: none;
+}
+
+/* The formatting row and its note sit under the box, across the form, once
+   the box is in use. */
+.rich-composer-toolbar,
+.rich-composer-note { flex-basis: 100%; width: 100%; }
+.rich-composer-toolbar { display: none; }
+.composer-active .rich-composer-toolbar { display: flex; }
+/* In markdown mode the formatting buttons do nothing; only the toggle shows. */
+.rich-composer-toolbar .icon-btn[hidden] { display: none; }
+.rich-composer-note[hidden] { display: none; }
+.rich-composer-note {
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+}
+
+/* The editor's @mention list floats by the caret, outside the form. */
+.rich-mention-suggestions {
+    position: fixed;
+    z-index: 1000;
+    min-width: 220px;
+    max-width: min(320px, calc(100vw - 16px));
+    margin-top: 0;
+    box-shadow: var(--shadow-md);
+}
+.rich-mention-suggestions[hidden] { display: none; }
+.rich-mention-suggestions .mention-suggestion.selected {
+    border-color: var(--border-color);
+    background: var(--bg-tertiary);
+}
+
+
+/* ============================================================================
    Shared components (CHT-2040). Generic names, never tab-prefixed; every
    surface uses these rather than inventing its own. Colour is tokens only.
    ============================================================================ */
@@ -10695,6 +10772,52 @@ body.theme-light {
 }
 .list-row-action:hover { text-decoration: underline; }
 
+/* Toolbar: a row of .icon-btn, with .toolbar-spacer to push the rest right. */
+.toolbar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+.toolbar-spacer { flex: 1; }
+
+/* Icon button: square, ghost until hovered; .is-active when its state is on. */
+.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.icon-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+.icon-btn.is-active,
+.icon-btn[aria-pressed="true"] { background: var(--accent-subtle); color: var(--accent-fg); }
+.icon-btn:disabled { opacity: 0.4; cursor: default; }
+.icon-btn:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+
+/* Text button that reads as a link. */
+.btn-link {
+    background: none;
+    border: 0;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+    cursor: pointer;
+}
+.btn-link:hover { color: var(--text-primary); text-decoration: underline; }
+.btn-link[aria-pressed="true"] { color: var(--accent-fg); }
+.btn-link:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+
+@media (hover: none) {
+    .icon-btn { width: 40px; height: 40px; }
+    .btn-link { padding: 10px 8px; }
+}
 /* Prose (CHT-2047): every rendered-markdown container carries .markdown-body
    and gets this one style, so attestation notes, ritual prompts, comments,
    descriptions and bios read the same. Sizes are em-based so a container

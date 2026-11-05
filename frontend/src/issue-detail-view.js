@@ -25,6 +25,7 @@ import { viewDocument } from './documents.js';
 import { renderRelatedWork, renderTimeline, renderMetaLine } from './ticket-body.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
+import { attachRichComposer, focusComposer, isRichComposerBusy, captureComposerFocus } from './rich-composer.js';
 // Markdown post-processing (issue-link/mention rendering) lives in rich-text.js
 // (CHT-1213) so documents.js can share it without depending on this module.
 // Re-exported here too so existing imports of these from issue-detail-view.js
@@ -583,6 +584,7 @@ export function detailRefreshBlocker() {
     const mentions = document.getElementById('mention-suggestions');
     if (mentions && !mentions.classList.contains('hidden')) return 'transient';
     if (commentComposing) return 'transient';
+    if (isRichComposerBusy()) return 'transient';
     return null;
 }
 
@@ -747,6 +749,8 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         // synchronous, so these checks cannot go stale before it finishes.
         if (navigationId !== viewIssueNavigationId) return 'dropped';
         let restoreFocus = null;
+        // The rich editor has no id; where its caret was (CHT-2028).
+        let restoreComposer = null;
         let restoreScrollY = null;
         if (refresh) {
             if (refreshSeq !== viewIssueRefreshSeq) return 'dropped';
@@ -755,6 +759,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             if (blocker) return deferRefresh(blocker);
             restoreScrollY = window.scrollY;
             const active = document.activeElement;
+            restoreComposer = captureComposerFocus('new-comment');
             if (active?.id && document.getElementById('issue-detail-view').contains(active)) {
                 restoreFocus = {
                     id: active.id,
@@ -1040,6 +1045,14 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     commentTextarea.closest('form')?.requestSubmit();
                 }
             });
+            // The rich editor over the textarea (CHT-2028), after the draft
+            // is restored so it opens with it.
+            attachRichComposer('new-comment', {
+                signal: detailSignal,
+                mentionContext: { projectId: issue.project_id },
+                placeholder: 'Write a comment…',
+                restore: restoreComposer,
+            });
         }
 
         // Set up prev/next keyboard navigation
@@ -1073,11 +1086,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             } else if (e.key === 'c') {
                 e.preventDefault();
                 e.stopImmediatePropagation();
-                const textarea = document.getElementById('new-comment');
-                if (textarea) {
-                    textarea.focus();
-                    textarea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                }
+                focusComposer('new-comment');
             } else if (e.key === 'j') {
                 e.preventDefault();
                 e.stopImmediatePropagation();

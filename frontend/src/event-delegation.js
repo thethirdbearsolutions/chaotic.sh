@@ -10,6 +10,8 @@
  *   target  — the element with data-action (replaces event.currentTarget)
  */
 
+import { isTextEntry } from './constants.js';
+
 const actions = {};
 
 /**
@@ -40,8 +42,7 @@ function handleEvent(event) {
     // not an action trigger. (CHT-1100)
     const evtType = event.type;
     if ((evtType === 'keydown' || evtType === 'input') && target !== event.target) {
-        const tag = event.target.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        if (isTextEntry(event.target)) return;
     }
 
     // A data-action element only triggers on click-like activation. keydown
