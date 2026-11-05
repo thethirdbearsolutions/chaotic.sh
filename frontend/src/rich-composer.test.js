@@ -1,3 +1,4 @@
+import './editor/jsdom-layout.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('./mention-autocomplete.js', () => ({

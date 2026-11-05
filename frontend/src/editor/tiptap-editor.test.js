@@ -1,3 +1,4 @@
+import './jsdom-layout.js';
 import { describe, it, expect, afterEach } from 'vitest';
 import { marked } from 'marked';
 import { createEditor, getMarkdown, roundTripsCleanly, COMMANDS, activeMarks } from './tiptap-editor.js';
