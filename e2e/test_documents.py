@@ -214,7 +214,7 @@ class TestProjectScopedAgentDocumentCommands:
         # space: it must not make the prefix ambiguous or leak its title.
         api_client.create_document(team_id, "Team only")
 
-        created = self._doc(key, team_id, "create", "Agent playbook", "--icon", "🌊",
+        created = self._doc(key, team_id, "create", "Agent playbook", "--icon", "📘",
                             "--project", test_project["id"], "--content", "v1", "--json")
         assert created.exit_code == 0, created.output
         doc = api_client.get_documents(team_id, project_id=test_project["id"])[0]
