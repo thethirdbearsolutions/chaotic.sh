@@ -3989,42 +3989,6 @@ input[type="checkbox"] {
     margin-bottom: 12px;
 }
 
-.sprint-status-cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 12px;
-}
-
-.sprint-status-card {
-    padding: 12px 16px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-}
-
-.sprint-status-card.limbo {
-    border-color: var(--warning, #f59e0b);
-}
-
-.sprint-status-card.arrears {
-    border-color: var(--error, #ef4444);
-}
-
-.sprint-status-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.sprint-status-project {
-    font-size: var(--font-xs);
-    color: var(--text-muted);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
 .sprint-status-badge {
     font-size: 10px;
     padding: 1px 6px;
@@ -4041,13 +4005,6 @@ input[type="checkbox"] {
 .sprint-status-badge.arrears {
     background: rgba(239, 68, 68, 0.15);
     color: var(--error, #ef4444);
-}
-
-.sprint-status-name {
-    font-size: var(--font-sm);
-    font-weight: 500;
-    color: var(--text-primary);
-    margin-bottom: 8px;
 }
 
 .sprint-status-progress {
@@ -4077,12 +4034,6 @@ input[type="checkbox"] {
 
 .sprint-progress-fill.limbo {
     background: var(--warning, #f59e0b);
-}
-
-.sprint-status-points {
-    font-size: var(--font-xs);
-    color: var(--text-muted);
-    white-space: nowrap;
 }
 
 .sprint-issue-breakdown {
@@ -9819,14 +9770,164 @@ body.theme-light .picker-popover {
 .dashboard-rail .dashboard-sprint-status {
     margin-bottom: 20px;
 }
-.dashboard-rail .sprint-status-cards {
-    grid-template-columns: 1fr;
+
+/* Rail sprint panel (CHT-2027): one card for one project, one row per
+   project otherwise. Both are buttons that open the sprint. */
+.dashboard-sprint-status .section-header {
+    display: flex;
+    align-items: baseline;
     gap: 8px;
 }
-.dashboard-rail .sprint-status-card {
-    padding: 10px 12px;
-    border-radius: var(--radius-md);
+.sprint-attention {
+    margin-left: auto;
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--error, #ef4444);
 }
+.sprint-focus {
+    display: block;
+    width: 100%;
+    padding: 12px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.sprint-focus:hover { background: var(--row-hover); }
+.sprint-focus:focus-visible,
+.sprint-row:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+}
+.sprint-focus.limbo { border-color: var(--warning, #f59e0b); }
+.sprint-focus.arrears { border-color: var(--error, #ef4444); }
+.sprint-focus-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    min-width: 0;
+}
+.sprint-focus-name {
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sprint-focus-meta {
+    margin-left: auto;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.sprint-focus-headline {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+.sprint-focus-headline strong {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+.sprint-focus.arrears .sprint-focus-headline strong { color: var(--error, #ef4444); }
+.sprint-focus-muted { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.sprint-focus .sprint-progress-bar { height: 6px; border-radius: 3px; }
+.sprint-focus .sprint-issue-breakdown { margin-top: 10px; }
+.sprint-focus .sprint-status-counts { gap: 4px 10px; }
+.sprint-focus-note {
+    margin-top: 10px;
+    font-size: var(--font-xs);
+    color: var(--text-secondary);
+}
+.sprint-focus-note.arrears { color: var(--error, #ef4444); }
+.sprint-focus-note.limbo { color: var(--warning, #f59e0b); }
+.sprint-progress-fill.near { background: var(--warning, #f59e0b); }
+
+.sprint-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    overflow: hidden;
+}
+.sprint-rows li + li { border-top: 1px solid var(--border-color); }
+.sprint-row {
+    display: grid;
+    grid-template-columns: 8px minmax(0, 1fr) auto 44px 52px;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: 34px;
+    padding: 0 10px;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-size: var(--font-sm);
+    text-align: left;
+    cursor: pointer;
+}
+.sprint-row:hover { background: var(--row-hover); }
+.sprint-row-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-quaternary, #6b7280);
+    opacity: 0.6;
+}
+.sprint-row-dot.near { background: var(--warning, #f59e0b); opacity: 1; }
+.sprint-row-dot.limbo { background: var(--warning, #f59e0b); opacity: 1; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25); }
+.sprint-row-dot.arrears { background: var(--error, #ef4444); opacity: 1; box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25); }
+.sprint-row-project {
+    color: var(--text-primary);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sprint-row-sprint {
+    max-width: 80px;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sprint-row-bar {
+    display: block;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-tertiary);
+    overflow: hidden;
+}
+.sprint-row-bar.none { background: none; border-top: 1px dashed var(--border-color); height: 0; }
+.sprint-row-bar .sprint-progress-fill { display: block; }
+.sprint-row-points {
+    font-size: var(--font-xs);
+    color: var(--text-secondary);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.sprint-row-unit { color: var(--text-muted); }
+.sprint-row.arrears .sprint-row-points { color: var(--error, #ef4444); }
+.sprint-rows-more {
+    border: 1px solid var(--border-color);
+    border-top: 0;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    background: var(--bg-secondary);
+    font-size: var(--font-xs);
+}
+.sprint-rows:has(+ .sprint-rows-more) { border-radius: var(--radius-md) var(--radius-md) 0 0; }
 .dashboard-rail .dashboard-activity {
     margin: 0;
     padding: 0;

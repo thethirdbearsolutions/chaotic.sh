@@ -73,6 +73,10 @@ import {
     loadMyIssues,
     loadDashboardActivity,
     loadSprintStatus,
+    renderSprintStatus,
+    describeSprintBudget,
+    sortSprintsByAttention,
+    resetSprintRowsExpanded,
     renderMyIssues,
     renderDashboardActivity,
     showMyIssuesLoadingSkeleton,
@@ -355,6 +359,90 @@ describe('dashboard module', () => {
         });
     });
 
+    // CHT-2027: one project gets a card, several get compact rows.
+    describe('sprint panel layout', () => {
+        const sprint = (id, extra = {}) => ({ id, name: `Sprint ${id}`, budget: 20, points_spent: 0, limbo: false, ...extra });
+        const many = (n) => Array.from({ length: n }, (_, i) => ({
+            project: { id: `p${i}`, name: `Project ${i}` },
+            sprint: sprint(`s${i}`, { points_spent: i }),
+            statusCounts: {},
+        }));
+
+        beforeEach(() => resetSprintRowsExpanded());
+
+        it('uses a singular heading and says what is left for one project', () => {
+            renderSprintStatus([{
+                project: { id: 'p1', name: 'Project 1' },
+                sprint: sprint('a', { points_spent: 15, activated_at: new Date(Date.now() - 2 * 86400000).toISOString() }),
+                statusCounts: { done: 3, in_progress: 1 },
+            }], { single: true });
+            const html = document.getElementById('dashboard-sprint-status').innerHTML;
+            expect(html).toContain('Current sprint');
+            expect(html).not.toContain('Active sprints');
+            expect(html).toContain('<strong>5</strong> pts left');
+            expect(html).toContain('Day 2');
+            expect(html).toContain('4 issues');
+            expect(html).toContain('data-action="view-sprint"');
+        });
+
+        it('tells the reader to close an over-budget sprint', () => {
+            renderSprintStatus([{ project: { id: 'p1', name: 'P' }, sprint: sprint('a', { points_spent: 23 }), statusCounts: {} }], { single: true });
+            const html = document.getElementById('dashboard-sprint-status').innerHTML;
+            expect(html).toContain('<strong>3</strong> pts over budget');
+            expect(html).toContain('Close the sprint');
+            expect(html).toContain('No issues planned');
+        });
+
+        it('caps the many-projects list and expands on Show all', () => {
+            renderSprintStatus(many(8), { single: false });
+            const container = document.getElementById('dashboard-sprint-status');
+            expect(container.querySelectorAll('.sprint-row')).toHaveLength(5);
+            expect(container.innerHTML).toContain('Show all 8');
+            expect(container.querySelector('.section-count').textContent).toBe('8');
+        });
+
+        it('Show all re-renders the last load with every row', async () => {
+            getCurrentProject.mockReturnValue(null);
+            setProjects(Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, name: `Project ${i}` })));
+            api.getCurrentSprint.mockImplementation(async (pid) => sprint(pid));
+            await loadSprintStatus();
+            const container = document.getElementById('dashboard-sprint-status');
+            expect(container.querySelectorAll('.sprint-row')).toHaveLength(5);
+            // Many projects: points only, no per-project issue fetch.
+            expect(api.getIssues).not.toHaveBeenCalled();
+            dashboardActions['dash-sprints-toggle']();
+            expect(container.querySelectorAll('.sprint-row')).toHaveLength(7);
+            expect(container.innerHTML).toContain('Show fewer');
+        });
+
+        it('puts limbo and arrears first and counts them', () => {
+            const data = many(3);
+            data.push({ project: { id: 'x', name: 'Over' }, sprint: sprint('x', { points_spent: 30 }), statusCounts: {} });
+            data.push({ project: { id: 'y', name: 'Stuck' }, sprint: sprint('y', { limbo: true }), statusCounts: {} });
+            renderSprintStatus(data, { single: false });
+            const rows = [...document.querySelectorAll('.sprint-row-project')].map(e => e.textContent);
+            expect(rows.slice(0, 2)).toEqual(['Stuck', 'Over']);
+            expect(document.querySelector('.sprint-attention').textContent).toBe('2 need closing');
+        });
+
+        it('orders budgeted sprints by fill, then unbudgeted by points', () => {
+            const row = (id, s) => ({ project: { id, name: id }, sprint: sprint(id, s) });
+            const sorted = sortSprintsByAttention([
+                row('idle', { budget: null, points_spent: 0 }),
+                row('busy', { budget: null, points_spent: 50 }),
+                row('half', { points_spent: 10 }),
+                row('nearly', { points_spent: 18 }),
+            ]).map(d => d.project.id);
+            expect(sorted).toEqual(['nearly', 'half', 'busy', 'idle']);
+        });
+
+        it('treats a 0 budget as a real budget and null as unlimited', () => {
+            expect(describeSprintBudget({ budget: 0, points_spent: 1 }).overBudget).toBe(true);
+            expect(describeSprintBudget({ budget: null, points_spent: 99 }).hasBudget).toBe(false);
+            expect(describeSprintBudget({ budget: 10, points_spent: 8 }).state).toBe('near');
+        });
+    });
+
     // CHT-1224: dashboard.js:234-256 (loadSprintStatus) — outer catch used to
     // blank the whole section with zero indication, and a per-project sprint
     // fetch failure was indistinguishable from "no active sprint".
@@ -385,6 +473,7 @@ describe('dashboard module', () => {
         });
 
         it('logs when the per-sprint issue-count fetch fails but still renders the sprint card', async () => {
+            getCurrentProject.mockReturnValue('proj-1');
             const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             api.getCurrentSprint.mockResolvedValue({ id: 'sprint-1', name: 'Sprint 1', budget: 10, points_spent: 2 });
             api.getIssues.mockRejectedValue(new Error('boom'));
