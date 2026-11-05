@@ -52,8 +52,8 @@
 - Don't merge until review is complete and all issues addressed
 
 ### 6. This Repo Is Public
-Chaotic's own instance tracks private work for other teams and clients.
-None of it may reach this repo: not in code, tests, fixtures, docs,
+Any Chaotic instance, including the one this project is tracked in, may
+contain private work. None of it may reach this repo: not in code, tests, fixtures, docs,
 commit messages, PR titles, PR bodies, review comments or release notes.
 - Never name a project, project or team key (other than `CHT`), client, person,
   agent name or private URL from any Chaotic instance. Live data you
