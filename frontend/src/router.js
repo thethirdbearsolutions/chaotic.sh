@@ -191,6 +191,11 @@ export function navigateTo(view, pushHistory = true, { transition = false } = {}
     }
 }
 
+// Backward-compat aliases for renamed routes. Team folded into People
+// (CHT-2044); its address is rewritten so a bookmark lands there for good.
+const routeAliases = { 'gate-approvals': 'approvals', team: 'people' };
+const rewrittenAliases = new Set(['team']);
+
 /**
  * Boot (CHT-1971): before the team's data loads, show the shell of the
  * view the address routes to, and leave no view current. The page HTML
@@ -203,7 +208,6 @@ export function navigateTo(view, pushHistory = true, { transition = false } = {}
 export function primeRoute() {
     setCurrentView(null);
     const parts = window.location.pathname.split('/').filter(Boolean);
-    const routeAliases = { 'gate-approvals': 'approvals' };
     const first = parts.length === 0 ? 'my-issues' : (routeAliases[parts[0]] || parts[0]);
     const isStandard = parts.length <= 1 && getValidViews().includes(first);
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
@@ -245,9 +249,12 @@ export function handleRoute() {
     } else {
         // Standard view routing
         view = parts[0];
-        // Backward-compat aliases for renamed routes
-        const routeAliases = { 'gate-approvals': 'approvals' };
-        if (routeAliases[view]) view = routeAliases[view];
+        if (routeAliases[view]) {
+            if (parts.length === 1 && rewrittenAliases.has(view)) {
+                history.replaceState({ view: routeAliases[view] }, '', `/${routeAliases[view]}${window.location.search}`);
+            }
+            view = routeAliases[view];
+        }
         const validViews = getValidViews();
         if (validViews.includes(view)) {
             navigateTo(view, false);

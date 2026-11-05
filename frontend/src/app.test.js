@@ -240,7 +240,6 @@ vi.mock('./utils.js', () => ({
 // Import mocked modules so we can assert on them
 import { loadMyIssues, loadDashboardActivity, loadSprintStatus } from './dashboard.js';
 import { initFilterBar, loadIssues, loadFiltersFromUrl, populateLabelFilter, updateSprintFilter, showCachedIssuesOrSkeleton, getSelectedLabels, getExcludedLabels } from './issues-view.js';
-import { loadTeamMembers, loadTeamAgents, loadTeamInvitations } from './teams.js';
 import { loadApiKeys } from './api-keys.js';
 import { loadAgents } from './agents.js';
 import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
@@ -316,7 +315,7 @@ describe('app.js view registrations', () => {
     it('registers all expected views', () => {
         const expectedViews = [
             'my-issues', 'approvals', 'issues', 'epics', 'board',
-            'projects', 'sprints', 'rituals', 'documents', 'team', 'settings',
+            'projects', 'sprints', 'rituals', 'documents', 'people', 'settings',
         ];
         for (const view of expectedViews) {
             expect(registeredViews[view], `missing view: ${view}`).toBeDefined();
@@ -458,11 +457,8 @@ describe('app.js view registrations', () => {
         expect(loadProjects).toHaveBeenCalled();
     });
 
-    it('team view loads members, agents, and invitations', () => {
-        registeredViews['team']();
-        expect(loadTeamMembers).toHaveBeenCalled();
-        expect(loadTeamAgents).toHaveBeenCalled();
-        expect(loadTeamInvitations).toHaveBeenCalled();
+    it('has no Team view: it folded into People (CHT-2044)', () => {
+        expect(registeredViews['team']).toBeUndefined();
     });
 
     it('settings view loads API keys and agents', () => {

@@ -52,12 +52,9 @@ import './revisions.js';
 import {
     toggleTeamDropdown,
     toggleUserDropdown,
-    loadTeamMembers,
-    loadTeamInvitations,
     showInviteModal,
     showCreateTeamModal,
     showEditTeamModal,
-    loadTeamAgents,
 } from './teams.js';
 import { loadPeople, viewPerson } from './people.js';
 import {
@@ -305,11 +302,6 @@ registerViews({
         loadDocuments(null, null, { fromMemory: true });
     },
     'people': loadPeople,
-    'team': () => {
-        loadTeamMembers();
-        loadTeamAgents();
-        loadTeamInvitations();
-    },
     'settings': () => {
         loadApiKeys();
         loadConnections();
@@ -887,7 +879,7 @@ setCommandPaletteCommands([
     { id: 'nav-rituals', title: 'Go to Rituals', subtitle: 'View project rituals', icon: '🔮', shortcut: 'G R', action: () => navigateTo('rituals'), category: 'Navigation' },
     { id: 'nav-approvals', title: 'Go to Approvals', subtitle: 'Review pending approvals', icon: '✅', shortcut: 'G A', action: () => navigateTo('approvals'), category: 'Navigation' },
     { id: 'nav-inbox', title: 'Go to Inbox', subtitle: 'Gates, mentions, assignments, and reviews awaiting you', icon: '📥', shortcut: 'G W', action: () => navigateTo('inbox'), category: 'Navigation' },
-    { id: 'nav-team', title: 'Go to Team', subtitle: 'Manage team members', icon: '👥', shortcut: 'G T', action: () => navigateTo('team'), category: 'Navigation' },
+    { id: 'nav-team', title: 'Go to People', subtitle: 'Everyone on the team, people and agents', icon: '👥', shortcut: 'G T', action: () => navigateTo('people'), category: 'Navigation' },
     { id: 'nav-settings', title: 'Go to Settings', subtitle: 'Project and team settings', icon: '⚙️', shortcut: 'G ,', action: () => navigateTo('settings'), category: 'Navigation' },
 
     // Create
@@ -898,7 +890,7 @@ setCommandPaletteCommands([
 
     // Actions
     { id: 'search-issues', title: 'Search Issues', subtitle: 'Find issues by title or ID', icon: '🔍', shortcut: '/', action: focusIssueSearch, category: 'Actions' },
-    { id: 'invite-member', title: 'Invite Team Member', subtitle: 'Send an invitation', icon: '✉️', action: () => { navigateTo('team'); setTimeout(showInviteModal, 100); }, category: 'Actions' },
+    { id: 'invite-member', title: 'Invite Team Member', subtitle: 'Send an invitation', icon: '✉️', action: () => { navigateTo('people'); setTimeout(showInviteModal, 100); }, category: 'Actions' },
     { id: 'show-shortcuts', title: 'Keyboard Shortcuts', subtitle: 'View all shortcuts', icon: '⌨️', shortcut: '?', action: () => showKeyboardShortcutsHelp(), category: 'Help' },
     { id: 'show-me-around', title: 'Show Me Around', subtitle: 'Replay the onboarding tour', icon: '🎓', action: () => resetOnboarding(), category: 'Help' },
     { id: 'logout', title: 'Sign Out', subtitle: 'Log out of your account', icon: '🚪', action: () => logout(), category: 'Account' },

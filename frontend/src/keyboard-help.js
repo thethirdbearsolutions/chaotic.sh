@@ -22,7 +22,7 @@ const SHORTCUT_GROUPS = [
             { key: 'g r', description: 'Rituals' },
             { key: 'g a', description: 'Approvals' },
             { key: 'g w', description: 'Inbox' },
-            { key: 'g t', description: 'Team' },
+            { key: 'g t', description: 'People' },
             { key: 'g ,', description: 'Settings' },
         ],
     },

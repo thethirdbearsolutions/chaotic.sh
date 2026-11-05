@@ -140,7 +140,7 @@ export function createKeyboardHandler(actions) {
                 case 'p': actions.navigateTo('projects'); break;
                 case 's': actions.navigateTo('sprints'); break;
                 case 'd': actions.navigateTo('documents'); break;
-                case 't': actions.navigateTo('team'); break;
+                case 't': actions.navigateTo('people'); break; // Team became People (CHT-2044)
                 case 'e': actions.navigateTo('epics'); break;
                 case 'r': actions.navigateTo('rituals'); break;
                 case 'a': actions.navigateTo('approvals'); break;

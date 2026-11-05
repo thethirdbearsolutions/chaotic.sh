@@ -175,12 +175,6 @@
                         </a>
                     </div>
                     <div class="nav-group nav-group-bottom">
-                        <a href="/team" class="nav-item" data-view="team">
-                            <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"/>
-                            </svg>
-                            Team
-                        </a>
                         <a href="/people" class="nav-item" data-view="people">
                             <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
@@ -591,25 +585,6 @@
                     <div id="documents-list" class="grid"></div>
                 </div>
 
-                <div id="team-view" class="view hidden">
-                    <div class="view-header">
-                        <h2>Team</h2>
-                        <div class="view-actions">
-                            <button class="btn btn-secondary" data-action="showEditTeamModal">Edit Team</button>
-                            <!-- CHT-1226 (PR #212 review finding 2): hidden by default — permission
-                                 gates fail closed; revealed only on confirmed admin/owner role -->
-                            <button id="invite-member-btn" class="btn btn-primary hidden" data-action="showInviteModal">+ Invite Member</button>
-                        </div>
-                    </div>
-                    <p id="team-description-text" class="team-description"></p>
-                    <div class="section-header"><h3>Members</h3></div>
-                    <div id="team-members-list" class="list"></div>
-                    <div class="section-header"><h3>Agents</h3></div>
-                    <div id="team-agents-list" class="list"></div>
-                    <div class="section-header"><h3>Pending Invitations</h3></div>
-                    <div id="team-invitations-list" class="list"></div>
-                </div>
-
                 <div id="people-view" class="view hidden">
                     <div class="view-header">
                         <h2>People</h2>
@@ -618,10 +593,19 @@
                                 <input type="checkbox" id="people-show-idle" data-action="toggle-people-idle">
                                 Show idle sessions
                             </label>
+                            <!-- Admin-only controls stay hidden until the viewer's role is
+                                 confirmed (CHT-1226): permission gates fail closed. -->
+                            <button id="edit-team-btn" class="btn btn-secondary hidden" data-action="showEditTeamModal">Edit team</button>
+                            <button id="invite-member-btn" class="btn btn-secondary hidden" data-action="showInviteModal">Invite person</button>
+                            <button class="btn btn-primary" data-action="showCreateAgentModal">Create agent</button>
                         </div>
                     </div>
-                    <p class="people-intro">Everyone on the team, people and agents, as they describe themselves.</p>
+                    <p id="team-description-text" class="team-description"></p>
                     <div id="people-list"></div>
+                    <div id="people-invitations" class="hidden">
+                        <div class="section-header"><h3>Pending invitations <span id="people-invitations-count" class="section-count"></span></h3></div>
+                        <div id="team-invitations-list" class="people-rows"></div>
+                    </div>
                 </div>
 
                 <div id="query-view" class="view hidden">
@@ -701,10 +685,10 @@
                             <div id="push-devices-list" class="api-keys-list"></div>
                         </section>
                         <section class="settings-section">
-                            <h3>Agents</h3>
-                            <p class="settings-description">Create agents to give CLI automation its own identity. Agent actions are attributed separately from your human account.</p>
-                            <button class="btn btn-primary" data-action="showCreateAgentModal">+ Create Agent</button>
-                            <div id="agents-list" class="agents-list"></div>
+                            <h3>Your agents</h3>
+                            <p class="settings-description">Agents give automation its own identity, attributed separately from you. Each one's keys, connected apps, scope and registrar right are on its profile; the whole team's agents are on <a href="/people" data-action="back-to-roster">People</a>.</p>
+                            <button class="btn btn-primary" data-action="showCreateAgentModal">Create agent</button>
+                            <div id="agents-list" class="people-rows"></div>
                         </section>
                     </div>
                 </div>
