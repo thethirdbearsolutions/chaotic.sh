@@ -7,7 +7,9 @@
  * documents.js/issue-list.js's deep-link actions.
  */
 import { api } from './api.js';
-import { showApiError, isModalOpen } from './ui.js';
+import {
+    showApiError, isModalOpen, showModal, closeModal, showMentionWarnings,
+} from './ui.js';
 import { escapeHtml, escapeAttr } from './utils.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { registerActions } from './event-delegation.js';
@@ -46,6 +48,10 @@ let pendingLoadIntent = null;
 // Entries whose "Reassign back" PATCH is in flight: a second press is ignored
 // rather than sending a second PATCH (and a second notification).
 const reassignInFlight = new Set();
+// entryId -> the comment text already posted for a reassign whose PATCH then
+// failed (CHT-2029). Retrying with the same text reassigns without posting
+// the comment a second time.
+const reassignCommentPosted = new Map();
 
 // What this client has done locally that a fetch may not show yet (CHT-1514).
 // A fetch that was already in flight when the user archived or read an entry
@@ -76,6 +82,7 @@ function confirmRead(entryId) {
 export function resetInboxLocalState() {
     archivedLocally.clear();
     readLocally.clear();
+    reassignCommentPosted.clear();
 }
 
 /**
@@ -539,34 +546,119 @@ function setReassignBusy(entryId, busy) {
 }
 
 /**
- * Reassign the entry's source issue back to whoever triggered it (the
- * assigner), then archive the entry (CHT-1320). Only offered for entries that
- * carry both a source user and an issue. The PATCH goes first and the entry is
- * archived only once it succeeds. A second press while the PATCH is in flight
- * is ignored (PR #260 review finding 6).
+ * Open the "Reassign back" dialog (CHT-2029). Handing a ticket back with no
+ * word about why leaves the person who gets it guessing, so the dialog asks
+ * for a comment, posts it on the ticket, and only then reassigns. The
+ * comment is required: the reassign button stays inert until there is one.
  */
-export async function reassignInboxEntry(entryId) {
+export function openReassignInboxDialog(entryId) {
     if (reassignInFlight.has(entryId)) return;
     const entry = getInboxEntries().find(e => e.id === entryId);
     if (!entry || !entry.issue_id || !entry.source_user_id) return;
     const back = entry.source_user_name || 'sender';
+    const ref = entry.issue_identifier || 'this ticket';
+    document.getElementById('modal-title').textContent = `Reassign ${ref} back to ${back}`;
+    document.getElementById('modal-content').innerHTML = `
+        <form id="inbox-reassign-form" class="inbox-reassign-form" novalidate>
+            <div class="form-group">
+                <label for="inbox-reassign-comment">Comment for ${escapeHtml(back)}</label>
+                <textarea id="inbox-reassign-comment" rows="4" required
+                    aria-describedby="inbox-reassign-help"
+                    placeholder="Why is this coming back, and what should happen next?"></textarea>
+                <p class="form-help" id="inbox-reassign-help">Posted on ${escapeHtml(ref)} before it is reassigned, so ${escapeHtml(back)} knows why.</p>
+                <p class="form-error hidden" id="inbox-reassign-error" role="alert">Add a comment first.</p>
+            </div>
+            <div class="inbox-reassign-actions">
+                <button type="button" class="btn btn-secondary" data-action="close-inbox-reassign">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="inbox-reassign-submit">Comment and reassign</button>
+            </div>
+        </form>
+    `;
+    const form = document.getElementById('inbox-reassign-form');
+    const textarea = document.getElementById('inbox-reassign-comment');
+    const error = document.getElementById('inbox-reassign-error');
+    textarea.addEventListener('input', () => {
+        if (textarea.value.trim()) error.classList.add('hidden');
+    });
+    textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event('submit', { cancelable: true }));
+        }
+    });
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const comment = textarea.value.trim();
+        if (!comment) {
+            error.classList.remove('hidden');
+            textarea.focus();
+            return;
+        }
+        const submit = document.getElementById('inbox-reassign-submit');
+        if (submit) submit.disabled = true;
+        const ok = await reassignInboxEntry(entryId, comment);
+        if (ok) {
+            closeModal();
+        } else if (submit && document.contains(submit)) {
+            submit.disabled = false;
+        }
+    });
+    showModal();
+}
+
+/**
+ * Post `comment` on the entry's source issue, reassign the issue back to
+ * whoever triggered the entry (the assigner), then archive the entry
+ * (CHT-1320, CHT-2029). Only offered for entries that carry both a source
+ * user and an issue, and only with a non-empty comment.
+ *
+ * The comment goes first, so the ticket never changes hands without its
+ * reason. The PATCH goes next and the entry is archived only once it
+ * succeeds. If the PATCH fails, a retry with the same comment does not post
+ * it again. A second press while a request is in flight is ignored (PR #260
+ * review finding 6). Resolves true once the issue is reassigned.
+ */
+export async function reassignInboxEntry(entryId, comment) {
+    if (reassignInFlight.has(entryId)) return false;
+    const entry = getInboxEntries().find(e => e.id === entryId);
+    if (!entry || !entry.issue_id || !entry.source_user_id) return false;
+    const text = typeof comment === 'string' ? comment.trim() : '';
+    if (!text) return false;
+    const back = entry.source_user_name || 'sender';
+    const ref = entry.issue_identifier || 'issue';
     reassignInFlight.add(entryId);
     setReassignBusy(entryId, true);
-    // PATCH first, archive only on success (PR #260 review): archive now
-    // PERSISTS server-side (CHT-1316), so an optimistic archive-then-PATCH
-    // would silently orphan the entry if the reassign failed -- the issue
-    // stays assigned to you but the "handle me" item is gone for good. Leave
-    // the entry in place on failure so it can be retried.
+    const fail = (what, e) => {
+        reassignInFlight.delete(entryId);
+        setReassignBusy(entryId, false);
+        showApiError(what, e);
+        return false;
+    };
+    if (reassignCommentPosted.get(entryId) !== text) {
+        let created;
+        try {
+            created = await api.createComment(entry.issue_id, text);
+        } catch (e) {
+            return fail(`comment on ${ref}`, e);
+        }
+        reassignCommentPosted.set(entryId, text);
+        // @handles in the comment that reached nobody (CHT-1743)
+        showMentionWarnings(created);
+    }
+    // PATCH before archive (PR #260 review): archive now PERSISTS
+    // server-side (CHT-1316), so an optimistic archive-then-PATCH would
+    // silently orphan the entry if the reassign failed -- the issue stays
+    // assigned to you but the "handle me" item is gone for good. Leave the
+    // entry in place on failure so it can be retried.
     try {
         await api.updateIssue(entry.issue_id, { assignee_id: entry.source_user_id });
     } catch (e) {
-        reassignInFlight.delete(entryId);
-        setReassignBusy(entryId, false);
-        showApiError(`reassign ${entry.issue_identifier || 'issue'} back to ${back}`, e);
-        return;
+        return fail(`reassign ${ref} back to ${back}`, e);
     }
     reassignInFlight.delete(entryId);
+    reassignCommentPosted.delete(entryId);
     archiveInboxEntry(entryId);
+    return true;
 }
 
 /**
@@ -884,9 +976,14 @@ registerActions({
         openInboxEntry(data);
     },
     'reassign-inbox-entry': (event, data) => {
-        // reassignInboxEntry ignores a press while its PATCH is in flight.
+        // Opens the comment dialog (CHT-2029); ignored while a reassign for
+        // this entry is in flight.
         event.preventDefault();
-        if (data.entryId) reassignInboxEntry(data.entryId);
+        if (data.entryId) openReassignInboxDialog(data.entryId);
+    },
+    'close-inbox-reassign': (event) => {
+        event.preventDefault();
+        closeModal();
     },
     'archive-inbox-entry': (event, data) => {
         // event-delegation dispatches to the nearest [data-action]
