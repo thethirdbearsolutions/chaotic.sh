@@ -334,3 +334,192 @@ async def test_a_cycle_under_many_issues_stays_cheap(test_project, test_user, db
     got = await epic_progress([test_project.id])
     assert time.monotonic() - started < 2
     assert got.untracked[0].open == 302
+
+
+# --- What is happening under each epic now (CHT-2043) -----------------------
+
+async def _set(issue_id, **fields):
+    from app.oxyde_models.issue import OxydeIssue
+    await OxydeIssue.objects.filter(id=issue_id).update(**fields)
+
+
+@pytest.mark.asyncio
+async def test_in_flight_last_shipped_and_activity(client, interactive_headers, test_project, test_user, db):
+    from datetime import datetime, timedelta, timezone
+    h = interactive_headers
+    epic = await _create(client, h, test_project.id, title="Goal", issue_type="epic", assignee_id=test_user.id)
+    doing = await _create(client, h, test_project.id, title="Doing", parent_id=epic["id"], assignee_id=test_user.id)
+    review = await _create(client, h, test_project.id, title="Reviewing", parent_id=epic["id"])
+    task = await _create(client, h, test_project.id, title="Task", parent_id=epic["id"])
+    nested = await _create(client, h, test_project.id, title="Nested", parent_id=task["id"])
+    old = await _create(client, h, test_project.id, title="Old win", parent_id=epic["id"])
+    new = await _create(client, h, test_project.id, title="New win", parent_id=epic["id"], assignee_id=test_user.id)
+    inner = await _create(client, h, test_project.id, title="Inner", issue_type="epic", parent_id=epic["id"])
+    await _create(client, h, test_project.id, title="Inner work", parent_id=inner["id"], status="in_progress")
+
+    await _patch(client, h, doing["id"], status="in_progress")
+    await _patch(client, h, review["id"], status="in_review")
+    await _patch(client, h, nested["id"], status="in_progress")
+    await _patch(client, h, old["id"], status="done")
+    await _patch(client, h, new["id"], status="done")
+    now = datetime.now(timezone.utc)
+    await _set(old["id"], completed_at=now - timedelta(days=2))
+    await _set(new["id"], completed_at=now - timedelta(hours=1))
+    await _set(doing["id"], updated_at=now + timedelta(minutes=5))
+
+    r = await client.get(f"/api/projects/{test_project.id}/epics", headers=h)
+    rows = {e["identifier"]: e for e in r.json()["epics"]}
+    row = rows[epic["identifier"]]
+    # Its own tickets, nested ones included; the inner epic's work and the
+    # inner epic itself are the inner epic's.
+    assert row["in_flight_count"] == 3
+    flight = row["in_flight"]
+    assert {t["title"] for t in flight} == {"Doing", "Reviewing", "Nested"}
+    assert flight[0]["title"] == "Doing"  # most recently updated first
+    assert flight[0]["assignee"] == {"id": test_user.id, "name": test_user.name, "is_agent": False}
+    assert {t["status"] for t in flight} == {"in_progress", "in_review"}
+    assert [t["assignee"] for t in flight if t["title"] == "Reviewing"] == [None]
+
+    shipped = row["last_shipped"]
+    assert shipped["title"] == "New win" and shipped["status"] == "done"
+    assert shipped["assignee"]["id"] == test_user.id
+    assert shipped["completed_at"] is not None
+    assert row["last_activity_at"].startswith((now + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M"))
+    assert row["completed_at"] is None
+    assert row["awaiting_human"] == []
+
+    assert row["owner"] == {"id": test_user.id, "name": test_user.name, "is_agent": False}
+
+    inner_row = rows[inner["identifier"]]
+    assert inner_row["owner"] is None
+    assert [t["title"] for t in inner_row["in_flight"]] == ["Inner work"]
+    assert inner_row["last_shipped"] is None
+
+    # A closed epic says when it closed.
+    await _patch(client, h, inner["id"], status="done")
+    r = await client.get(f"/api/projects/{test_project.id}/epics", headers=h)
+    closed = {e["identifier"]: e for e in r.json()["epics"]}[inner["identifier"]]
+    assert closed["completed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_in_flight_is_capped_but_counted(client, interactive_headers, test_project, db):
+    from app.services.epic_progress import IN_FLIGHT_LIMIT
+    h = interactive_headers
+    epic = await _create(client, h, test_project.id, title="Goal", issue_type="epic")
+    for n in range(IN_FLIGHT_LIMIT + 2):
+        await _create(client, h, test_project.id, title=f"T{n}", parent_id=epic["id"], status="in_progress")
+    r = await client.get(f"/api/projects/{test_project.id}/epics", headers=h)
+    [row] = r.json()["epics"]
+    assert len(row["in_flight"]) == IN_FLIGHT_LIMIT
+    assert row["in_flight_count"] == IN_FLIGHT_LIMIT + 2
+
+
+@pytest.mark.asyncio
+async def test_awaiting_human_lists_review_and_gate_rituals(
+    client, interactive_headers, test_project, test_user, db, review_close_ritual, gate_close_ritual, make_ritual,
+):
+    from app.enums import ApprovalMode, LimboType, RitualTrigger
+    from app.oxyde_models.issue import OxydeTicketLimbo, OxydeTicketLimboBlocker
+    from app.oxyde_models.ritual import OxydeRitual, OxydeRitualAttestation
+    h = interactive_headers
+    epic = await _create(client, h, test_project.id, title="Goal", issue_type="epic")
+    reviewed = await _create(client, h, test_project.id, title="Needs approval", parent_id=epic["id"])
+    approved = await _create(client, h, test_project.id, title="Approved already", parent_id=epic["id"])
+    gated = await _create(client, h, test_project.id, title="Needs a person", parent_id=epic["id"])
+    cleared = await _create(client, h, test_project.id, title="Gate cleared", parent_id=epic["id"])
+    finished = await _create(client, h, test_project.id, title="Done anyway", parent_id=epic["id"])
+    dropped = await _create(client, h, test_project.id, title="Ritual dropped", parent_id=epic["id"])
+    loose = await _create(client, h, test_project.id, title="Loose")
+    retired = await make_ritual(
+        name="retired", trigger=RitualTrigger.TICKET_CLOSE, approval_mode=ApprovalMode.REVIEW,
+    )
+
+    async def attest(issue, ritual, **extra):
+        await OxydeRitualAttestation.objects.create(
+            ritual_id=ritual.id, issue_id=issue["id"], attested_by=test_user.id, note="done", **extra,
+        )
+
+    async def gate(issue, **extra):
+        limbo = await OxydeTicketLimbo.objects.create(
+            issue_id=issue["id"], limbo_type=LimboType.CLOSE, requested_by_id=test_user.id, **extra,
+        )
+        await OxydeTicketLimboBlocker.objects.create(limbo_id=limbo.id, ritual_id=gate_close_ritual.id)
+
+    from datetime import datetime, timezone
+    await attest(reviewed, review_close_ritual)
+    await attest(approved, review_close_ritual, approved_by=test_user.id, approved_at=datetime.now(timezone.utc))
+    await attest(finished, review_close_ritual)
+    await attest(dropped, retired)
+    await OxydeRitual.objects.filter(id=retired.id).update(is_active=False)
+    await attest(epic, review_close_ritual)
+    await attest(loose, review_close_ritual)
+    await gate(gated)
+    await gate(cleared, cleared_at=datetime.now(timezone.utc))
+    # A blocker whose ritual is already approved on the ticket is one the
+    # banner resolves on read (orphan cleanup); it is not listed.
+    orphan = await _create(client, h, test_project.id, title="Orphan gate", parent_id=epic["id"])
+    await gate(orphan)
+    await attest(orphan, gate_close_ritual, approved_by=test_user.id, approved_at=datetime.now(timezone.utc))
+    await _set(finished["id"], status="DONE")
+
+    r = await client.get(f"/api/projects/{test_project.id}/epics", headers=h)
+    data = r.json()
+    [row] = data["epics"]
+    got = {(a["identifier"], a["ritual_name"], a["approval_mode"]) for a in row["awaiting_human"]}
+    assert got == {
+        (reviewed["identifier"], "review_close", "review"),
+        (epic["identifier"], "review_close", "review"),
+        (gated["identifier"], "gate_close", "gate"),
+    }
+    for a in row["awaiting_human"]:
+        assert a["requested_by_name"] == test_user.name
+        assert a["since"] is not None
+    [untracked] = data["untracked"]
+    assert [a["identifier"] for a in untracked["awaiting_human"]] == [loose["identifier"]]
+
+
+@pytest.mark.asyncio
+async def test_awaiting_human_keeps_open_work_under_a_closed_epic(
+    client, interactive_headers, test_project, test_user, db, review_close_ritual,
+):
+    from app.oxyde_models.ritual import OxydeRitualAttestation
+    h = interactive_headers
+    epic = await _create(client, h, test_project.id, title="Goal", issue_type="epic")
+    child = await _create(client, h, test_project.id, title="Still open", parent_id=epic["id"])
+    await _set(epic["id"], status="DONE")
+    await OxydeRitualAttestation.objects.create(
+        ritual_id=review_close_ritual.id, issue_id=child["id"], attested_by=test_user.id, note="n",
+    )
+    r = await client.get(f"/api/projects/{test_project.id}/epics", headers=h)
+    [row] = r.json()["epics"]
+    assert row["status"] == "done"
+    assert [a["identifier"] for a in row["awaiting_human"]] == [child["identifier"]]
+
+
+@pytest.mark.asyncio
+async def test_canceled_tickets_are_neither_in_flight_nor_shipped(client, interactive_headers, test_project, db):
+    h = interactive_headers
+    epic = await _create(client, h, test_project.id, title="Goal", issue_type="epic")
+    dropped = await _create(client, h, test_project.id, title="Dropped", parent_id=epic["id"])
+    await _patch(client, h, dropped["id"], status="canceled")
+    r = await client.get(f"/api/projects/{test_project.id}/epics", headers=h)
+    [row] = r.json()["epics"]
+    assert row["in_flight"] == [] and row["in_flight_count"] == 0
+    assert row["last_shipped"] is None
+
+
+@pytest.mark.asyncio
+async def test_team_wide_keys_new_fields_by_project(client, interactive_headers, test_team, test_project, db):
+    h = interactive_headers
+    r = await client.post(f"/api/teams/{test_team.id}/projects", headers=h, json={"name": "Second", "key": "SEC"})
+    assert r.status_code == 201, r.text
+    other = r.json()
+    a = await _create(client, h, test_project.id, title="A goal", issue_type="epic")
+    b = await _create(client, h, other["id"], title="B goal", issue_type="epic")
+    await _create(client, h, test_project.id, title="A work", parent_id=a["id"], status="in_progress")
+    await _create(client, h, other["id"], title="B work", parent_id=b["id"], status="in_progress")
+    r = await client.get(f"/api/teams/{test_team.id}/epics", headers=h)
+    rows = {e["title"]: e for e in r.json()["epics"]}
+    assert [t["title"] for t in rows["A goal"]["in_flight"]] == ["A work"]
+    assert [t["title"] for t in rows["B goal"]["in_flight"]] == ["B work"]

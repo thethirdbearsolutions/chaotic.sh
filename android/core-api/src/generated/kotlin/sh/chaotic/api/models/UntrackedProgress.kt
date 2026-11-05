@@ -23,6 +23,7 @@
 
 package sh.chaotic.api.models
 
+import sh.chaotic.api.models.AwaitingHuman
 import sh.chaotic.api.models.SprintTick
 
 import kotlinx.serialization.Serializable
@@ -43,6 +44,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param closedThisSprint 
  * @param pointsThisSprint 
  * @param sprints 
+ * @param awaitingHuman 
  */
 @Serializable
 
@@ -64,7 +66,10 @@ data class UntrackedProgress (
     val pointsThisSprint: kotlin.Int,
 
     @SerialName(value = "sprints")
-    val sprints: kotlin.collections.List<SprintTick>
+    val sprints: kotlin.collections.List<SprintTick>,
+
+    @SerialName(value = "awaiting_human")
+    val awaitingHuman: kotlin.collections.List<AwaitingHuman>? = null
 
 ) {
 

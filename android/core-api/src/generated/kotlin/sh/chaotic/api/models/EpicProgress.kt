@@ -23,7 +23,10 @@
 
 package sh.chaotic.api.models
 
+import sh.chaotic.api.models.AwaitingHuman
 import sh.chaotic.api.models.ChildCounts
+import sh.chaotic.api.models.EpicPerson
+import sh.chaotic.api.models.EpicTicket
 import sh.chaotic.api.models.IssuePriority
 import sh.chaotic.api.models.IssueStatus
 import sh.chaotic.api.models.SprintTick
@@ -56,6 +59,13 @@ import kotlinx.serialization.encoding.Encoder
  * @param sprints 
  * @param statusPinned 
  * @param estimate 
+ * @param owner 
+ * @param inFlight 
+ * @param inFlightCount 
+ * @param lastShipped 
+ * @param lastActivityAt 
+ * @param completedAt 
+ * @param awaitingHuman 
  */
 @Serializable
 
@@ -107,7 +117,28 @@ data class EpicProgress (
     val statusPinned: kotlin.Boolean? = false,
 
     @SerialName(value = "estimate")
-    val estimate: kotlin.Int? = null
+    val estimate: kotlin.Int? = null,
+
+    @SerialName(value = "owner")
+    val owner: EpicPerson? = null,
+
+    @SerialName(value = "in_flight")
+    val inFlight: kotlin.collections.List<EpicTicket>? = null,
+
+    @SerialName(value = "in_flight_count")
+    val inFlightCount: kotlin.Int? = 0,
+
+    @SerialName(value = "last_shipped")
+    val lastShipped: EpicTicket? = null,
+
+    @SerialName(value = "last_activity_at")
+    val lastActivityAt: kotlin.String? = null,
+
+    @SerialName(value = "completed_at")
+    val completedAt: kotlin.String? = null,
+
+    @SerialName(value = "awaiting_human")
+    val awaitingHuman: kotlin.collections.List<AwaitingHuman>? = null
 
 ) {
 
