@@ -59,7 +59,7 @@ describe('Mobile sidebar focus management (CHT-883)', () => {
             <aside class="sidebar">
                 <a class="nav-item" href="#" data-view="my-issues">My Issues</a>
                 <a class="nav-item" href="#" data-view="issues">Issues</a>
-                <a class="nav-item" href="#" data-view="board">Board</a>
+                <a class="nav-item" href="#" data-view="epics">Epics</a>
             </aside>
         `;
     });

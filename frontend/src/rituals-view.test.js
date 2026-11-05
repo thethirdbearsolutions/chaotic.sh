@@ -16,17 +16,8 @@ vi.mock('./ui.js', () => ({
     showToast: vi.fn(),
 }));
 
-const mockSetOnRitualsChanged = vi.fn();
 vi.mock('./projects.js', () => ({
-    getProjects: vi.fn(() => []),
-    loadProjects: vi.fn(),
-    getSavedProjectId: vi.fn(() => null),
-    getProjectRituals: vi.fn(() => []),
-    loadProjectSettingsRituals: vi.fn(),
-    renderRitualList: vi.fn(),
-    setCurrentSettingsProjectId: vi.fn(),
-    showCreateProjectRitualModal: vi.fn(),
-    setOnRitualsChanged: (...args) => mockSetOnRitualsChanged(...args),
+    viewProjectSettings: vi.fn(),
 }));
 
 vi.mock('./url-helpers.js', () => ({
@@ -60,7 +51,6 @@ vi.mock('./api.js', () => ({
 
 import {
     loadRitualsView,
-    renderRitualsView,
     approveRitual,
     completeGateRitual,
     renderArtifactField,
@@ -75,7 +65,7 @@ import {
 } from './rituals-view.js';
 
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
-import { getProjectRituals, loadProjectSettingsRituals, renderRitualList, setCurrentSettingsProjectId } from './projects.js';
+import { viewProjectSettings } from './projects.js';
 import { loadLimboStatus, getLimboStatus, showLimboDetailsModal } from './sprints.js';
 import { loadTicketRituals } from './issue-detail-view.js';
 import { api } from './api.js';
@@ -89,205 +79,78 @@ describe('rituals-view', () => {
     });
 
     // ========================================
-    // loadRitualsView
+    // loadRitualsView: the rituals route opens Project settings (CHT-2076)
     // ========================================
     describe('loadRitualsView', () => {
-        it('sets _onRitualsChanged callback', async () => {
-            document.body.innerHTML = `
-                <div id="rituals-content"></div>
-            `;
-
-            await loadRitualsView();
-
-            expect(mockSetOnRitualsChanged).toHaveBeenCalledWith(renderRitualsView);
-        });
-
-        it('loads rituals for current project', async () => {
+        it('opens the current project\'s settings on the sprint rituals tab, replacing the entry', async () => {
             const { setState } = await import('./state.js');
             setState('currentProject', 'p1');
-            document.body.innerHTML = `
-                <div id="rituals-content"></div>
-            `;
+            document.body.innerHTML = '<div id="rituals-content"></div>';
 
             await loadRitualsView();
 
-            expect(setCurrentSettingsProjectId).toHaveBeenCalledWith('p1');
-            expect(loadProjectSettingsRituals).toHaveBeenCalled();
+            expect(viewProjectSettings).toHaveBeenCalledWith('p1', { tab: 'sprint-rituals', replace: true, onlyIfView: 'projects' });
+            expect(document.getElementById('rituals-content').innerHTML).toBe('');
             setState('currentProject', null);
         });
 
-        it('shows empty state when no current project', async () => {
+        it('asks for a project with All projects, and opens nothing', async () => {
             const { setState } = await import('./state.js');
             setState('currentProject', null);
-            document.body.innerHTML = `
-                <div id="rituals-tabs" class="settings-tabs hidden"></div>
-                <div id="rituals-content"></div>
-            `;
+            document.body.innerHTML = '<div id="rituals-content"></div>';
 
             await loadRitualsView();
 
+            expect(viewProjectSettings).not.toHaveBeenCalled();
             const content = document.getElementById('rituals-content');
             expect(content.innerHTML).toContain('Select a project');
+            expect(content.innerHTML).toContain('settings');
         });
 
-        // CHT-1226: rituals-view.js's loading/error states were raw
-        // icon-less divs, missed by the CHT-1169 standardization pass.
-        it('shows a skeleton while loading (not the old plain-text loading div)', async () => {
+        it('finishes the trip when a project is picked on the rituals route', async () => {
             const { setState } = await import('./state.js');
-            setState('currentProject', 'p1');
-            document.body.innerHTML = `<div id="rituals-content"></div>`;
-            let capturedDuringLoad = null;
-            loadProjectSettingsRituals.mockImplementation(async () => {
-                capturedDuringLoad = document.getElementById('rituals-content').innerHTML;
-                return true;
-            });
-
-            await loadRitualsView();
-
-            expect(capturedDuringLoad).toContain('skeleton-list-item');
-            expect(capturedDuringLoad).not.toContain('Loading rituals...');
+            setState('currentView', 'rituals');
             setState('currentProject', null);
+            document.body.innerHTML = '<div id="rituals-content"></div>';
+            viewProjectSettings.mockClear();
+
+            setState('currentProject', 'p2');
+            await Promise.resolve();
+
+            expect(viewProjectSettings).toHaveBeenCalledWith('p2', { tab: 'sprint-rituals', replace: true, onlyIfView: 'projects' });
+            setState('currentProject', null);
+            setState('currentView', null);
         });
 
-        // CHT-1226 PR #212 review: loadProjectSettingsRituals() swallows API
-        // failures internally (toast + return false, no rethrow) — failure is
-        // signalled via the return value, so the previous try/catch error
-        // branch here was dead code and a failed fetch left the skeleton up
-        // forever.
-        it('shows a standardized error state with retry when the fetch fails (returns false)', async () => {
+        // PR #546 review I2: once redirected, the page is Project settings
+        // as reached from Projects, and the switcher no longer drives it.
+        it('leaves the rituals route behind once redirected', async () => {
+            const { setState, getCurrentView } = await import('./state.js');
+            setState('currentView', 'rituals');
+            setState('currentProject', 'p1');
+            await Promise.resolve();
+            expect(getCurrentView()).toBe('projects');
+            viewProjectSettings.mockClear();
+
+            setState('currentProject', 'p2');
+            await Promise.resolve();
+
+            expect(viewProjectSettings).not.toHaveBeenCalled();
+            setState('currentProject', null);
+            setState('currentView', null);
+        });
+
+        it('ignores a project change on any other view', async () => {
             const { setState } = await import('./state.js');
-            setState('currentProject', 'p1');
-            document.body.innerHTML = `<div id="rituals-content"></div>`;
-            loadProjectSettingsRituals.mockResolvedValue(false);
+            setState('currentView', 'issues');
+            viewProjectSettings.mockClear();
 
-            await loadRitualsView();
+            setState('currentProject', 'p3');
+            await Promise.resolve();
 
-            const content = document.getElementById('rituals-content');
-            expect(content.innerHTML).toContain('empty-state-icon');
-            expect(content.innerHTML).toContain('Failed to load rituals');
-            expect(content.innerHTML).not.toContain('skeleton-list-item');
-            expect(content.innerHTML).toContain('data-action="retry-load-rituals"');
+            expect(viewProjectSettings).not.toHaveBeenCalled();
             setState('currentProject', null);
-        });
-
-        it('does not render the error state on success', async () => {
-            const { setState } = await import('./state.js');
-            setState('currentProject', 'p1');
-            document.body.innerHTML = `<div id="rituals-content"></div>`;
-            loadProjectSettingsRituals.mockResolvedValue(true);
-
-            await loadRitualsView();
-
-            const content = document.getElementById('rituals-content');
-            expect(content.innerHTML).not.toContain('Failed to load rituals');
-            setState('currentProject', null);
-        });
-
-        // CHT-1226 PR #212 review finding 1: loadRitualsForProject() is both
-        // a project-change subscriber and Retry-able — overlapping calls must
-        // not let a stale completion paint over the fresh one.
-        describe('request sequencing (out-of-order completions)', () => {
-            it('drops a stale failure that completes after a newer successful load', async () => {
-                const { setState } = await import('./state.js');
-                setState('currentProject', 'p1');
-                document.body.innerHTML = `<div id="rituals-content"></div>`;
-
-                let failFirst;
-                loadProjectSettingsRituals.mockReturnValueOnce(
-                    new Promise(resolve => { failFirst = () => resolve(false); })
-                );
-                const firstLoad = loadRitualsView(); // in flight, will fail late
-
-                loadProjectSettingsRituals.mockResolvedValueOnce(true);
-                await loadRitualsView(); // newer request completes first
-                const freshHtml = document.getElementById('rituals-content').innerHTML;
-
-                failFirst();
-                await firstLoad;
-
-                // The stale failure must not paint its error state over the fresh result
-                expect(document.getElementById('rituals-content').innerHTML).toBe(freshHtml);
-                expect(document.getElementById('rituals-content').innerHTML).not.toContain('Failed to load rituals');
-                setState('currentProject', null);
-            });
-
-            it('drops a stale success that completes after a newer failed load', async () => {
-                const { setState } = await import('./state.js');
-                setState('currentProject', 'p1');
-                document.body.innerHTML = `<div id="rituals-content"></div>`;
-
-                let succeedFirst;
-                loadProjectSettingsRituals.mockReturnValueOnce(
-                    new Promise(resolve => { succeedFirst = () => resolve(true); })
-                );
-                const firstLoad = loadRitualsView(); // in flight, will succeed late
-
-                loadProjectSettingsRituals.mockResolvedValueOnce(false);
-                await loadRitualsView(); // newer request fails first
-                expect(document.getElementById('rituals-content').innerHTML).toContain('Failed to load rituals');
-
-                succeedFirst();
-                await firstLoad;
-
-                // The newer failure's error state must survive the stale success
-                expect(document.getElementById('rituals-content').innerHTML).toContain('Failed to load rituals');
-                setState('currentProject', null);
-            });
-        });
-    });
-
-    // ========================================
-    // renderRitualsView
-    // ========================================
-    describe('renderRitualsView', () => {
-        it('renders sprint, close, and claim sections', () => {
-            document.body.innerHTML = '<div id="rituals-tabs" class="settings-tabs hidden"></div><div id="rituals-content"></div>';
-            getProjectRituals.mockReturnValue([
-                { id: 'r1', trigger: 'every_sprint', name: 'Sprint Review' },
-                { id: 'r2', trigger: 'ticket_close', name: 'QA Check' },
-                { id: 'r3', trigger: 'ticket_claim', name: 'Capacity Check' },
-            ]);
-
-            renderRitualsView();
-
-            const content = document.getElementById('rituals-content');
-            expect(content.innerHTML).toContain('closing a sprint');
-            expect(content.innerHTML).toContain('closing a ticket');
-            expect(content.innerHTML).toContain('claiming a ticket');
-            expect(renderRitualList).toHaveBeenCalledTimes(3);
-            // Tabs should be visible
-            expect(document.getElementById('rituals-tabs').classList.contains('hidden')).toBe(false);
-        });
-
-        it('handles rituals with no trigger as sprint rituals', () => {
-            document.body.innerHTML = '<div id="rituals-tabs" class="settings-tabs hidden"></div><div id="rituals-content"></div>';
-            getProjectRituals.mockReturnValue([
-                { id: 'r1', name: 'No Trigger Ritual' },
-            ]);
-
-            renderRitualsView();
-
-            // First call is sprint rituals
-            expect(renderRitualList).toHaveBeenCalledWith(
-                'rv-sprint-rituals-list',
-                [{ id: 'r1', name: 'No Trigger Ritual' }],
-                'sprint'
-            );
-        });
-
-        it('renders sections with empty rituals', () => {
-            document.body.innerHTML = '<div id="rituals-tabs" class="settings-tabs hidden"></div><div id="rituals-content"></div>';
-            getProjectRituals.mockReturnValue([]);
-
-            renderRitualsView();
-
-            const content = document.getElementById('rituals-content');
-            expect(content.innerHTML).toContain('closing a sprint');
-            expect(content.innerHTML).toContain('closing a ticket');
-            expect(content.innerHTML).toContain('claiming a ticket');
-            expect(renderRitualList).toHaveBeenCalledWith('rv-sprint-rituals-list', [], 'sprint');
-            expect(renderRitualList).toHaveBeenCalledWith('rv-close-rituals-list', [], 'close');
-            expect(renderRitualList).toHaveBeenCalledWith('rv-claim-rituals-list', [], 'claim');
+            setState('currentView', null);
         });
     });
 
