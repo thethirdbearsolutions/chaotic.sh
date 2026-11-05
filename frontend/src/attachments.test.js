@@ -475,7 +475,9 @@ describe('checks before an upload', () => {
     it.each([
         ['over the limit', big(), /big\.pdf is 10\.0 MB; the limit is 10\.0 MB/],
         ['an SVG', new File(['<svg/>'], 'logo.svg', { type: 'image/svg+xml' }), /only PNG, JPEG, GIF, WebP, PDF or plain text/],
-        ['HTML', new File(['<p>'], 'page.html', { type: 'text/html' }), /can't be attached/],
+        ['a HEIC photo', new File(['x'], 'photo.heic', { type: 'image/heic' }), /can't be attached/],
+        ['a video', new File(['x'], 'clip.mp4', { type: 'video/mp4' }), /can't be attached/],
+        ['an archive', new File(['x'], 'logs.zip', { type: 'application/zip' }), /can't be attached/],
         ['a folder', new File([], 'photos', { type: '' }), /photos is empty or a folder/],
     ])('refuses %s without sending it', async (_label, file, message) => {
         expect(uploadRefusal(file)).toMatch(message);
@@ -485,16 +487,21 @@ describe('checks before an upload', () => {
         expect(showToast).toHaveBeenCalledWith(expect.stringMatching(message), 'error');
     });
 
-    it('sends an accepted type, and an unknown one for the server to judge', () => {
-        expect(uploadRefusal(new File(['a'], 'shot.png', { type: 'image/png' }))).toBeNull();
-        expect(uploadRefusal(new File(['a'], 'run.log', { type: '' }))).toBeNull();
-        expect(uploadRefusal(new File(['a'], 'notes.md', { type: 'text/markdown' }))).toBeNull();
+    it.each([
+        ['shot.png', 'image/png'], ['run.log', ''], ['notes.md', 'text/markdown'], ['trace.json', 'application/json'],
+        ['config.yaml', 'application/x-yaml'], ['run.sh', 'application/x-sh'], ['main.py', 'text/x-python'],
+        ['notes.xml', 'application/xml'], ['page.html', 'text/html'], ['data.bin', 'application/octet-stream'],
+        ['report.pdf', 'application/pdf'],
+    ])('sends %s (%s): the server, which reads the bytes, judges it', (name, type) => {
+        // Any UTF-8 text is accepted by the server whatever it is called,
+        // so no text-like type is refused here (`chaotic issue attach`
+        // uploads the same files).
+        expect(uploadRefusal(new File(['a'], name, { type }))).toBeNull();
     });
 
-    it('the picker offers only what the server takes', () => {
+    it('the picker hides nothing the server would take', () => {
         document.body.innerHTML = renderAttachmentsSection('i1', [], {});
-        expect(document.querySelector('input[type=file]').getAttribute('accept')).toContain('image/png');
-        expect(document.querySelector('input[type=file]').getAttribute('accept')).not.toContain('svg');
+        expect(document.querySelector('input[type=file]').hasAttribute('accept')).toBe(false);
     });
 
     it('does not send a large body twice after a lost answer', async () => {
@@ -550,6 +557,22 @@ describe('a resend that finds the first send still in progress (409 in flight)',
         await uploadAttachments('i1', [new File(['a'], 'shot.png', { type: 'image/png' })]);
         expect(document.querySelector('.attachments-hint')).toBeNull();
         expect(document.querySelectorAll('.attachment-item')).toHaveLength(1);
+    });
+
+    it('a batch reports only on its own issue\'s strip, not on the one opened meanwhile', async () => {
+        document.body.innerHTML = renderAttachmentsSection('A', [], {});
+        let release;
+        api.uploadAttachment.mockImplementation(() => new Promise(r => { release = () => r({ ...png, issue_id: 'A' }); }));
+        const run = uploadAttachments('A', [new File(['a'], 'shot.png', { type: 'image/png' })]);
+        await flush();
+        // The user opens issue B while A's upload runs.
+        document.body.innerHTML = renderAttachmentsSection('B', [], {});
+        const statusB = document.querySelector('.attachments-status');
+        release();
+        await run;
+        expect(statusB.textContent).toBe('');
+        expect(document.querySelectorAll('.attachment-item')).toHaveLength(0);
+        expect(document.querySelector('.attachments-hint')).not.toBeNull();
     });
 
     it('two drops run one after the other', async () => {
@@ -616,6 +639,28 @@ describe('drag and drop', () => {
         expect(event.defaultPrevented).toBe(true);
         await flush();
         expect(api.uploadAttachment).not.toHaveBeenCalled();
+    });
+
+    it('never refuses a drop onto a file input, or one another target already took', () => {
+        document.getElementById('side').innerHTML = '<input type="file" id="photo"><div id="zone2"></div>';
+        expect(drag('drop', document.getElementById('photo')).defaultPrevented).toBe(false);
+        const zone2 = document.getElementById('zone2');
+        zone2.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+        const over = new Event('dragover', { bubbles: true, cancelable: true });
+        const dt = { types: ['Files'], files: [], dropEffect: 'none' };
+        Object.defineProperty(over, 'dataTransfer', { value: dt });
+        zone2.dispatchEvent(over);
+        expect(dt.dropEffect).toBe('copy');
+    });
+
+    it('the page-wide guard goes once the issue page is left', () => {
+        // Navigating away hides the detail view; it is not torn down.
+        document.querySelector('.detail-main').classList.add('hidden');
+        expect(drag('drop', document.getElementById('side'), { files: [new File(['a'], 'a.png')] }).defaultPrevented).toBe(false);
+        // And it does not come back when the view shows again (the next
+        // render sets up its own).
+        document.querySelector('.detail-main').classList.remove('hidden');
+        expect(drag('drop', document.getElementById('side'), { files: [new File(['a'], 'a.png')] }).defaultPrevented).toBe(false);
     });
 
     it('the listeners go with the page', () => {

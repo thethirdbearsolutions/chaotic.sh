@@ -305,12 +305,13 @@ function renderItem(a, who) {
         </li>`;
 }
 
-// What the server accepts (CHT-1996): checked here first so a file it
-// would refuse is not sent at all, and the reason is plain. The server
-// stays the authority (it sniffs the bytes, and its limit is configurable).
+// Checked here first so a file the server would refuse is not sent at
+// all, and the reason is plain. The server stays the authority: it takes
+// PNG, JPEG, GIF, WebP, PDF and any UTF-8 text, judged by the bytes, not
+// the name (JSON, YAML, scripts, logs). So only what can never be one of
+// those is refused here; any other type goes for the server to judge.
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-const ACCEPTED_TYPES = new Set([...INLINE_IMAGE_TYPES, 'application/pdf', 'text/plain', 'text/markdown', 'text/csv', 'text/x-log']);
-export const ACCEPT_ATTR = 'image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,.txt,.md,.log,.csv';
+const NEVER_ACCEPTED = /^(image\/|video\/|audio\/|font\/)|^application\/(zip|gzip|x-gzip|x-tar|x-7z-compressed|x-rar-compressed|vnd\.rar|x-bzip2|x-xz|java-archive|vnd\.android\.package-archive|x-msdownload|wasm)$/;
 // A lost answer is resent with the same key, but not a large body: a
 // browser streaming one when the server refuses it often reports a reset.
 const RESEND_MAX_BYTES = 2 * 1024 * 1024;
@@ -327,8 +328,7 @@ export function uploadRefusal(file) {
     if (file.size > MAX_UPLOAD_BYTES) {
         return `${name} is ${formatFileSize(file.size)}; the limit is ${formatFileSize(MAX_UPLOAD_BYTES)}`;
     }
-    // No type: an extension the browser does not know. The server decides.
-    if (type && !ACCEPTED_TYPES.has(type)) {
+    if (type && !INLINE_IMAGE_TYPES.has(type) && NEVER_ACCEPTED.test(type)) {
         return `${name} can't be attached: only PNG, JPEG, GIF, WebP, PDF or plain text`;
     }
     return null;
@@ -359,7 +359,7 @@ export function renderAttachmentsSection(issueId, attachments, { userId = null, 
                 <h3 id="attachments-heading" tabindex="-1">Attachments <span class="section-count">${count || ''}</span></h3>
                 <label class="ticket-gate-text-btn attachments-add">
                     + Add
-                    <input type="file" multiple accept="${ACCEPT_ATTR}" class="sr-only" data-action="pick-attachments" data-issue-id="${escapeAttr(issueId)}" aria-label="Attach files">
+                    <input type="file" multiple class="sr-only" data-action="pick-attachments" data-issue-id="${escapeAttr(issueId)}" aria-label="Attach files">
                 </label>
             </div>
             <div class="attachments-status" role="status" aria-live="polite"></div>
@@ -367,20 +367,21 @@ export function renderAttachmentsSection(issueId, attachments, { userId = null, 
         </section>`;
 }
 
-function strip() {
+/** The strip on screen, if it is `issueId`'s. */
+function strip(issueId) {
     const section = document.getElementById('issue-attachments');
-    return section && current && section.dataset.issueId === current.issueId ? section : null;
+    return section && current && current.issueId === issueId && section.dataset.issueId === issueId ? section : null;
 }
 
-/** Say something in the strip's live region, which stays in place. */
-function setStatus(text) {
-    const status = strip()?.querySelector('.attachments-status');
+/** Say something in `issueId`'s live region, which stays in place. */
+function setStatus(issueId, text) {
+    const status = strip(issueId)?.querySelector('.attachments-status');
     if (status) status.textContent = text;
 }
 
-/** Redraw the list only: the heading, Add and the live region stay. */
-function refreshList() {
-    const section = strip();
+/** Redraw `issueId`'s list only: the heading, Add and the live region stay. */
+function refreshList(issueId) {
+    const section = strip(issueId);
     if (!section) return;
     const { attachments, userId, isAdmin } = current;
     section.querySelector('.section-count').textContent = attachments?.length ? String(attachments.length) : '';
@@ -467,7 +468,7 @@ async function uploadBatch(issueId, queue) {
             showToast(refusal, 'error');
             continue;
         }
-        setStatus(queue.length > 1 ? `Uploading ${file.name} (${i + 1} of ${queue.length})…` : `Uploading ${file.name}…`);
+        setStatus(issueId, queue.length > 1 ? `Uploading ${file.name} (${i + 1} of ${queue.length})…` : `Uploading ${file.name}…`);
         try {
             const attachment = await uploadOne(issueId, file);
             attached += 1;
@@ -489,8 +490,8 @@ async function uploadBatch(issueId, queue) {
     if (current?.issueId === issueId && (unsure || (attached && current.attachments === null))) {
         await relist(issueId);
     }
-    refreshList();
-    setStatus(attached ? (attached === 1 ? '1 file attached' : `${attached} files attached`) : '');
+    refreshList(issueId);
+    setStatus(issueId, attached ? (attached === 1 ? '1 file attached' : `${attached} files attached`) : '');
     if (attached) showToast(attached === 1 ? 'File attached' : `${attached} files attached`, 'success');
     return attached;
 }
@@ -505,13 +506,14 @@ export async function deleteAttachment(id, filename) {
         return false;
     }
     known.delete(id);
+    const issueId = current?.issueId;
     // Where focus goes once the tile is gone: the next tile, else the
     // previous one, else the heading.
     const list = current?.attachments || [];
     const index = list.findIndex(a => a.id === id);
     if (current?.attachments) current.attachments = list.filter(a => a.id !== id);
-    refreshList();
-    const section = strip();
+    refreshList(issueId);
+    const section = strip(issueId);
     if (section) {
         const left = current.attachments || [];
         const next = left[Math.min(Math.max(index, 0), left.length - 1)];
@@ -519,7 +521,7 @@ export async function deleteAttachment(id, filename) {
             ? section.querySelector(`.attachment-open[data-attachment-id="${next.id}"]`)
             : section.querySelector('#attachments-heading');
         target?.focus();
-        setStatus(`${filename || 'Attachment'} deleted`);
+        setStatus(issueId, `${filename || 'Attachment'} deleted`);
     }
     // Inline copies of it stay as they are until the next render; the
     // cached URL goes once nothing shows it.
@@ -555,13 +557,25 @@ export function setupAttachmentDrop(zone, issueId, signal) {
         mark(false);
         uploadAttachments(issueId, e.dataTransfer.files);
     }, { signal });
+    // Elsewhere on the issue page, refuse a file so the browser does not
+    // open it in place of the app. Only while that page shows: the guard
+    // removes itself once it is left, and it never overrides a file input
+    // or a drop target that took the drag first.
+    const guard = new AbortController();
+    signal?.addEventListener('abort', () => guard.abort(), { once: true });
+    const onPage = () => zone.isConnected && !zone.closest('.hidden');
     for (const type of ['dragover', 'drop']) {
         document.addEventListener(type, (e) => {
-            if (!hasFiles(e) || zone.contains(e.target)) return;
+            if (!onPage()) {
+                guard.abort();
+                return;
+            }
+            if (!hasFiles(e) || e.defaultPrevented || zone.contains(e.target)) return;
+            if (e.target?.closest?.('input[type="file"]')) return;
             e.preventDefault();
             if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
             if (type === 'drop') mark(false);
-        }, { signal });
+        }, { signal: guard.signal });
     }
 }
 
