@@ -287,6 +287,15 @@ class TestComments:
         assert refused.status_code == 404
         assert refused.json() == {"detail": "Comment not found"}
 
+    async def test_only_to_your_own_comment(self, client, member_headers, test_issue, test_user):
+        comment = await OxydeIssueComment.objects.create(issue_id=test_issue.id, author_id=test_user.id, content="c")
+
+        refused = await _upload(client, member_headers, test_issue.id, PNG, comment_id=comment.id)
+
+        assert refused.status_code == 403
+        assert refused.json() == {"detail": "Can only attach files to your own comments"}
+        assert await OxydeAttachment.objects.count() == 0
+
     async def test_deleting_the_comment_keeps_the_file(self, client, auth_headers, test_issue, test_user):
         comment = await OxydeIssueComment.objects.create(issue_id=test_issue.id, author_id=test_user.id, content="c")
         uploaded = await _upload(client, auth_headers, test_issue.id, PNG, comment_id=comment.id)

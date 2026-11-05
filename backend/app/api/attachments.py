@@ -115,7 +115,7 @@ async def upload_attachment(
     PDF or UTF-8 plain text, recognised by its bytes (415 otherwise), at
     most 10 MiB (413 ``attachment_too_large``), within the project's
     quota (413 ``attachment_quota_exceeded``). ``comment_id`` names a
-    comment on this issue the file belongs to; without it the file is
+    comment of the caller's on this issue the file belongs to; without it the file is
     attached to the issue alone. Honours ``Idempotency-Key``: a resend
     stores the file once."""
     issue, project = await visible_issue(current_user, issue_id)
@@ -123,6 +123,11 @@ async def upload_attachment(
         comment = await IssueService().get_comment_by_id(comment_id)
         if comment is None or comment.issue_id != issue.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
+        # A file under someone else's comment would read as their evidence.
+        if comment.author_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Can only attach files to your own comments",
+            )
     try:
         attachment = await AttachmentService().upload(
             issue=issue, project_id=project.id, uploader_id=current_user.id,
