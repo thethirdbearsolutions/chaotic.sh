@@ -5109,18 +5109,6 @@ input[type="checkbox"] {
         max-height: 50vh;
     }
 
-    /* Phone epic rows (CHT-2043): the sub-line wraps, the right
-       column narrows. */
-    .list-row-2line.epic-row {
-        grid-template-columns: 40px minmax(0, 1fr) auto;
-    }
-    .epic-section .list-row-sub {
-        white-space: normal;
-    }
-    .epic-row .list-row-right {
-        width: 72px;
-    }
-
     /* Constrain filter selects on mobile */
     .filter-select {
         min-width: 0;
@@ -8506,17 +8494,17 @@ button.stat-card-link:hover .stat-note {
 }
 /* Epic rows lead with the sprint strip, well apart from the meter: a
    health glyph read before the title (CHT-2043). */
-.list-row-2line.epic-row {
+.epic-section .list-row-2line {
     grid-template-columns: 56px minmax(0, 1fr) auto;
 }
-.epic-row .epic-spark {
+.epic-section .epic-spark {
     grid-column: 1;
     grid-row: 1 / span 2;
     display: flex;
     align-items: center;
 }
-.epic-row .list-row-title,
-.epic-row .list-row-sub {
+.epic-section .list-row-title,
+.epic-section .list-row-sub {
     grid-column: 2;
 }
 .epic-section .list-row-right {
@@ -8597,6 +8585,29 @@ button.stat-card-link:hover .stat-note {
 
 .epic-table-footer {
     padding: var(--space-md) 0 0;
+}
+
+/* Phone epic rows (CHT-2043): the sub-line wraps, the outer columns
+   narrow. After the rules above so it wins at equal specificity. */
+@media (max-width: 768px) {
+    .epic-section .list-row-2line {
+        grid-template-columns: 36px minmax(0, 1fr) auto;
+        column-gap: var(--space-md);
+        padding-left: var(--space-xs);
+        padding-right: var(--space-xs);
+    }
+    .epic-section .list-row-sub {
+        white-space: normal;
+    }
+    .epic-row .list-row-right {
+        width: 64px;
+    }
+    .epic-section .epic-sprint-strip {
+        gap: 1px;
+    }
+    .epic-section .epic-sprint-tick {
+        width: 3px;
+    }
 }
 
 /* Epic detail page: progress bar and sub-issue rows. epic-detail-view.js

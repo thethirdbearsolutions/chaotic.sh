@@ -177,7 +177,7 @@ function renderMeter(epic) {
         + `${(c.todo || 0) + (c.backlog || 0)} not started`
         + (c.canceled ? `, ${c.canceled} canceled` : '');
     return `
-        <span class="meter" title="${escapeAttr(title)}"><span class="meter-fill" style="width: ${Math.round((done / total) * 100)}%"></span></span>
+        <div class="meter" title="${escapeAttr(title)}"><div class="meter-fill" style="width: ${Math.round((done / total) * 100)}%"></div></div>
         <span class="meter-label">${done} of ${total}</span>`;
 }
 
@@ -289,6 +289,7 @@ export function renderEpics(progress, container) {
         const by = a.requested_by_name ? ` by ${escapeHtml(a.requested_by_name)}` : '';
         return `
         <div class="list-row-2line epic-ask-row" data-issue-identifier="${escapeAttr(a.identifier)}" title="${escapeAttr(a.identifier)}">
+            <span class="epic-spark" aria-hidden="true"></span>
             <span class="list-row-title">${review ? 'Approve' : 'Complete'} ${escapeHtml(a.ritual_name)}: ${escapeHtml(a.title)}</span>
             <span class="list-row-sub">${where} · ${review ? 'attested' : 'requested'}${by} ${escapeHtml(when(a.since))}</span>
             <span class="list-row-right"><span class="list-row-action">${review ? 'Approve' : 'Complete'}</span></span>
