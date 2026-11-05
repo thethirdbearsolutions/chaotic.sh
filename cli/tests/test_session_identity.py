@@ -712,7 +712,7 @@ class TestChosenName:
         monkeypatch.setenv(si.NAME_ENV, "Piper")
         Client()._request("GET", "/issues")
         server.revoke_all()
-        monkeypatch.setenv(si.NAME_ENV, "Weir")
+        monkeypatch.setenv(si.NAME_ENV, "Rival")
         Client()._request("GET", "/issues")
         assert len(server.registrations) == 2
         assert server.names["sess-1"] == "Piper"
@@ -1202,7 +1202,7 @@ class TestMcpInHeaderMode:
             bearer = proxied.presented(request)
             if request.url.path == "/api/teams" and bearer in proxied.live_keys:
                 proxied.requests.append((request.method, "/teams", bearer))
-                return httpx.Response(200, json=[{"id": "team-reg", "name": "Falls", "key": "FALLS"}])
+                return httpx.Response(200, json=[{"id": "team-reg", "name": "Registry", "key": "REG"}])
             if request.url.path == "/api/auth/me" and bearer in proxied.live_keys:
                 proxied.requests.append((request.method, "/auth/me", bearer))
                 return httpx.Response(200, json={"id": proxied.live_keys[bearer], "is_agent": True,
@@ -1252,7 +1252,7 @@ class TestCliDefaultScope:
 
     TEAMS = [{"id": "team-eng", "name": "Engineering", "key": "ENG"}]
     PROJECTS = [
-        {"id": "proj-czy", "team_id": "team-eng", "key": "CZY", "name": "Cozy"},
+        {"id": "proj-app", "team_id": "team-eng", "key": "APP", "name": "App"},
         {"id": "proj-oth", "team_id": "team-eng", "key": "OTH", "name": "Other"},
         {"id": "proj-ops", "team_id": "team-ops", "key": "OPS", "name": "Ops"},
     ]
@@ -1324,18 +1324,18 @@ class TestCliDefaultScope:
             memo.clear()
 
     def test_a_project_scoped_registrar_lists_issues_on_the_first_call(self, mode, monkeypatch, home):
-        mode.project_scope = "proj-czy"
+        mode.project_scope = "proj-app"
         result = self._cli(monkeypatch, "issue", "list")
         assert result.exit_code == 0, result.output
         params, bearer = mode.issue_queries[-1]
-        assert params["project_id"] == "proj-czy"
+        assert params["project_id"] == "proj-app"
         assert bearer.startswith("ck_session_")  # as the session, never the registrar
         # The defaults are this process's: nothing went to a config file.
         config_file = home / "config.json"
         assert not config_file.exists() or "current_" not in config_file.read_text()
 
     def test_lookups_go_as_the_registrar_locally_and_as_the_session_in_header_mode(self, mode, monkeypatch):
-        mode.project_scope = "proj-czy"
+        mode.project_scope = "proj-app"
         assert self._cli(monkeypatch, "issue", "list").exit_code == 0
         lookups = [r[2] for r in mode.requests if r[1] in ("/teams", "/auth/me")]
         assert lookups
@@ -1365,10 +1365,10 @@ class TestCliDefaultScope:
     def test_the_environment_chooses_among_several_teams(self, mode, monkeypatch):
         mode.teams.append({"id": "team-ops", "name": "Operations", "key": "OPS"})
         monkeypatch.setenv(cli_config.TEAM_ENV, "eng")
-        monkeypatch.setenv(cli_config.PROJECT_ENV, "CZY")
+        monkeypatch.setenv(cli_config.PROJECT_ENV, "APP")
         result = self._cli(monkeypatch, "issue", "list")
         assert result.exit_code == 0, result.output
-        assert mode.issue_queries[-1][0]["project_id"] == "proj-czy"
+        assert mode.issue_queries[-1][0]["project_id"] == "proj-app"
 
     def test_the_environment_overrides_the_configured_team_and_project(self, mode, monkeypatch):
         mode.teams.append({"id": "team-ops", "name": "Operations", "key": "OPS"})
@@ -1395,7 +1395,7 @@ class TestCliDefaultScope:
 
     def test_a_configured_team_and_project_are_kept_and_cost_no_lookup(self, mode, monkeypatch):
         """`team use` / `project use` still win over every default."""
-        mode.project_scope = "proj-czy"
+        mode.project_scope = "proj-app"
         monkeypatch.setattr(cli_config, "load_local_config",
                             lambda: {"current_team": "team-eng", "current_project": "proj-oth"})
         result = self._cli(monkeypatch, "issue", "list")
@@ -1429,7 +1429,7 @@ class TestCliDefaultScope:
 
     def test_a_scoped_project_in_another_team_is_not_the_default(self, mode, monkeypatch):
         """Review I3: the key's project is used only in its own team."""
-        mode.project_scope = "proj-czy"  # in ENG
+        mode.project_scope = "proj-app"  # in ENG
         mode.teams.append({"id": "team-ops", "name": "Operations", "key": "OPS"})
         monkeypatch.setenv(cli_config.TEAM_ENV, "OPS")
         result = self._cli(monkeypatch, "issue", "list")

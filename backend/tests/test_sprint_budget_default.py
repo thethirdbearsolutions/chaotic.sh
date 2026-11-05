@@ -8,7 +8,7 @@ never changed by a change of default.
 
 Before the fix, rotation created each new planned sprint at the budget of
 the sprint it was activating, and a planned sprint kept the default it
-was created with, so CZY's sprints kept opening at 24 after the default
+was created with, so one project's sprints kept opening at 24 after the default
 became 32.
 """
 import pytest

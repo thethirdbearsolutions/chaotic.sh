@@ -133,7 +133,7 @@ class TestAuthRename:
         from cli.main import cli, client
 
         client.get_me = MagicMock(return_value={
-            "id": "sess-1", "name": "Waterfall falls · 3c13b121", "is_agent": True, "kind": "session",
+            "id": "sess-1", "name": "Docs helper · 3c13b121", "is_agent": True, "kind": "session",
         })
         client.update_agent = MagicMock(return_value={"id": "sess-1", "name": "Piper"})
 

@@ -458,7 +458,7 @@ are never written to a config file; a team or project chosen with `team
 use` / `project use` always wins over them.
 
 **`CHAOTIC_TEAM` and `CHAOTIC_PROJECT`** name the team and project by
-key, name or id (`CHAOTIC_TEAM=ENG CHAOTIC_PROJECT=CZY`), for the CLI and
+key, name or id (`CHAOTIC_TEAM=ENG CHAOTIC_PROJECT=APP`), for the CLI and
 `chaotic mcp` alike. Like `CHAOTIC_API_KEY`, they override the profile
 and a repository `.chaotic`. Set them where a key sees several teams, or
 a team-scoped key should land in one project, and every new machine or
