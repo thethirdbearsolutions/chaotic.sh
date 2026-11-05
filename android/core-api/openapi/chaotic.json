@@ -6944,6 +6944,27 @@
             }
           },
           {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InboxEntryKind"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only entries of these kinds (repeat the parameter for several).",
+              "title": "Kind"
+            },
+            "description": "Only entries of these kinds (repeat the parameter for several)."
+          },
+          {
             "name": "skip",
             "in": "query",
             "required": false,
