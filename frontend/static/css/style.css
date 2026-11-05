@@ -7706,6 +7706,33 @@ body.theme-light .segmented-btn.active {
     gap: 8px;
 }
 
+/* "Reassign back" comment dialog (CHT-2029) */
+.inbox-reassign-form textarea {
+    width: 100%;
+    min-height: 96px;
+    resize: vertical;
+}
+
+.inbox-reassign-form .form-error {
+    font-size: var(--font-sm);
+    color: var(--error-color);
+    margin-top: 4px;
+}
+
+.inbox-reassign-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 1rem;
+}
+
+/* .modal-body .btn makes every modal button full width; these sit in a row. */
+.modal-body .inbox-reassign-actions .btn {
+    width: auto;
+    margin-top: 0;
+}
+
 .inbox-action-btn {
     border: 1px solid var(--border-color, rgba(255,255,255,0.15));
     background: transparent;
