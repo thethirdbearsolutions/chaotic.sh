@@ -26,13 +26,14 @@ vi.mock('./ui.js', () => ({
     showModal: vi.fn(), closeModal: vi.fn(), showMentionWarnings: vi.fn(),
 }));
 vi.mock('./issue-detail-view.js', () => ({ viewIssue: vi.fn(), noteSkippedDetailRefresh: vi.fn() }));
+vi.mock('./rituals-view.js', () => ({ showRejectTicketRitualModal: vi.fn(), showCompleteTicketRitualModal: vi.fn() }));
 vi.mock('./documents.js', () => ({
     viewDocument: vi.fn(),
     refreshDocumentsListIfActive: vi.fn(),
     refreshDocumentDetailIfViewing: vi.fn(),
     handleRemoteDocumentDeleted: vi.fn(),
 }));
-vi.mock('./gate-approvals.js', () => ({ formatRelativeTime: vi.fn(() => '2h ago'), loadGateApprovals: vi.fn() }));
+vi.mock('./gate-approvals.js', () => ({ formatRelativeTime: vi.fn(() => '2h ago'), renderMarkdown: vi.fn(s => s || ''), loadGateApprovals: vi.fn() }));
 // ws-handlers.js's other views: never reached by inbox events.
 vi.mock('./dashboard.js', () => ({
     getMyIssues: vi.fn(() => []), setMyIssues: vi.fn(), renderMyIssues: vi.fn(),

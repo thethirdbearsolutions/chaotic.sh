@@ -192,6 +192,18 @@ class TestNotifyReviewRequested:
         assert len(entries) == 1
         assert entries[0].recipient_user_id == test_user.id
         assert entries[0].kind == InboxEntryKind.REVIEW_REQUESTED
+        # No note: no body, never the ritual's prompt (CHT-2031).
+        assert entries[0].body is None
+
+    async def test_body_is_the_attestation_note(
+        self, db, test_project, test_team, test_user, test_issue, review_close_ritual,
+    ):
+        await InboxService().notify_review_requested(
+            ritual=review_close_ritual, issue=test_issue, project=test_project,
+            attested_by_name="An Agent", attestation_note="  Checked the spec  ",
+        )
+        entry = await OxydeInboxEntry.objects.get(issue_id=test_issue.id)
+        assert entry.body == "Checked the spec"
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +569,8 @@ class TestIntegrationHooks:
             await _try_close(test_issue, test_user.id)
 
         await RitualService().attest_for_issue(
-            ritual=review_close_ritual, issue_id=test_issue.id, user_id=test_user.id, note="done",
+            ritual=review_close_ritual, issue_id=test_issue.id, user_id=test_user.id,
+            note="Tests pass on main at abc123",
         )
 
         entries = await OxydeInboxEntry.objects.filter(
@@ -565,6 +578,9 @@ class TestIntegrationHooks:
         ).all()
         assert len(entries) == 1
         assert entries[0].recipient_user_id == test_user.id
+        # What was attested, not what the ritual asks, and who attested it (CHT-2031).
+        assert entries[0].body == "Tests pass on main at abc123"
+        assert entries[0].source_user_id == test_user.id
 
     async def test_complete_gate_ritual_resolves_inbox_entry(
         self, db, test_issue, test_user, gate_claim_ritual,
@@ -763,6 +779,50 @@ class TestInboxApi:
         assert resp.status_code == 200
         titles = [e["title"] for e in resp.json()]
         assert titles == ["unread"]
+
+    async def test_list_leaves_out_resolved_entries(
+        self, client, db, test_team, test_user, test_issue, auth_headers, review_close_ritual,
+    ):
+        """CHT-2031: a review approved on the ticket leaves the Inbox, not
+        only its unread count."""
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.REVIEW_REQUESTED,
+            team_id=test_team.id, issue_id=test_issue.id, ritual_id=review_close_ritual.id,
+            title="review",
+        )
+        await OxydeInboxEntry.objects.create(
+            recipient_user_id=test_user.id, kind=InboxEntryKind.MENTION, team_id=test_team.id, title="mention",
+        )
+        await InboxService().resolve_gate_or_review(ritual_id=review_close_ritual.id, issue_id=test_issue.id)
+        resp = await client.get("/api/inbox", headers=auth_headers)
+        assert [e["title"] for e in resp.json()] == ["mention"]
+
+    async def test_list_kind_filter(self, client, db, test_team, test_user, auth_headers):
+        """CHT-2031: the Inbox's type filter asks the server, so a page of
+        mentions can't hide the approvals behind it."""
+        for kind, title in [
+            (InboxEntryKind.MENTION, "mention"),
+            (InboxEntryKind.REVIEW_REQUESTED, "review"),
+            (InboxEntryKind.GATE_PENDING, "gate"),
+            (InboxEntryKind.ASSIGNMENT, "assigned"),
+        ]:
+            await OxydeInboxEntry.objects.create(
+                recipient_user_id=test_user.id, kind=kind, team_id=test_team.id, title=title,
+            )
+        resp = await client.get(
+            "/api/inbox?kind=review_requested&kind=gate_pending", headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert sorted(e["title"] for e in resp.json()) == ["gate", "review"]
+
+        resp = await client.get("/api/inbox?kind=mention", headers=auth_headers)
+        assert [e["title"] for e in resp.json()] == ["mention"]
+
+        resp = await client.get("/api/inbox", headers=auth_headers)
+        assert len(resp.json()) == 4
+
+        resp = await client.get("/api/inbox?kind=nonsense", headers=auth_headers)
+        assert resp.status_code == 422
 
     async def test_list_includes_issue_identifier(
         self, client, db, test_project, test_team, test_issue, test_user, auth_headers,

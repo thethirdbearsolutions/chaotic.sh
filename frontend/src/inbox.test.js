@@ -27,6 +27,7 @@ vi.mock('./ui.js', () => ({
 vi.mock('./utils.js', () => ({
     escapeHtml: vi.fn(s => s || ''),
     escapeAttr: vi.fn(s => s || ''),
+    formatTimeAgo: vi.fn(() => '2h ago'),
 }));
 
 vi.mock('./event-delegation.js', () => ({
@@ -37,12 +38,13 @@ vi.mock('./issue-detail-view.js', () => ({
     viewIssue: vi.fn(),
 }));
 
+vi.mock('./rituals-view.js', () => ({ showRejectTicketRitualModal: vi.fn(), showCompleteTicketRitualModal: vi.fn() }));
 vi.mock('./documents.js', () => ({
     viewDocument: vi.fn(),
 }));
 
 vi.mock('./gate-approvals.js', () => ({
-    formatRelativeTime: vi.fn(() => '2h ago'),
+    formatRelativeTime: vi.fn(() => '2h ago'), renderMarkdown: vi.fn(s => s || ''),
 }));
 
 vi.mock('./state.js', () => ({

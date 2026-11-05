@@ -172,3 +172,16 @@ def test_team_comments_send_project_id_only_when_given(sent):
     assert _call(sent)[1] == "/issues/comments?team_id=t1&skip=0&limit=5"
     Client().get_team_comments("t1", limit=5, project_id="p1")
     assert _call(sent)[1] == "/issues/comments?team_id=t1&skip=0&limit=5&project_id=p1"
+
+
+class TestInboxKindFilter:
+    def test_kinds_repeat_the_parameter(self, sent):
+        """CHT-2031: GET /inbox takes kind= once per kind."""
+        Client().get_inbox("t1", kind=["review_requested", "gate_pending"])
+        assert _call(sent)[:2] == (
+            "GET", "/inbox?skip=0&limit=50&team_id=t1&kind=review_requested&kind=gate_pending",
+        )
+
+    def test_no_kind_sends_none(self, sent):
+        Client().get_inbox(None, unread=True)
+        assert _call(sent)[:2] == ("GET", "/inbox?skip=0&limit=50&unread=true")
