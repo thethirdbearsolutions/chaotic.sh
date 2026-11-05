@@ -1334,6 +1334,15 @@ class Client:
         """Update an agent's name, avatar or `can_register` (registrar)."""
         return self._request("PATCH", f"/agents/{agent_id}", kwargs)
 
+    def upload_agent_avatar(self, agent_id: str, data: bytes) -> dict:
+        """Upload an agent's profile picture as its owner, a team admin or
+        the agent itself (CHT-2045)."""
+        return self._request("PUT", f"/agents/{agent_id}/avatar", content=data)
+
+    def delete_agent_avatar(self, agent_id: str) -> dict:
+        """Remove an agent's uploaded profile picture (CHT-2045)."""
+        return self._request("DELETE", f"/agents/{agent_id}/avatar")
+
     def delete_agent(self, agent_id: str):
         """Delete an agent."""
         return self._request("DELETE", f"/agents/{agent_id}")

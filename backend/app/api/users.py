@@ -1,4 +1,6 @@
 """User API routes."""
+from collections.abc import AsyncIterator
+
 from fastapi import APIRouter, HTTPException, Request, status
 from app.auth.access import reads, writes
 from app.api.deps import CurrentUser, NotAppSession
@@ -58,22 +60,20 @@ async def upload_my_avatar(
     """Upload your own profile picture (CHT-1992): the raw image as the
     request body (PNG, JPEG, WebP or GIF, at most 256 KB), recognised by
     its bytes. Replaces any earlier upload and points your avatar_url at
-    ``/api/avatars/{sha256}``. Every member may, people and agents alike."""
-    from app.services.avatar_service import AVATAR_MAX_BYTES, AvatarRefused, AvatarService
+    ``/api/avatars/{sha256}``. Every member may, people and agents alike,
+    a registered identity with its own key included (CHT-2045)."""
+    return await set_my_avatar(current_user, request.stream())
 
-    data = bytearray()
-    async for chunk in request.stream():
-        data.extend(chunk)
-        if len(data) > AVATAR_MAX_BYTES:
-            break  # refused below; no need to read the rest
-    try:
-        user = await AvatarService().set(current_user, bytes(data))
-    except AvatarRefused as refused:
-        code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if refused.error_code == "avatar_too_large" else 422
-        raise HTTPException(
-            status_code=code, detail={"error_code": refused.error_code, "message": str(refused)},
-        ) from refused
-    return UserResponse.model_validate(user)
+
+@writes
+async def set_my_avatar(current_user, chunks: AsyncIterator[bytes]) -> UserResponse:
+    """What ``upload_my_avatar`` does with the body, for a caller that has
+    the bytes some other way: the in-process MCP server's
+    ``profile_update`` (CHT-2045). The caller refuses an app session."""
+    from app.api.avatars import store_avatar
+
+    await store_avatar(current_user, chunks)
+    return UserResponse.model_validate(current_user)
 
 
 @router.delete("/me/avatar", response_model=UserResponse)

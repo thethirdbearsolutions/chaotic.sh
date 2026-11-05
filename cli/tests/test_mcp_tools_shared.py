@@ -197,7 +197,7 @@ class FakeBackend:
         return [self.issues["CHT-2"]]
 
     # attachments (CHT-1996)
-    async def read_local_file(self, path):
+    async def read_local_file(self, path, *, base64_arg="content_base64"):
         self._rec("read_local_file", path)
         if path not in self.local_files:
             raise ToolInputError(f"No such file: {path}")
@@ -380,6 +380,14 @@ class FakeBackend:
     async def update_me(self, **fields):
         self._rec("update_me", **fields)
         return {"id": "user-me", "name": "Ada", "email": "ada@example.com", **fields}
+
+    async def upload_avatar(self, data):
+        self._rec("upload_avatar", data)
+        return {"id": "user-me", "name": "Ada", "avatar_url": "/api/avatars/abc"}
+
+    async def delete_avatar(self):
+        self._rec("delete_avatar")
+        return {"id": "user-me", "name": "Ada", "avatar_url": None}
 
     async def mark_all_inbox_read(self, team_id):
         self._rec("mark_all_inbox_read", team_id)
@@ -1767,6 +1775,91 @@ async def test_profile_update_returns_user_id_as_the_roster_does():
     result = await _tools(FakeBackend())["profile_update"](tagline="Hi")
 
     assert result["user_id"] == "user-me" and "id" not in result
+
+
+async def test_profile_update_uploads_a_photo_from_a_path_then_the_fields():
+    backend = FakeBackend()
+    backend.local_files["/tmp/me.png"] = b"\x89PNG\r\n\x1a\nxx"
+
+    result = await _tools(backend)["profile_update"](photo_path="/tmp/me.png", bio="Hi")
+
+    names = [c[0] for c in backend.calls]
+    assert names.index("upload_avatar") < names.index("update_me")
+    assert ("upload_avatar", (b"\x89PNG\r\n\x1a\nxx",), {}) in backend.calls
+    assert result["bio"] == "Hi"
+
+
+async def test_profile_update_uploads_a_photo_as_base64():
+    backend = FakeBackend()
+
+    result = await _tools(backend)["profile_update"](photo_base64="iVBORw0KGgo=")
+
+    assert ("upload_avatar", (b"\x89PNG\r\n\x1a\n",), {}) in backend.calls
+    assert not any(c[0] == "update_me" for c in backend.calls)
+    assert result["avatar_url"] == "/api/avatars/abc"
+
+
+async def test_profile_update_removes_the_photo():
+    backend = FakeBackend()
+
+    result = await _tools(backend)["profile_update"](remove_photo=True)
+
+    assert ("delete_avatar", (), {}) in backend.calls
+    assert result["avatar_url"] is None
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"photo_path": "/tmp/a.png", "photo_base64": "iVBORw0KGgo="},
+    {"photo_base64": "iVBORw0KGgo=", "remove_photo": True},
+    {"photo_base64": "iVBORw0KGgo=", "avatar_url": "x"},
+    {"remove_photo": True, "avatar_url": ""},
+    {"photo_base64": "not base64!"},
+    {"photo_base64": ""},
+])
+async def test_profile_update_refuses_a_muddled_photo(kwargs):
+    backend = FakeBackend()
+
+    result = await _tools(backend)["profile_update"](**kwargs)
+
+    assert result["error"]["error_code"] == "tool_input", result
+    assert not any(c[0] in ("upload_avatar", "delete_avatar", "update_me") for c in backend.calls)
+
+
+async def test_profile_update_photo_path_goes_through_the_stdio_filter(stdio_cwd):
+    """The real RestBackend's filter, not the fake's: a hidden file is
+    refused, and the refusal names photo_base64 only."""
+    from cli.mcp_backend import RestBackend
+
+    (stdio_cwd / ".secret").mkdir()
+    (stdio_cwd / ".secret" / "me.png").write_bytes(PNG)
+    result = await _tools(RestBackend())["profile_update"](photo_path=".secret/me.png")
+
+    message = result["error"]["message"]
+    assert result["error"]["error_code"] == "tool_input", result
+    assert "hidden" in message and "photo_base64" in message and "content_base64" not in message
+
+
+async def test_profile_update_photo_path_refuses_a_text_file_naming_photo_base64(stdio_cwd):
+    from cli.mcp_backend import RestBackend
+
+    (stdio_cwd / "notes.txt").write_text("hello")
+    result = await _tools(RestBackend())["profile_update"](photo_path="notes.txt")
+
+    message = result["error"]["message"]
+    assert "photo_base64" in message and "content_base64" not in message, message
+
+
+async def test_profile_update_says_the_photo_was_saved_when_the_fields_fail():
+    backend = FakeBackend()
+
+    async def refused(**fields):
+        raise BackendError("Name taken", 409, {"error_code": "name_matches_agent", "message": "Name taken"})
+    backend.update_me = refused
+
+    result = await _tools(backend)["profile_update"](photo_base64="iVBORw0KGgo=", name="Lark")
+
+    assert result["error"]["error_code"] == "name_matches_agent", result
+    assert "photo was uploaded" in result["error"]["message"]
 
 
 async def test_profile_update_a_blank_avatar_clears_it():

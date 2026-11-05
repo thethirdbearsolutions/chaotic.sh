@@ -212,7 +212,7 @@ import io.ktor.http.ParametersBuilder
         /**
         * PUT /api/users/me/avatar
         * Upload My Avatar
-        * Upload your own profile picture (CHT-1992): the raw image as the request body (PNG, JPEG, WebP or GIF, at most 256 KB), recognised by its bytes. Replaces any earlier upload and points your avatar_url at &#x60;&#x60;/api/avatars/{sha256}&#x60;&#x60;. Every member may, people and agents alike.
+        * Upload your own profile picture (CHT-1992): the raw image as the request body (PNG, JPEG, WebP or GIF, at most 256 KB), recognised by its bytes. Replaces any earlier upload and points your avatar_url at &#x60;&#x60;/api/avatars/{sha256}&#x60;&#x60;. Every member may, people and agents alike, a registered identity with its own key included (CHT-2045).
          * @return UserResponse
         */
             @Suppress("UNCHECKED_CAST")

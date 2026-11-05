@@ -166,6 +166,16 @@ export class ApiClient {
         return this.request('DELETE', '/users/me/avatar');
     }
 
+    // An agent's profile picture (CHT-2045): allowed to the agent, its
+    // owner and its team's admins. Answers with the agent.
+    async uploadAgentAvatar(agentId, blob) {
+        return this.request('PUT', `/agents/${agentId}/avatar`, blob);
+    }
+
+    async deleteAgentAvatar(agentId) {
+        return this.request('DELETE', `/agents/${agentId}/avatar`);
+    }
+
     // Teams
     async createTeam(data) {
         return this.request('POST', '/teams', data);

@@ -219,6 +219,40 @@ import io.ktor.http.ParametersBuilder
             }
 
         /**
+        * DELETE /api/agents/{agent_id}/avatar
+        * Delete Agent Avatar
+        * Remove an agent&#39;s uploaded picture (CHT-2045), allowed as for the upload. Its avatar_url is cleared if it pointed at the upload; an emoji or URL stays.
+         * @param agentId  
+         * @return AgentResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun deleteAgentAvatarApiAgentsAgentIdAvatarDelete(agentId: kotlin.String): HttpResponse<AgentResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.DELETE,
+            "/api/agents/{agent_id}/avatar".replace("{" + "agent_id" + "}", "$agentId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
         * GET /api/agents/{agent_id}
         * Get Agent
         * Get an agent by ID.
@@ -417,6 +451,40 @@ import io.ktor.http.ParametersBuilder
             )
 
             return jsonRequest(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * PUT /api/agents/{agent_id}/avatar
+        * Upload Agent Avatar
+        * Upload an agent&#39;s profile picture (CHT-2045): the raw image as the request body, with the limits of PUT /users/me/avatar (PNG, JPEG, WebP or GIF, at most 256 KB, 413 &#x60;&#x60;avatar_too_large&#x60;&#x60;, else 422). Replaces any earlier upload and points the agent&#39;s avatar_url at it. Allowed to the agent itself, its creator while in its team, and that team&#39;s admins.
+         * @param agentId  
+         * @return AgentResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun uploadAgentAvatarApiAgentsAgentIdAvatarPut(agentId: kotlin.String): HttpResponse<AgentResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.PUT,
+            "/api/agents/{agent_id}/avatar".replace("{" + "agent_id" + "}", "$agentId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
             localVariableConfig,
             localVariableBody,
             localVariableAuthNames

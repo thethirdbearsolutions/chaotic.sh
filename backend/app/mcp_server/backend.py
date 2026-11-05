@@ -342,12 +342,13 @@ class InProcessBackend:
     # -- attachments (CHT-1996) ----------------------------------------------
 
     @_translated(Access.READ)
-    async def read_local_file(self, path: str) -> tuple[bytes, str]:
+    async def read_local_file(self, path: str, *, base64_arg: str = "content_base64") -> tuple[bytes, str]:
         # This server runs on the Chaotic host, not the caller's machine:
         # a path would name a file of the server's (CHT-1996).
+        with_name = " (with filename)" if base64_arg == "content_base64" else ""
         raise ToolInputError(
-            "This MCP server cannot read files on your machine: send the file as content_base64 "
-            "(with filename), or use the stdio server (`chaotic mcp`), which can read a path."
+            f"This MCP server cannot read files on your machine: send the file as {base64_arg}"
+            f"{with_name}, or use the stdio server (`chaotic mcp`), which can read a path."
         )
 
     @_translated(attachments_api.attach_file)
@@ -640,6 +641,20 @@ class InProcessBackend:
         # does this, before it builds the body.
         check_not_app_session(get_current_mcp_principal())
         return _dump(await users_api.update_me(UserUpdate(**fields), self._user, None))
+
+    @_translated(users_api.set_my_avatar)
+    async def upload_avatar(self, data: bytes) -> dict:
+        check_not_app_session(get_current_mcp_principal())
+
+        async def chunks():
+            yield data
+
+        return _dump(await users_api.set_my_avatar(self._user, chunks()))
+
+    @_translated(users_api.delete_my_avatar)
+    async def delete_avatar(self) -> dict:
+        check_not_app_session(get_current_mcp_principal())
+        return _dump(await users_api.delete_my_avatar(self._user, None))
 
     @_translated(issues_api.list_team_activities)
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:

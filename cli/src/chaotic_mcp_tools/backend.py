@@ -178,10 +178,12 @@ class Backend(Protocol):
 
     # -- attachments (CHT-1996) -------------------------------------------
 
-    async def read_local_file(self, path: str) -> tuple[bytes, str]:
+    async def read_local_file(self, path: str, *, base64_arg: str = "content_base64") -> tuple[bytes, str]:
         """The bytes of a file on the machine this server runs on, and
         its name. Only the stdio side has the caller's files; the HTTP
-        side raises ToolInputError (send ``content_base64`` instead)."""
+        side raises ToolInputError (send ``content_base64`` instead).
+        ``base64_arg`` is the calling tool's argument for the bytes, which
+        a refusal names as the way to send them (CHT-2045)."""
 
     async def upload_attachment(self, issue_id: str, data: bytes, filename: str | None) -> dict: ...
 
@@ -299,6 +301,15 @@ class Backend(Protocol):
         """``PATCH /users/me``: the caller's own name, avatar_url,
         pronouns, tagline, bio (CHT-1979). Only the passed fields change;
         an explicit None clears one."""
+
+    async def upload_avatar(self, data: bytes) -> dict:
+        """``PUT /users/me/avatar``: store `data` as the caller's own
+        profile picture and point their avatar_url at it (CHT-2045).
+        Returns the caller's user row."""
+
+    async def delete_avatar(self) -> dict:
+        """``DELETE /users/me/avatar``: remove the caller's uploaded
+        picture (CHT-2045). Returns the caller's user row."""
 
     # -- inbox (CHT-1338) ------------------------------------------------------
 

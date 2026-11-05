@@ -395,7 +395,7 @@ class RestBackend:
 
     # -- attachments (CHT-1996) ---------------------------------------------
 
-    async def read_local_file(self, path: str) -> tuple[bytes, str]:
+    async def read_local_file(self, path: str, *, base64_arg: str = "content_base64") -> tuple[bytes, str]:
         # This server runs on the caller's machine, as the caller, and an
         # MCP client may have no other way to read its files. A request to
         # attach one could come from text the agent read (a ticket, a web
@@ -419,7 +419,7 @@ class RestBackend:
         if reason:
             raise ToolInputError(
                 f"Not reading {path}: {reason}. Copy the file somewhere else first, or send its bytes "
-                "as content_base64."
+                f"as {base64_arg}."
             )
         data, _ = await anyio.to_thread.run_sync(
             functools.partial(read_local_file, str(target), follow_links=False)
@@ -428,7 +428,7 @@ class RestBackend:
             raise ToolInputError(
                 f"Not reading {path}: through `path` this server attaches only images (PNG, JPEG, GIF, "
                 f"WebP) and PDFs unless {ATTACH_TEXT_ENV}=1 is set where it runs, since a text file "
-                "is where credentials usually are. Send a text file's bytes as content_base64 instead."
+                f"is where credentials usually are. Send a text file's bytes as {base64_arg} instead."
             )
         return data, Path(path).expanduser().name
 
@@ -604,6 +604,12 @@ class RestBackend:
 
     async def update_me(self, **fields) -> dict:
         return await self._call(self._client().update_me, **fields)
+
+    async def upload_avatar(self, data: bytes) -> dict:
+        return await self._call(self._client().upload_avatar, data)
+
+    async def delete_avatar(self) -> dict:
+        return await self._call(self._client().delete_avatar)
 
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:
         return await self._call(
