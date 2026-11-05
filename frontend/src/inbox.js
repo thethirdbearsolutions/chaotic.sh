@@ -21,7 +21,7 @@ import {
 import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
 import { formatRelativeTime, renderMarkdown } from './gate-approvals.js';
-import { renderAttestation, isAwaitingApproval } from './ticket-gate.js';
+import { renderArtifact, earlierRejection, isAwaitingApproval } from './ticket-gate.js';
 import { renderApprovalActions } from './components/approval-actions.js';
 import { showRejectTicketRitualModal, showCompleteTicketRitualModal } from './rituals-view.js';
 
@@ -838,35 +838,34 @@ function canWrite(entry) {
  * gate (it is what they sign off on), or that nothing waits any more.
  */
 function renderDecisionBody(entry) {
+    const status = (text) => ({ meta: '', body: `<div class="inbox-decision-status">${text}</div>` });
     if (entry.state === 'resolved') {
-        return '<div class="inbox-decision-status">Already decided. Nothing is waiting on you here.</div>';
+        return status('Already decided. Nothing is waiting on you here.');
     }
     const d = decisionDetails.get(entry.id);
     if (!d || d.state === 'loading') {
-        return '<div class="inbox-decision-status" role="status">Loading the attestation…</div>';
+        return { meta: '', body: '<div class="inbox-decision-status" role="status">Loading the attestation…</div>' };
     }
     if (d.state === 'error') {
-        return `<div class="inbox-decision-status">Couldn’t load the attestation.
+        return status(`Couldn’t load the attestation.
             <button type="button" class="ticket-gate-text-btn accent" data-action="retry-inbox-decision"
-                data-entry-id="${escapeAttr(entry.id)}">Try again</button></div>`;
+                data-entry-id="${escapeAttr(entry.id)}">Try again</button>`);
     }
     const r = d.ritual;
     if (!r) {
         if (d.decided) {
             const by = d.decided.attestation?.approved_by_name;
-            return `<div class="inbox-decision-status">Already decided${by ? ` by ${escapeHtml(by)}` : ''}. Nothing is waiting on you here.</div>`;
+            return status(`Already decided${by ? ` by ${escapeHtml(by)}` : ''}. Nothing is waiting on you here.`);
         }
         // Not pending and not completed: the ritual no longer applies to
         // this ticket (its conditions or group changed), or was removed.
-        return '<div class="inbox-decision-status">This ritual no longer applies to the ticket. Open it to see where it stands.</div>';
+        return status('This ritual no longer applies to the ticket. Open it to see where it stands.');
     }
     const isReview = entry.kind === 'review_requested';
     const rej = r.last_rejection && !r.last_rejection.superseded_at ? r.last_rejection : null;
-    const asks = r.prompt
-        ? (isReview
-            ? `<details class="inbox-decision-asks" data-entry-id="${escapeAttr(entry.id)}"${asksOpen.has(entry.id) ? ' open' : ''}><summary>What ${escapeHtml(r.name)} asks</summary>
-                   <div class="ticket-gate-asks markdown-body">${renderMarkdown(r.prompt)}</div></details>`
-            : `<div class="ticket-gate-asks markdown-body">${renderMarkdown(r.prompt)}</div>`)
+    const asksDisclosure = r.prompt
+        ? `<details class="inbox-decision-asks" data-entry-id="${escapeAttr(entry.id)}"${asksOpen.has(entry.id) ? ' open' : ''}><summary>What ${escapeHtml(r.name)} asks</summary>
+               <div class="inbox-decision-asks-text markdown-body">${renderMarkdown(r.prompt)}</div></details>`
         : '';
     let state = '';
     if (isReview && !isAwaitingApproval(r)) {
@@ -876,14 +875,48 @@ function renderDecisionBody(entry) {
     } else if (!isReview && rej) {
         state = `<div class="inbox-decision-status">Sent back by ${escapeHtml(rej.rejected_by_name || 'someone')}: “${escapeHtml(rej.note || '')}”.</div>`;
     }
-    return `
-        <div class="inbox-decision">
-            ${isReview ? asks : ''}
-            ${renderAttestation(r)}
-            ${!isReview ? asks : ''}
-            ${state}
-        </div>`;
+    const att = r.attestation;
+    if (isReview) {
+        if (!att) {
+            // Sent back, or the attestation was withdrawn: nothing to show
+            // as the body, and nobody to name as having attested.
+            return { meta: '', body: '', after: asksDisclosure + state };
+        }
+        // The attestation is the body; who attested is the meta line, the
+        // way every other row says who it came from (CHT-2081).
+        return {
+            meta: metaLine(att.attested_by_name || 'Someone', 'attested'),
+            body: `<div class="inbox-expanded-body inbox-expanded-markdown">
+                ${att.note ? `<div class="markdown-body">${renderMarkdown(att.note)}</div>` : '<div class="text-muted">No note.</div>'}
+                ${renderArtifact(att)}
+            </div>`,
+            after: earlierRejection(r) + asksDisclosure + state,
+        };
+    }
+    // A gate: what the ritual asks is what the admin signs off on, so it
+    // is the body, in full.
+    return {
+        meta: 'Waiting on a sign-off',
+        body: r.prompt
+            ? `<div class="inbox-expanded-body inbox-expanded-markdown"><div class="markdown-body">${renderMarkdown(r.prompt)}</div></div>`
+            : '',
+        after: state,
+    };
 }
+
+/** "Ada attested": who did what (CHT-2081). When is the row's own time. */
+function metaLine(who, verb) {
+    return `${escapeHtml(who)} ${escapeHtml(verb)}`;
+}
+
+// The verb of a row's meta line, by kind: what the sender did.
+const META_VERBS = {
+    assignment: 'assigned you this',
+    mention: 'mentioned you',
+    review_requested: 'attested',
+    gate_rejected: 'sent it back',
+    agent_status: 'changed your agent',
+};
 
 /** The ritual a decision row can still be decided on, or null. */
 function decidableRitual(entry) {
@@ -914,6 +947,8 @@ function renderDecisionActions(entry) {
         approveAction: isReview ? 'approve-inbox-entry' : 'sign-off-inbox-entry',
         sendBackAction: 'send-back-inbox-entry',
         size: 'sm',
+        // In the Inbox's row of buttons, Send back is one of them (CHT-2081).
+        sendBackClass: 'inbox-action-btn',
         busy: decisionInFlight.has(entry.id),
         data: {
             entryId: entry.id, ritualId: r.id, issueId: entry.issue_id, ritualName: r.name,
@@ -1200,13 +1235,25 @@ function renderExpandedPanel(entry, sourceRef, panelId) {
                 data-entry-id="${escapeAttr(entry.id)}">Archive</button>`,
     ].filter(Boolean).join('');
 
+    // One layout for every kind (CHT-2081): a meta line saying who did
+    // what and when, one body container, anything about the ritual under
+    // it, then the action bar.
+    const decision = isDecision ? renderDecisionBody(entry) : null;
+    // A decision row's meta comes from the ritual's live state only, never
+    // the entry's snapshot (PR #548 review). Other kinds name their sender
+    // with a verb, and say nothing when it has none or is the viewer.
+    const verb = META_VERBS[entry.kind];
+    const fromSomeoneElse = from && entry.source_user_id !== entry.recipient_user_id;
+    const meta = decision ? decision.meta : (fromSomeoneElse && verb ? metaLine(from, verb) : '');
+    const body = decision
+        ? decision.body
+        : (entry.body ? `<div class="inbox-expanded-body">${escapeHtml(entry.body)}</div>` : '');
     return `
         <div class="inbox-row-expanded-panel" id="${escapeAttr(panelId)}" role="region"
              aria-label="${escapeAttr(entry.title)}">
-            ${from && !isDecision ? `<div class="inbox-expanded-source">from ${escapeHtml(from)}</div>` : ''}
-            ${isDecision
-                ? renderDecisionBody(entry)
-                : (entry.body ? `<div class="inbox-expanded-body">${escapeHtml(entry.body)}</div>` : '')}
+            ${meta ? `<div class="inbox-expanded-source">${meta}</div>` : ''}
+            ${body || ''}
+            ${decision?.after || ''}
             <div class="inbox-action-bar">${actions}</div>
         </div>
     `;

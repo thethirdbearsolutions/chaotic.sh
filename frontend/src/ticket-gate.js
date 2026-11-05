@@ -101,7 +101,7 @@ function kicker(who, r) {
     return `<div class="ticket-gate-kicker">Waiting on ${escapeHtml(who)}<span class="ticket-gate-when"> · ${whenNeeded(r)}</span></div>`;
 }
 
-function renderArtifact(att) {
+export function renderArtifact(att) {
     const ref = att && att.artifact_ref;
     if (!ref || typeof ref !== 'string') return '';
     if (/^https?:\/\//i.test(ref)) {
@@ -129,7 +129,7 @@ function rejectionLine(rej) {
 }
 
 /** A re-attested review keeps the send-back it answers, as context (CHT-1606). */
-function earlierRejection(r) {
+export function earlierRejection(r) {
     const rej = r && r.last_rejection;
     if (!rej || !rej.superseded_at || !isAwaitingApproval(r)) return '';
     return `<div class="ticket-gate-earlier">Sent back before: ${rejectionLine(rej)}</div>`;
