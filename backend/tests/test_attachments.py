@@ -5,6 +5,7 @@ Out-of-scope callers are probed in test_out_of_scope_is_not_found.py
 may delete it.
 """
 import hashlib
+import os
 from urllib.parse import quote
 
 import pytest
@@ -138,8 +139,6 @@ class TestUpload:
         assert _blobs() == [BlobStore().path_for(hashlib.sha256(PNG).hexdigest())]
 
     async def test_a_reused_blob_is_dated_anew(self, client, auth_headers, test_issue):
-        import os
-
         first = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
         blob = BlobStore().path_for(first["sha256"])
         os.utime(blob, (1_000_000, 1_000_000))  # an orphan, long unreferenced
@@ -148,6 +147,29 @@ class TestUpload:
 
         # A sweep's age gate sees it as in use now.
         assert blob.stat().st_mtime > 1_000_000 + 86400
+
+    async def test_a_blob_swept_while_it_is_reused_is_stored_again(self, client, auth_headers, test_issue):
+        from unittest.mock import patch
+
+        first = (await _upload(client, auth_headers, test_issue.id, PNG)).json()
+        blob = BlobStore().path_for(first["sha256"])
+        utime = os.utime
+
+        def swept_first(path, *args, **kwargs):
+            # A sweep unlinks the old blob between the upload's look and
+            # its re-dating.
+            if path == blob:
+                blob.unlink(missing_ok=True)
+            return utime(path, *args, **kwargs)
+
+        with patch("app.services.attachment_service.os.utime", side_effect=swept_first):
+            again = await _upload(client, auth_headers, test_issue.id, PNG)
+
+        assert again.status_code == 201, again.text
+        assert blob.read_bytes() == PNG
+        assert _temp_files() == []
+        served = await client.get(again.json()["url"], headers=auth_headers)
+        assert served.status_code == 200 and served.content == PNG
 
     async def test_a_large_body_in_one_piece_is_worked_through_in_pieces(self, client, auth_headers, test_issue):
         big = PNG + b"\x00" * (300 * 1024)
@@ -320,13 +342,42 @@ class TestLimits:
         self, client, auth_headers, test_issue, settings_env,
     ):
         import asyncio
+        from unittest.mock import patch
+
+        from oxyde import AsyncDatabase, PoolSettings
+
+        from app.services.attachment_service import AttachmentService
+
+        # Several connections, as in production: on the harness's one
+        # connection the two uploads would queue for it, lock or no lock.
+        url = get_settings().database_url.replace("sqlite+aiosqlite:///", "sqlite:///")
+        await AsyncDatabase(url, overwrite=True, settings=PoolSettings(max_connections=4)).connect()
 
         settings_env(CHAOTIC_ATTACHMENT_PROJECT_QUOTA_BYTES=len(PNG) + len(JPEG) - 1)
+        check_quota = AttachmentService.check_quota
+        passed: list[int] = []
+        both_passed = asyncio.Event()
 
-        answers = await asyncio.gather(
-            _upload(client, auth_headers, test_issue.id, PNG),
-            _upload(client, auth_headers, test_issue.id, JPEG),
-        )
+        async def slow_check(self, project_id, adding=0):
+            await check_quota(self, project_id, adding)
+            if adding:
+                # Hold the room this upload was just told it has, until the
+                # other upload has been told too, or a short while. Without
+                # the write lock both get there and both insert; with it the
+                # other waits for this one's commit and is refused.
+                passed.append(adding)
+                if len(passed) == 2:
+                    both_passed.set()
+                try:
+                    await asyncio.wait_for(both_passed.wait(), 0.5)
+                except TimeoutError:
+                    pass
+
+        with patch.object(AttachmentService, "check_quota", slow_check):
+            answers = await asyncio.gather(
+                _upload(client, auth_headers, test_issue.id, PNG),
+                _upload(client, auth_headers, test_issue.id, JPEG),
+            )
 
         assert sorted(a.status_code for a in answers) == [201, 409]
         assert await OxydeAttachment.objects.count() == 1

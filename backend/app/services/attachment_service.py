@@ -207,11 +207,15 @@ class BlobStore:
         """Move a staged file into the store under its sha256. A blob
         already there has the same bytes, so the staged copy is dropped."""
         final = self.path_for(staged.sha256)
-        if final.is_file():
-            staged.temp_path.unlink(missing_ok=True)
+        try:
             # Re-dated, so a sweep's age gate sees a blob in use again,
-            # not the orphan it may have been until now.
+            # not the orphan it may have been until now. Before the staged
+            # copy goes: a blob swept meanwhile is replaced by this one.
             os.utime(final)
+        except FileNotFoundError:
+            pass
+        else:
+            staged.temp_path.unlink(missing_ok=True)
             return final
         final.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staged.temp_path, final)
