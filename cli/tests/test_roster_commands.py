@@ -311,3 +311,87 @@ def test_profile_photo_too_large_is_refused_before_reading(cli_runner, tmp_path)
     assert result.exit_code != 0
     assert "256 KB" in result.output
     client.upload_avatar.assert_not_called()
+
+
+# -- `chaotic profile avatar` and `chaotic profile update` (CHT-2045) --
+
+def test_profile_avatar_uploads_your_photo(cli_runner, tmp_path):
+    from cli.main import cli, client
+    photo = tmp_path / "me.png"
+    photo.write_bytes(b"\x89PNG\r\n\x1a\nrest")
+    client.upload_avatar = MagicMock(return_value={**ME, "avatar_url": "/api/avatars/abc"})
+    client.update_me = MagicMock()
+
+    result = cli_runner.invoke(cli, ["profile", "avatar", str(photo)])
+
+    assert result.exit_code == 0, result.output
+    client.upload_avatar.assert_called_once_with(b"\x89PNG\r\n\x1a\nrest")
+    client.update_me.assert_not_called()
+
+
+def test_profile_avatar_json(cli_runner, tmp_path):
+    from cli.main import cli, client
+    photo = tmp_path / "me.png"
+    photo.write_bytes(b"\x89PNG\r\n\x1a\n")
+    client.upload_avatar = MagicMock(return_value={**ME, "avatar_url": "/api/avatars/abc"})
+
+    result = cli_runner.invoke(cli, ["profile", "avatar", str(photo), "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["avatar_url"] == "/api/avatars/abc"
+
+
+def test_profile_avatar_remove(cli_runner):
+    from cli.main import cli, client
+    client.delete_avatar = MagicMock(return_value=ME)
+
+    result = cli_runner.invoke(cli, ["profile", "avatar", "--remove"])
+
+    assert result.exit_code == 0, result.output
+    client.delete_avatar.assert_called_once_with()
+
+
+@pytest.mark.parametrize("args", [[], ["x.png", "--remove"]])
+def test_profile_avatar_needs_exactly_a_file_or_remove(cli_runner, args):
+    from cli.main import cli, client
+    client.upload_avatar = MagicMock()
+    client.delete_avatar = MagicMock()
+
+    result = cli_runner.invoke(cli, ["profile", "avatar", *args])
+
+    assert result.exit_code != 0
+    client.upload_avatar.assert_not_called()
+    client.delete_avatar.assert_not_called()
+
+
+def test_profile_update_writes_your_bio(cli_runner):
+    from cli.main import cli, client
+    client.update_me = MagicMock(return_value={**ME, "bio": "I sweep migrations."})
+
+    result = cli_runner.invoke(cli, ["profile", "update", "--bio", "I sweep migrations."])
+
+    assert result.exit_code == 0, result.output
+    client.update_me.assert_called_once_with(bio="I sweep migrations.")
+
+
+def test_profile_shortcuts_refuse_an_ambiguous_profile(cli_runner, tmp_path, monkeypatch):
+    """`chaotic profile ...` skips the ambiguity check for managing local
+    profiles; these write to a server identity, so they check it."""
+    import cli.main as main
+    from cli.main import cli, client
+    photo = tmp_path / "me.png"
+    photo.write_bytes(b"\x89PNG\r\n\x1a\n")
+    client.upload_avatar = MagicMock()
+    client.update_me = MagicMock()
+
+    def ambiguous():
+        raise main.ProfileAmbiguityError(["agent-a", "agent-b"])
+    monkeypatch.setattr(main, "check_profile_ambiguity", ambiguous)
+
+    avatar = cli_runner.invoke(cli, ["profile", "avatar", str(photo)])
+    update = cli_runner.invoke(cli, ["profile", "update", "--bio", "x"])
+
+    assert avatar.exit_code != 0 and update.exit_code != 0
+    assert "Multiple profiles" in avatar.output
+    client.upload_avatar.assert_not_called()
+    client.update_me.assert_not_called()

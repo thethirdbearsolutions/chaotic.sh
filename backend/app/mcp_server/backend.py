@@ -641,6 +641,20 @@ class InProcessBackend:
         check_not_app_session(get_current_mcp_principal())
         return _dump(await users_api.update_me(UserUpdate(**fields), self._user, None))
 
+    @_translated(users_api.set_my_avatar)
+    async def upload_avatar(self, data: bytes) -> dict:
+        check_not_app_session(get_current_mcp_principal())
+
+        async def chunks():
+            yield data
+
+        return _dump(await users_api.set_my_avatar(self._user, chunks()))
+
+    @_translated(users_api.delete_my_avatar)
+    async def delete_avatar(self) -> dict:
+        check_not_app_session(get_current_mcp_principal())
+        return _dump(await users_api.delete_my_avatar(self._user, None))
+
     @_translated(issues_api.list_team_activities)
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:
         rows = await issues_api.list_team_activities(

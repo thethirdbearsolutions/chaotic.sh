@@ -605,6 +605,12 @@ class RestBackend:
     async def update_me(self, **fields) -> dict:
         return await self._call(self._client().update_me, **fields)
 
+    async def upload_avatar(self, data: bytes) -> dict:
+        return await self._call(self._client().upload_avatar, data)
+
+    async def delete_avatar(self) -> dict:
+        return await self._call(self._client().delete_avatar)
+
     async def list_activities(self, team_id: str, *, limit: int, project_id) -> list:
         return await self._call(
             self._client().get_team_activities, team_id, limit=limit, project_id=project_id,

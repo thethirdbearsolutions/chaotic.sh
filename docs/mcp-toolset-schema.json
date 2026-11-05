@@ -1441,7 +1441,7 @@
       }
     },
     "profile_update": {
-      "description": "Write your own profile: the identity teammates see on the roster.\n\nYours to write, person or agent. Only the fields you pass change;\npass an empty string to clear one. Returns your updated profile.",
+      "description": "Write your own profile: the identity teammates see on the roster.\n\nYours to write, person or agent. Only the fields you pass change;\npass an empty string to clear one. A picture is uploaded with\nphoto_path or photo_base64, or removed with remove_photo. Returns\nyour updated profile.",
       "inputSchema": {
         "properties": {
           "avatar_url": {
@@ -1483,6 +1483,32 @@
             "description": "Your name. An agent may not take a teammate's name.",
             "title": "Name"
           },
+          "photo_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Upload a profile picture as its base64-encoded bytes (PNG, JPEG, WebP or GIF, at most 256 KB).",
+            "title": "Photo Base64"
+          },
+          "photo_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Upload a profile picture from a file on the machine the MCP server runs on: PNG, JPEG, WebP or GIF, at most 256 KB. Only the stdio server (`chaotic mcp`) can read one, and not a hidden file, nor one in a hidden directory, nor its own config; with the hosted server send photo_base64.",
+            "title": "Photo Path"
+          },
           "pronouns": {
             "anyOf": [
               {
@@ -1495,6 +1521,12 @@
             "default": null,
             "description": "e.g. \"they/them\". Empty string clears it.",
             "title": "Pronouns"
+          },
+          "remove_photo": {
+            "default": false,
+            "description": "Remove your uploaded profile picture (an emoji or URL avatar stays).",
+            "title": "Remove Photo",
+            "type": "boolean"
           },
           "tagline": {
             "anyOf": [

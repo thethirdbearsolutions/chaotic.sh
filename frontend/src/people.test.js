@@ -32,6 +32,8 @@ vi.mock('./api.js', () => ({
     revokeApiKey: vi.fn(),
     uploadAvatar: vi.fn(),
     deleteAvatar: vi.fn(),
+    uploadAgentAvatar: vi.fn(),
+    deleteAgentAvatar: vi.fn(),
   },
 }));
 
@@ -198,6 +200,15 @@ describe('canEditProfile', () => {
     expect(canEditProfile(PIPER, me)).toBe(true);
     expect(canEditProfile(SAM, me)).toBe(false);
     expect(canEditProfile({ ...PIPER, owner_id: 'u-sam' }, me)).toBe(false);
+  });
+
+  it('lets a team admin edit any agent, still no person (CHT-2045)', async () => {
+    api.getTeamRoster.mockResolvedValue([{ ...ADA, user_id: 'u-sam', role: 'admin' }, SAM, PIPER]);
+    await loadPeople();
+    const me = { id: 'u-sam' };
+
+    expect(canEditProfile({ ...PIPER, owner_id: 'u-ada' }, me)).toBe(true);
+    expect(canEditProfile({ ...ADA }, me)).toBe(false);
   });
 });
 
@@ -531,15 +542,62 @@ describe('loadPersonIssues', () => {
 describe('profile photos', () => {
   const SHA = 'a'.repeat(64);
 
-  it('offers photo controls on your own form only', async () => {
+  it('offers photo controls on your own form and an agent you own', async () => {
     await loadPeople();
 
     await showEditProfileModal('a-piper');
-    expect(document.getElementById('profile-photo')).toBeNull();
+    expect(document.getElementById('profile-photo')).not.toBeNull();
 
     await showEditProfileModal('u-ada');
     expect(document.getElementById('profile-photo')).not.toBeNull();
     expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(true);
+  });
+
+  it('uploads an agent’s picture to the agent, not to you (CHT-2045)', async () => {
+    await loadPeople();
+    await showEditProfileModal('a-piper');
+    const input = document.getElementById('profile-photo');
+    const file = new File(['x'], 'owl.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    const resized = new Blob(['y'], { type: 'image/webp' });
+    const resize = vi.fn().mockResolvedValue(resized);
+    api.uploadAgentAvatar.mockResolvedValue({ id: 'a-piper', avatar_url: `/api/avatars/${SHA}` });
+
+    await handlePickPhoto(input, resize);
+
+    expect(resize).toHaveBeenCalledWith(file);
+    expect(api.uploadAgentAvatar).toHaveBeenCalledWith('a-piper', resized);
+    expect(api.uploadAvatar).not.toHaveBeenCalled();
+    expect(getRoster().find(r => r.user_id === 'a-piper').avatar_url).toBe(`/api/avatars/${SHA}`);
+    expect(getCurrentUser().avatar_url).toBeNull();
+    expect(updateUserInfo).not.toHaveBeenCalled();
+    expect(document.getElementById('profile-avatar').value).toBe(`/api/avatars/${SHA}`);
+    expect(document.getElementById('profile-photo-remove').classList.contains('hidden')).toBe(false);
+  });
+
+  it('removes an agent’s picture through the agent', async () => {
+    api.getTeamRoster.mockResolvedValue([ADA, { ...PIPER, avatar_url: `/api/avatars/${SHA}` }]);
+    await loadPeople();
+    await showEditProfileModal('a-piper');
+    api.deleteAgentAvatar.mockResolvedValue({ id: 'a-piper', avatar_url: null });
+
+    await handleRemovePhoto();
+
+    expect(api.deleteAgentAvatar).toHaveBeenCalledWith('a-piper');
+    expect(api.deleteAvatar).not.toHaveBeenCalled();
+    expect(getRoster().find(r => r.user_id === 'a-piper').avatar_url).toBeNull();
+  });
+
+  it('redraws the agent’s profile page with its new picture', async () => {
+    await viewPerson('a-piper');
+    await showEditProfileModal('a-piper');
+    const input = document.getElementById('profile-photo');
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'owl.png')], configurable: true });
+    api.uploadAgentAvatar.mockResolvedValue({ id: 'a-piper', avatar_url: `/api/avatars/${SHA}` });
+
+    await handlePickPhoto(input, vi.fn().mockResolvedValue(new Blob(['y'])));
+
+    expect(document.querySelector('.person-profile img').getAttribute('src')).toBe(`/api/avatars/${SHA}`);
   });
 
   it('uploads the resized picture and shows it everywhere', async () => {

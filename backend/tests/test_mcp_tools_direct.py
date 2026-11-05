@@ -2272,6 +2272,10 @@ class TestErrorEnvelope:
 
 
 
+# A PNG by signature, as the avatar service recognises one (CHT-2045).
+_PNG_B64 = __import__("base64").b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64).decode()
+
+
 class TestProfileUpdate:
     """profile_update writes the caller's own identity (CHT-1982)."""
 
@@ -2341,5 +2345,33 @@ class TestProfileUpdate:
         )
         with acting_as(app_session):
             result = await tools.profile_update(bio="x")
+            photo = await tools.profile_update(photo_base64=_PNG_B64)
 
         assert result["error"]["error_code"] == "app_session_refused", result
+        assert photo["error"]["error_code"] == "app_session_refused", photo
+
+    async def test_an_agent_uploads_and_removes_its_own_photo(self, agent_user):
+        """photo_base64 / remove_photo (CHT-2045): the hosted server's way
+        to set the caller's own picture."""
+        import base64
+        import hashlib
+        from .mcp_principal import acting_as
+
+        with acting_as(agent_user):
+            uploaded = await tools.profile_update(photo_base64=_PNG_B64, bio="I sweep migrations.")
+            removed = await tools.profile_update(remove_photo=True)
+
+        digest = hashlib.sha256(base64.b64decode(_PNG_B64)).hexdigest()
+        assert uploaded["avatar_url"] == f"/api/avatars/{digest}", uploaded
+        assert uploaded["bio"] == "I sweep migrations." and uploaded["user_id"] == agent_user.id
+        assert removed["avatar_url"] is None, removed
+
+    async def test_a_photo_that_is_not_an_image_is_an_envelope(self):
+        result = await tools.profile_update(photo_base64="PHN2Zy8+")  # "<svg/>"
+
+        assert result["error"]["error_code"] == "avatar_not_an_image", result
+
+    async def test_a_path_is_refused_on_the_hosted_server(self):
+        result = await tools.profile_update(photo_path="/etc/hostname")
+
+        assert set(result) == {"error"} and "photo_base64" in result["error"]["message"], result

@@ -1,7 +1,7 @@
 """Agent routes."""
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from app.auth.access import reads, registers, writes
 from app.api.deps import (
     CurrentPrincipal, CurrentUser, NotAppSession, can_manage_agent, check_not_app_session,
@@ -379,6 +379,60 @@ async def update_agent(
     return agent_response(
         agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=await _last_used(agent),
     )
+
+
+async def _picture_target(current_user: OxydeUser, agent_id: str) -> OxydeUser:
+    """The agent whose picture `current_user` sets or removes (CHT-2045):
+    visible (else the missing agent's 404), then theirs to change (403).
+    The agent itself may, as on PATCH /agents/{own id}, a registered
+    identity with its own key included; so may whoever may manage it (its
+    creator while in its team, the team's admins). A registrar's own key
+    only registers and reads (CHT-1561), so it sets an identity's picture
+    with that identity's key, which it holds."""
+    agent = await visible_agent(current_user, agent_id)
+    if not (current_user.id == agent.id or await can_manage_agent(current_user, agent)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to change this agent's picture",
+        )
+    return agent
+
+
+async def _picture_response(current_user: OxydeUser, agent: OxydeUser) -> AgentResponse:
+    agent = await AgentService().get_by_id(agent.id)  # with parent_user joined
+    return agent_response(
+        agent, show_ref=await sees_external_ref(current_user, agent), last_used_at=await _last_used(agent),
+        mention_handle=await _mention_handle(agent),
+    )
+
+
+@router.put("/agents/{agent_id}/avatar", response_model=AgentResponse)
+@writes
+async def upload_agent_avatar(agent_id: str, request: Request, current_user: CurrentUser) -> AgentResponse:
+    """Upload an agent's profile picture (CHT-2045): the raw image as the
+    request body, with the limits of PUT /users/me/avatar (PNG, JPEG,
+    WebP or GIF, at most 256 KB, 413 ``avatar_too_large``, else 422).
+    Replaces any earlier upload and points the agent's avatar_url at it.
+    Allowed to the agent itself, its creator while in its team, and that
+    team's admins."""
+    from app.api.avatars import store_avatar
+
+    agent = await _picture_target(current_user, agent_id)
+    await store_avatar(agent, request.stream())
+    return await _picture_response(current_user, agent)
+
+
+@router.delete("/agents/{agent_id}/avatar", response_model=AgentResponse)
+@writes
+async def delete_agent_avatar(agent_id: str, current_user: CurrentUser) -> AgentResponse:
+    """Remove an agent's uploaded picture (CHT-2045), allowed as for the
+    upload. Its avatar_url is cleared if it pointed at the upload; an
+    emoji or URL stays."""
+    from app.services.avatar_service import AvatarService
+
+    agent = await _picture_target(current_user, agent_id)
+    await AvatarService().clear(agent)
+    return await _picture_response(current_user, agent)
 
 
 @router.post(

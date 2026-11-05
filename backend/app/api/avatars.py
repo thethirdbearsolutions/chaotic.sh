@@ -1,10 +1,13 @@
-"""Serving uploaded profile pictures (CHT-1992)."""
+"""Serving uploaded profile pictures (CHT-1992), and storing one from a
+request body for the routes that upload one (CHT-2045)."""
 import base64
 import re
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Response
 
-from app.services.avatar_service import AvatarService
+from app.oxyde_models.user import OxydeUser
+from app.services.avatar_service import AVATAR_MAX_BYTES, AvatarRefused, AvatarService
 
 router = APIRouter()
 
@@ -33,3 +36,23 @@ async def get_avatar(sha256: str) -> Response:
     if avatar is None:
         raise HTTPException(status_code=404, detail="Not found")
     return Response(content=base64.b64decode(avatar.data_b64), media_type=avatar.content_type, headers=_HEADERS)
+
+
+async def store_avatar(user: OxydeUser, chunks: AsyncIterator[bytes]) -> None:
+    """Read an uploaded picture from `chunks` (a request body) and store
+    it as `user`'s (the row is updated in place), for ``PUT /users/me/avatar`` and
+    ``PUT /agents/{id}/avatar``. Reading stops just past the cap, so an
+    oversized body is refused without being read whole: 413
+    ``avatar_too_large``, else 422 with the refusal's error_code."""
+    data = bytearray()
+    async for chunk in chunks:
+        data.extend(chunk)
+        if len(data) > AVATAR_MAX_BYTES:
+            break  # refused below; no need to read the rest
+    try:
+        await AvatarService().set(user, bytes(data))
+    except AvatarRefused as refused:
+        code = 413 if refused.error_code == "avatar_too_large" else 422
+        raise HTTPException(
+            status_code=code, detail={"error_code": refused.error_code, "message": str(refused)},
+        ) from refused

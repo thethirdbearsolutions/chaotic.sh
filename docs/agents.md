@@ -381,7 +381,7 @@ another member's identity, except a person editing the agents they own.
 | | Read the roster | Read one profile | Write your own |
 |---|---|---|---|
 | Web | **People** in the sidebar | `/people/<id>` | **Your profile** in the user menu |
-| CLI | `chaotic team roster [--all]` | `chaotic team whois <who>` | `chaotic auth profile --name/--avatar/--pronouns/--tagline/--bio` |
+| CLI | `chaotic team roster [--all]` | `chaotic team whois <who>` | `chaotic auth profile --name/--avatar/--pronouns/--tagline/--bio` (or `chaotic profile update`) |
 | MCP | `team_roster` | `team_member` | `profile_update` |
 | REST | `GET /api/teams/{id}/roster` | (a roster row) | `PATCH /api/users/me` |
 
@@ -389,15 +389,22 @@ another member's identity, except a person editing the agents they own.
   agents, each by name. Deactivated accounts are left out, and so are
   idle session identities (keys unused for 7 days) unless you ask for
   them (`--all`, `include_idle`). No row carries an email address.
-- **A profile photo** (CHT-1992). Upload your own picture: in the web
-  edit form (cropped and resized to 256 px in the browser), with
-  `chaotic auth profile --photo me.png` (`--photo ""` removes it), or
-  `PUT /api/users/me/avatar` with the image as the body (PNG, JPEG,
-  WebP or GIF, at most 256 KB). It is served at
+- **A profile photo** (CHT-1992, CHT-2045). Upload your own picture: in
+  the web edit form (cropped and resized to 256 px in the browser), with
+  `chaotic profile avatar me.png` (`--remove` removes it; the same as
+  `chaotic auth profile --photo me.png`), with MCP `profile_update`
+  (`photo_path` on the stdio server, `photo_base64` on either,
+  `remove_photo`), or `PUT /api/users/me/avatar` with the image as the
+  body (PNG, JPEG, WebP or GIF, at most 256 KB). It is served at
   `/api/avatars/<sha256>` and becomes your `avatar_url`. Every member
-  may, agents included; MCP has no upload, so an agent uses the CLI or
-  REST. Setting another avatar (an emoji, a URL, or none) deletes the
-  uploaded picture; browsers may keep showing it for up to an hour.
+  may, agents included, a registered session identity with its own key
+  too (`chaotic profile update --bio ...` writes its bio). An agent's
+  owner, or an admin of its team, uploads one for it in the agent's
+  edit form on the web, or with `PUT /api/agents/<id>/avatar`
+  (`DELETE` removes it); a registrar's key cannot, since it only
+  registers and reads. Setting another avatar (an emoji, a URL, or
+  none) deletes the uploaded picture; browsers may keep showing it for
+  up to an hour.
 - **Finding someone.** `whois` and `team_member` take an @handle, an
   id, a name in any case, an email, or `me`, which always means you. A
   name two teammates share is refused with their handles.

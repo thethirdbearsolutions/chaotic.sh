@@ -300,6 +300,15 @@ class Backend(Protocol):
         pronouns, tagline, bio (CHT-1979). Only the passed fields change;
         an explicit None clears one."""
 
+    async def upload_avatar(self, data: bytes) -> dict:
+        """``PUT /users/me/avatar``: store `data` as the caller's own
+        profile picture and point their avatar_url at it (CHT-2045).
+        Returns the caller's user row."""
+
+    async def delete_avatar(self) -> dict:
+        """``DELETE /users/me/avatar``: remove the caller's uploaded
+        picture (CHT-2045). Returns the caller's user row."""
+
     # -- inbox (CHT-1338) ------------------------------------------------------
 
     async def list_inbox(self, team_id: str | None, *, unread: bool, limit: int) -> list: ...

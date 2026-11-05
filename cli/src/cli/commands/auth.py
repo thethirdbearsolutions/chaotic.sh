@@ -253,6 +253,8 @@ def register(cli):
         if not changes and photo is None:
             console.print("[dim]Change it with --name, --avatar, --photo, --pronouns, --tagline, --bio.[/dim]")
 
+    _add_identity_shortcuts(cli, auth_profile)
+
     @auth.command("verify-email")
     @click.option("--code", default=None, help="Confirm a code you already received, without requesting a new one.")
     @_main().json_option
@@ -517,3 +519,54 @@ def register(cli):
         console.print(f"[green]Disconnected '{escape(name)}'.[/green]")
 
     return auth
+
+
+def _unambiguous(callback):
+    """`callback`, behind the profile-ambiguity check the top-level group
+    skips for `chaotic profile ...` (that group manages local profiles):
+    these shortcuts write to a server identity, so which one must be
+    clear first."""
+    def run(**kwargs):
+        m = _main()
+        try:
+            m.check_profile_ambiguity()
+        except m.ProfileAmbiguityError as e:
+            console.print(f"[red]Error: {escape(str(e))}[/red]")
+            raise SystemExit(1)
+        return callback(**kwargs)
+    return run
+
+
+def _add_identity_shortcuts(cli, auth_profile):
+    """`chaotic profile update` and `chaotic profile avatar` (CHT-2045):
+    your own identity on the server (bio, picture, ...), the same as
+    `chaotic auth profile`, under the name an agent looks for first.
+    The `profile` group is registered before this one."""
+    group = cli.commands.get("profile")
+    if group is None:
+        return
+    group.add_command(click.Command(
+        "update", params=list(auth_profile.params), callback=_unambiguous(auth_profile.callback),
+        help=(
+            "Show or write your own profile on the server: name, avatar, pronouns, tagline, bio "
+            "and photo. The same as `chaotic auth profile`; people and agents alike, a registered "
+            "identity with its own key included."
+        ),
+        short_help="Show or write your own profile on the server.",
+    ))
+
+    @click.command("avatar")
+    @click.argument("file", required=False, type=click.Path(dir_okay=False, allow_dash=False))
+    @click.option("--remove", is_flag=True, help="Remove your uploaded picture instead.")
+    @_main().json_option
+    def profile_avatar(file, remove):
+        """Upload FILE as your own profile picture on the server (PNG, JPEG,
+        WebP or GIF, at most 256 KB), or remove it with --remove. The same as
+        `chaotic auth profile --photo FILE` (or `--photo ""`)."""
+        if (file is None) == (not remove):
+            raise click.UsageError("Give a FILE to upload, or --remove.")
+        ctx = click.get_current_context()
+        ctx.invoke(auth_profile, photo="" if remove else file)
+
+    profile_avatar.callback = _unambiguous(profile_avatar.callback)
+    group.add_command(profile_avatar)
