@@ -444,6 +444,7 @@ class TestIssueView:
         client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
         client.get_comments = MagicMock(return_value=[{"id": "c1", "content": "hi"}])
         client.get_sub_issues = MagicMock(return_value=[{"id": "sub-1", "identifier": "CHT-101"}])
+        client.list_attachments = MagicMock(return_value=[])
 
         result = await mcp_mod.issue_view(identifier="CHT-100")
 
@@ -467,6 +468,7 @@ class TestIssueView:
         comments = [{"id": f"c{i}"} for i in range(25)]  # oldest first, as the API returns them
         client.get_comments = MagicMock(return_value=comments)
         client.get_sub_issues = MagicMock(return_value=[])
+        client.list_attachments = MagicMock(return_value=[])
         result = await mcp_mod.issue_view(identifier="CHT-100")
         assert result["comment_count"] == 25
         assert len(result["comments"]) == mcp_mod.ISSUE_VIEW_COMMENT_CAP == 20
@@ -477,6 +479,7 @@ class TestIssueView:
         client.get_issue_by_identifier = MagicMock(return_value=dict(mock_issue))
         client.get_comments = MagicMock(return_value=[])
         client.get_sub_issues = MagicMock(side_effect=APIError("not supported"))
+        client.list_attachments = MagicMock(return_value=[])
 
         result = await mcp_mod.issue_view(identifier="CHT-100")
         assert result["sub_issues"] == []

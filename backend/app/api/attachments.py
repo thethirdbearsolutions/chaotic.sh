@@ -6,6 +6,7 @@ route loads the issue (or the attachment, then its issue) through a
 cannot see answers exactly like a missing one. The bytes are served
 only with a credential: there is no public or signed address.
 """
+from collections.abc import AsyncIterator
 from typing import Annotated
 from urllib.parse import quote
 
@@ -123,6 +124,21 @@ async def upload_attachment(
     comment of the caller's on this issue the file belongs to; without it the file is
     attached to the issue alone. Honours ``Idempotency-Key``: a resend
     stores the file once."""
+    return await attach_file(issue_id, current_user, request.stream(), filename=filename, comment_id=comment_id)
+
+
+@writes
+async def attach_file(
+    issue_id: str,
+    current_user,
+    chunks: AsyncIterator[bytes],
+    filename: str | None = None,
+    comment_id: str | None = None,
+) -> AttachmentResponse:
+    """What ``upload_attachment`` does with the body, for a caller that
+    has the bytes some other way: the in-process MCP server, whose
+    ``issue_attach`` takes them as base64 (CHT-1996). The same checks,
+    in the same order."""
     issue, project = await visible_issue(current_user, issue_id)
     if comment_id is not None:
         comment = await IssueService().get_comment_by_id(comment_id)
@@ -136,7 +152,7 @@ async def upload_attachment(
     try:
         attachment = await AttachmentService().upload(
             issue=issue, project_id=project.id, uploader_id=current_user.id,
-            chunks=request.stream(), filename=filename, comment_id=comment_id,
+            chunks=chunks, filename=filename, comment_id=comment_id,
         )
     except AttachmentRefused as refused:
         raise _refusal(refused) from refused

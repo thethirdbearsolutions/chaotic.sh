@@ -4,8 +4,15 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from ..attachments import (
+    OUTCOME_UNKNOWN,
+    attachment_markdown,
+    decode_base64,
+    removal_note,
+    with_attachment_lines,
+)
 from ..backend import Backend
 from ..constants import (
     ISSUE_TYPE_ALIASES,
@@ -19,7 +26,7 @@ from ..constants import (
     WHERE_DESC,
 )
 from ..query import simple_filter_rows
-from ..errors import BackendError, ToolInputError
+from ..errors import BackendError, ToolInputError, TransportError, backend_error_payload
 from ..estimates import off_scale_warning
 from ..shapes import (
     COMPACT_ISSUE_FIELDS,
@@ -283,6 +290,11 @@ async def issue_view(
         subs = []
     iss["sub_issue_count"] = len(subs)
     iss["sub_issues"] = [compact(s, COMPACT_ISSUE_FIELDS) for s in subs]
+    try:
+        iss["attachments"] = list(await backend.list_attachments(iss["id"]) or [])
+    except BackendError:
+        # A server from before attachments (CHT-1996) has no such route.
+        iss["attachments"] = []
     return iss
 
 
@@ -599,6 +611,91 @@ async def _resolve_new_assignee(backend: Backend, iss: dict, value: str) -> str 
     return await backend.resolve_assignee(value, team_id, project_id=iss.get("project_id"))
 
 
+_PATH_DESC = (
+    "A file on the machine the MCP server runs on. Only the stdio server "
+    "(`chaotic mcp`) can read one, and not a hidden file or one in a hidden "
+    "directory outside its working directory; with the hosted server send content_base64."
+)
+_BASE64_DESC = "The file's bytes, base64-encoded. Give this or path, not both."
+_FILENAME_DESC = "The name to show for it. Defaults to the path's file name (with content_base64: 'attachment')."
+_ATTACH_TYPES = "PNG, JPEG, GIF, WebP, PDF or UTF-8 plain text, at most 10 MiB by default"
+
+
+class AttachmentInput(BaseModel):
+    """One file for issue_comment's `attach`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: Annotated[str | None, Field(description=_PATH_DESC)] = None
+    content_base64: Annotated[str | None, Field(description=_BASE64_DESC)] = None
+    filename: Annotated[str | None, Field(description=_FILENAME_DESC)] = None
+
+
+async def _file_bytes(
+    backend: Backend, path: str | None, content_base64: str | None, filename: str | None,
+) -> tuple[bytes, str | None]:
+    """A file given as `path` or `content_base64` (exactly one), and the
+    name to show for it."""
+    if (path is None) == (content_base64 is None):
+        raise ToolInputError("Give a file as path or as content_base64 (exactly one).")
+    if path is not None:
+        data, name = await backend.read_local_file(path)
+        return data, filename or name
+    return decode_base64(content_base64), filename
+
+
+async def _remove_uploaded(backend: Backend, uploaded: list[dict]) -> tuple[list[str], list[dict]]:
+    """Delete what a failed attach-and-comment uploaded; (removed ids,
+    attachments left behind)."""
+    removed, left = [], []
+    for attachment in uploaded:
+        try:
+            await backend.delete_attachment(attachment["id"])
+        except (BackendError, TransportError):
+            left.append(attachment)
+        else:
+            removed.append(attachment["id"])
+    return removed, left
+
+
+def _with_note(e: Exception, prefix: str, note: str) -> Exception:
+    """``e`` with ``prefix`` and ``note`` around its message, keeping the
+    server's structured detail (its error_code above all)."""
+    if isinstance(e, TransportError):
+        return TransportError(f"{prefix}{e}" + (f" ({note})." if note else ""), e.error_code)
+    message = backend_error_payload(e)["message"].rstrip(".")
+    full = f"{prefix}{message}" + (f" ({note})." if note else ".")
+    detail = {**e.detail, "message": full} if isinstance(e.detail, dict) else {"message": full}
+    return BackendError(full, e.http_status, detail)
+
+
+def _unanswered(e: Exception) -> bool:
+    """A write that went out and got no answer: it may have been done.
+    The stdio client says so with `write_outcome_unknown` (CHT-1957); a
+    connection refused, or any answer from the server, means it was not."""
+    if isinstance(e, TransportError):
+        return e.error_code != "connect_error"
+    return isinstance(e.detail, dict) and e.detail.get("error_code") == OUTCOME_UNKNOWN
+
+
+async def issue_attach(
+    backend: Backend,
+    identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
+    path: Annotated[str | None, Field(description=_PATH_DESC)] = None,
+    content_base64: Annotated[str | None, Field(description=_BASE64_DESC)] = None,
+    filename: Annotated[str | None, Field(description=_FILENAME_DESC)] = None,
+) -> dict:
+    """Attach a file to an issue with no comment: a screenshot as
+    evidence, say. The file is a PNG, JPEG, GIF, WebP, PDF or UTF-8
+    plain text, at most 10 MiB by default. Returns the attachment; its
+    `markdown` is the line that shows it in a comment. To attach files
+    with a comment, use issue_comment's `attach`."""
+    iss = await backend.get_issue(identifier)
+    data, name = await _file_bytes(backend, path, content_base64, filename)
+    attachment = await backend.upload_attachment(iss["id"], data, name)
+    return {**attachment, "markdown": attachment_markdown(attachment)}
+
+
 async def issue_comment(
     backend: Backend,
     identifier: Annotated[str, Field(description="Issue identifier, e.g. CHT-123.")],
@@ -607,12 +704,24 @@ async def issue_comment(
         str | None,
         Field(description="Also assign the issue: 'me', a user/agent id, or a name/email.")
     ] = None,
+    attach: Annotated[
+        list[AttachmentInput] | None,
+        Field(description=(
+            f"Files to attach with the comment ({_ATTACH_TYPES}), each as "
+            "{path} or {content_base64, filename}. They are uploaded first; "
+            "the comment then ends with a line for each (images show inline)."
+        )),
+    ] = None,
 ) -> dict:
     """Add a comment to an issue, optionally assigning it in the same call.
 
     An @handle that reached nobody (unknown, or ambiguous: it names
     several principals) is reported back in `warnings`, an ambiguous one
     with the unique handles to use instead (absent otherwise).
+
+    With `attach`, the comment carries `attachments`. If a file is
+    refused, nothing is posted and the files already uploaded are
+    removed again; the error says so.
     """
     iss = await backend.get_issue(identifier)
     # Resolve the assignee before posting, so a name that resolves to
@@ -621,9 +730,44 @@ async def issue_comment(
     assignee_id = None
     if assign_to:
         assignee_id = await _resolve_new_assignee(backend, iss, assign_to)
-    comment = await backend.create_comment(iss["id"], content)
+    # Every file is read before any is sent: a bad path or bad base64
+    # leaves nothing behind.
+    files = []
+    for item in attach or []:
+        # A direct call (a test, an in-process caller) may pass plain dicts.
+        if not isinstance(item, AttachmentInput):
+            try:
+                item = AttachmentInput.model_validate(item)
+            except ValueError as e:
+                raise ToolInputError(f"attach: each file is {{path}} or {{content_base64, filename}} ({e}).") from e
+        files.append(await _file_bytes(backend, item.path, item.content_base64, item.filename))
+    uploaded: list[dict] = []
+    for data, name in files:
+        try:
+            uploaded.append(await backend.upload_attachment(iss["id"], data, name))
+        except (BackendError, TransportError) as e:
+            removed, left = await _remove_uploaded(backend, uploaded)
+            note = removal_note(removed, left)
+            if _unanswered(e):
+                note = "; ".join(filter(None, [note, f"{name or 'that file'} itself may have been stored: see issue_view"]))
+            raise _with_note(e, f"Could not attach {name or 'a file'}, so the comment was not posted: ", note) from e
+    body = with_attachment_lines(content, uploaded)
+    try:
+        comment = await backend.create_comment(iss["id"], body)
+    except (BackendError, TransportError) as e:
+        if not uploaded:
+            raise
+        if _unanswered(e):
+            # The comment may be there, linking to them: keep them.
+            kept = ", ".join(f"{a.get('filename')} ({a.get('id')})" for a in uploaded)
+            raise _with_note(e, "The comment may or may not have been posted: ", f"its files are attached: {kept}") from e
+        # The server answered: the comment is not there.
+        removed, left = await _remove_uploaded(backend, uploaded)
+        raise _with_note(e, "The comment was not posted: ", removal_note(removed, left)) from e
     if "warnings" in comment and not comment["warnings"]:
         comment = {k: v for k, v in comment.items() if k != "warnings"}
+    if uploaded:
+        comment = {**comment, "attachments": uploaded}
     if assign_to:
         await backend.update_issue(iss["id"], assignee_id=assignee_id)
     return comment

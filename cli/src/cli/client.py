@@ -4,7 +4,7 @@ import sys
 import time
 import uuid
 import httpx
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 from cli.config import get_api_url, get_token, get_api_key
 from cli import session_identity
 from cli.principals import principal_label
@@ -242,6 +242,18 @@ class _WriteAttempts:
         return response
 
 
+def disposition_filename(header: str | None) -> str | None:
+    """The file name a Content-Disposition header gives: its RFC 5987
+    `filename*` when it has one, else its quoted `filename`."""
+    if not header:
+        return None
+    match = re.search(r"filename\*=UTF-8''([^;\s]+)", header, re.IGNORECASE)
+    if match:
+        return unquote(match.group(1))
+    match = re.search(r'filename="([^"]*)"', header, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
 class Client:
     """API client."""
 
@@ -305,7 +317,7 @@ class Client:
 
     def _request(
         self, method: str, path: str, data: dict = None, *, as_configured: bool = False,
-        content: bytes | None = None,
+        content: bytes | None = None, raw: bool = False,
     ) -> dict | None:
         """Make API request.
 
@@ -324,6 +336,11 @@ class Client:
         a gateway's 502/503/504), since the server then does it at most
         once. A write left without an answer, or whose later answers do
         not say what became of it, raises WriteOutcomeUnknown.
+
+        `content` sends a raw body (with its Content-Length, which httpx
+        sets for bytes); `raw` returns a successful answer's body
+        unparsed, as {"content": bytes, "content_type",
+        "content_disposition"} (an attachment's bytes, CHT-1996).
         """
         ref = credential = None
         if not as_configured:
@@ -356,7 +373,8 @@ class Client:
                 if timeout is not None:
                     kwargs["timeout"] = timeout
                 if content is not None:
-                    # A raw body (a profile picture, CHT-1992).
+                    # A raw body (a profile picture, CHT-1992; an
+                    # attachment, CHT-1996).
                     kwargs["content"] = content
                     kwargs["headers"] = {**kwargs["headers"], "Content-Type": "application/octet-stream"}
                 return send(url, **kwargs)
@@ -389,6 +407,14 @@ class Client:
                 response = send_once(key)
             if attempts is not None:
                 response = attempts.settle(response)
+
+            if raw and response.is_success:
+                headers = getattr(response, "headers", None) or {}
+                return {
+                    "content": response.content,
+                    "content_type": headers.get("content-type"),
+                    "content_disposition": headers.get("content-disposition"),
+                }
 
             if response.status_code == 204:
                 return None
@@ -959,6 +985,29 @@ class Client:
     # Comments
     def create_comment(self, issue_id: str, content: str) -> dict:
         return self._request("POST", f"/issues/{issue_id}/comments", {"content": content})
+
+    # Attachments (CHT-1996)
+    def upload_attachment(
+        self, issue_id: str, data: bytes, filename: str | None = None, comment_id: str | None = None,
+    ) -> dict:
+        """Attach a file to an issue: the raw bytes as the body, which the
+        server identifies by their content. Sent with an Idempotency-Key
+        and a Content-Length, so a resend after a lost answer stores it
+        once."""
+        path = self._with_query(f"/issues/{issue_id}/attachments", filename=filename, comment_id=comment_id)
+        return self._request("POST", path, content=data)
+
+    def list_attachments(self, issue_id: str) -> list:
+        return self._request("GET", f"/issues/{issue_id}/attachments")
+
+    def download_attachment(self, attachment_id: str) -> dict:
+        """An attachment's bytes, as {"content", "content_type",
+        "filename"}: the name the server gave in Content-Disposition."""
+        result = self._request("GET", f"/attachments/{attachment_id}/content", raw=True)
+        return {**result, "filename": disposition_filename(result.get("content_disposition"))}
+
+    def delete_attachment(self, attachment_id: str):
+        return self._request("DELETE", f"/attachments/{attachment_id}")
 
     def get_comments(self, issue_id: str, limit: int | None = None, skip: int | None = None) -> list:
         return self._request("GET", self._with_query(f"/issues/{issue_id}/comments", skip=skip, limit=limit))

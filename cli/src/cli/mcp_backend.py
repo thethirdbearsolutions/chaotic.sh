@@ -32,12 +32,14 @@ from __future__ import annotations
 
 import functools
 import sys
+from pathlib import Path
 
 import anyio
 import click
 import httpx
 
 from chaotic_mcp_tools import BackendError, Capabilities, ToolInputError, TransportError
+from chaotic_mcp_tools.attachments import read_local_file
 
 from .client import APIError
 
@@ -45,6 +47,31 @@ from .client import APIError
 def _main():
     """Late-bind to cli.main (mirrors every other commands/*.py module)."""
     return sys.modules['cli.main']
+
+
+def _hidden(path: str) -> bool:
+    """Whether `path`, or what it points to, is a hidden file or lies
+    inside a hidden directory. A hidden directory below the working
+    directory is allowed (an agent's worktree under `.claude/`, say),
+    unless the working directory holds the home directory, where
+    `~/.ssh` and the like would then count as "below" it."""
+    expanded = Path(path).expanduser().absolute()
+    try:
+        resolved = expanded.resolve()
+    except (OSError, RuntimeError):
+        resolved = expanded
+    cwd = Path.cwd().resolve()
+    home = Path.home().resolve()
+    below_cwd_counts = not (home == cwd or home.is_relative_to(cwd))
+    for candidate in (expanded, resolved):
+        if candidate.name.startswith("."):
+            return True
+        directory = candidate.parent
+        if below_cwd_counts and directory.is_relative_to(cwd):
+            continue
+        if any(part.startswith(".") and part not in (".", "..") for part in directory.parts):
+            return True
+    return False
 
 
 # The HTTP /mcp's words for a project-scoped key without a team. Such a
@@ -335,6 +362,32 @@ class RestBackend:
 
     async def list_comments(self, issue_id: str, limit: int) -> list:
         return await self._call(self._client().get_comments, issue_id, limit=limit)
+
+    # -- attachments (CHT-1996) ---------------------------------------------
+
+    async def read_local_file(self, path: str) -> tuple[bytes, str]:
+        # This server runs on the caller's machine, as the caller, and an
+        # MCP client may have no other way to read its files. A request to
+        # attach one could come from text the agent read (a ticket, a web
+        # page), so no hidden file, and nothing in a hidden directory
+        # outside the working directory, is read: that is where keys,
+        # tokens and this CLI's own credentials live (~/.ssh, ~/.chaotic,
+        # .env).
+        if _hidden(path):
+            raise ToolInputError(
+                f"Not reading {path}: it is, or is inside, a hidden file or directory, where credentials "
+                "live. Copy the file somewhere else first, or send its bytes as content_base64."
+            )
+        return await anyio.to_thread.run_sync(read_local_file, path)
+
+    async def upload_attachment(self, issue_id: str, data: bytes, filename: str | None) -> dict:
+        return await self._call(self._client().upload_attachment, issue_id, data, filename=filename)
+
+    async def list_attachments(self, issue_id: str) -> list:
+        return await self._call(self._client().list_attachments, issue_id)
+
+    async def delete_attachment(self, attachment_id: str) -> None:
+        await self._call(self._client().delete_attachment, attachment_id)
 
     async def list_sub_issues(self, issue_id: str, limit: int) -> list:
         return await self._call(self._client().get_sub_issues, issue_id, limit=limit)

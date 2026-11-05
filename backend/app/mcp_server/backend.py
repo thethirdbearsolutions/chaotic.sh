@@ -32,6 +32,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from chaotic_mcp_tools import BackendError, Capabilities, ToolInputError, backend_error_payload
 
+from app.api import attachments as attachments_api
 from app.api import documents as documents_api
 from app.api import inbox as inbox_api
 from app.api import issues as issues_api
@@ -45,6 +46,7 @@ from app.enums import IssuePriority, IssueRelationType, IssueStatus, IssueType, 
 from app.api.deps import can_access_document, check_not_app_session
 from app.api.visibility import can_see_project
 from app.auth.access import Access, access_of, authorize
+from app.config import get_settings
 from app.mcp_server import scope
 from app.mcp_server.context import get_current_mcp_principal, get_current_mcp_user
 from app.schemas.document import DocumentCreate, DocumentUpdate
@@ -53,6 +55,7 @@ from app.schemas.issue import (
 )
 from app.schemas.ritual import RitualAttestationCreate, RitualRejectCreate
 from app.schemas.user import UserUpdate
+from app.services.attachment_service import too_large
 from app.services.project_service import ProjectService
 
 
@@ -335,6 +338,38 @@ class InProcessBackend:
     @_translated(issues_api.list_comments)
     async def list_comments(self, issue_id: str, limit: int) -> list:
         return _dump_list(await issues_api.list_comments(issue_id, self._user, limit=limit))
+
+    # -- attachments (CHT-1996) ----------------------------------------------
+
+    @_translated(Access.READ)
+    async def read_local_file(self, path: str) -> tuple[bytes, str]:
+        # This server runs on the Chaotic host, not the caller's machine:
+        # a path would name a file of the server's (CHT-1996).
+        raise ToolInputError(
+            "This MCP server cannot read files on your machine: send the file as content_base64 "
+            "(with filename), or use the stdio server (`chaotic mcp`), which can read a path."
+        )
+
+    @_translated(attachments_api.attach_file)
+    async def upload_attachment(self, issue_id: str, data: bytes, filename: str | None) -> dict:
+        max_bytes = get_settings().attachment_max_bytes
+        if len(data) > max_bytes:
+            # What REST answers from the Content-Length, before any work.
+            refused = too_large(max_bytes)
+            raise HTTPException(status_code=413, detail={"error_code": refused.error_code, "message": str(refused)})
+
+        async def chunks():
+            yield data
+
+        return _dump(await attachments_api.attach_file(issue_id, self._user, chunks(), filename=filename))
+
+    @_translated(attachments_api.list_attachments)
+    async def list_attachments(self, issue_id: str) -> list:
+        return _dump_list(await attachments_api.list_attachments(issue_id, self._user))
+
+    @_translated(attachments_api.delete_attachment)
+    async def delete_attachment(self, attachment_id: str) -> None:
+        await attachments_api.delete_attachment(attachment_id, self._user)
 
     @_translated(issues_api.list_sub_issues)
     async def list_sub_issues(self, issue_id: str, limit: int) -> list:

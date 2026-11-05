@@ -1741,7 +1741,7 @@ class TestSweepCoverage:
     # output is already covered via another tool's result.
     NOT_SWEPT = {
         # mutations -- swept indirectly via the read tools that show them
-        "issue_create", "issue_update", "issue_comment", "issue_start",
+        "issue_create", "issue_update", "issue_comment", "issue_attach", "issue_start",
         "issue_block", "issue_unblock", "issue_label",
         "doc_create", "doc_update", "doc_link", "doc_unlink",
         "sprint_add", "sprint_remove", "sprint_close",

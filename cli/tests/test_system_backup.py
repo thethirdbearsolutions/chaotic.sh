@@ -5,7 +5,11 @@ The server runs SQLite in WAL mode. Committed transactions sit in
 server is up produced backups missing recent writes, and restoring a
 copy next to a stale WAL would replay that WAL onto the restored file.
 """
+import hashlib
+import io
+import os
 import sqlite3
+import tarfile
 
 import pytest
 
@@ -137,3 +141,178 @@ class TestRestoreBackup:
         assert system.restore_backup(backup, port=24267) is False
         assert _count(db) == 51
         assert system.restore_backup(backup, port=24268) is True
+
+
+def _blob(store, data):
+    """Put `data` in the blob store under its sha256, as the server does."""
+    sha = hashlib.sha256(data).hexdigest()
+    path = store / sha[:2] / sha
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return sha, path
+
+
+class TestAttachmentsBackup:
+    """The blob store is archived beside each backup and put back on
+    restore (CHT-1996)."""
+
+    @pytest.fixture
+    def store(self, live_db):
+        db, _ = live_db
+        return db.parent / "attachments"
+
+    @pytest.fixture
+    def installed(self, monkeypatch):
+        monkeypatch.setattr(system, "is_server_installed", lambda: True)
+        monkeypatch.setattr(system, "load_server_json", lambda: {"port": 1})
+        monkeypatch.setattr(system, "_socket_active", lambda: False)
+        monkeypatch.setattr(system, "is_port_in_use", lambda port, host="127.0.0.1": False)
+
+    def test_the_backup_archives_the_blobs_and_nothing_else(self, live_db, store):
+        sha, _ = _blob(store, b"png bytes")
+        (store / "tmp").mkdir()
+        (store / "tmp" / "upload.part").write_bytes(b"half")
+        (store / sha[:2] / "stray.txt").write_bytes(b"not a blob")
+
+        backup = system.create_backup()
+
+        archive = system.attachments_backup_for(backup)
+        assert archive.name == backup.name.replace("chaotic.db.backup-", "attachments.backup-") + ".tar"
+        with tarfile.open(archive) as tar:
+            assert tar.getnames() == [f"{sha[:2]}/{sha}"]
+        assert not archive.with_name(archive.name + ".partial").exists()
+
+    def test_no_store_no_archive(self, live_db):
+        backup = system.create_backup()
+        assert not system.attachments_backup_for(backup).exists()
+
+    def test_the_upgrade_backup_leaves_the_blobs_out(self, live_db, store):
+        _blob(store, b"png bytes")
+        backup = system.create_backup(attachments=False)
+        assert backup.exists() and not system.attachments_backup_for(backup).exists()
+
+    def test_a_failed_archive_discards_the_database_backup(self, live_db, store, monkeypatch):
+        _blob(store, b"png bytes")
+
+        def broken(*a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(system.tarfile, "open", broken)
+
+        with pytest.raises(system.BackupError, match="attachments"):
+            system.create_backup()
+        db, _ = live_db
+        assert list(db.parent.glob("chaotic.db.backup-*")) == []
+        assert list(db.parent.glob("attachments.backup-*")) == []
+
+    def test_restore_puts_missing_blobs_back_and_leaves_the_rest(self, live_db, store):
+        _, kept = _blob(store, b"still here")
+        _, gone = _blob(store, b"deleted since")
+        backup = system.create_backup()
+        gone.unlink()
+        _, newer = _blob(store, b"uploaded after the backup")
+
+        restored, skipped = system.restore_attachments(system.attachments_backup_for(backup))
+
+        assert (restored, skipped) == (1, 0)
+        assert gone.read_bytes() == b"deleted since"
+        assert kept.exists() and newer.exists()
+        assert list(store.rglob("*.restoring")) == []
+
+    def test_restore_refuses_members_that_are_not_blobs_or_do_not_match(self, live_db, store, tmp_path):
+        archive = tmp_path / "attachments.backup-x.tar"
+        good = b"good"
+        good_sha = hashlib.sha256(good).hexdigest()
+        lying_sha = hashlib.sha256(b"something else").hexdigest()
+        with tarfile.open(archive, "w") as tar:
+            for name, data in [
+                (f"{good_sha[:2]}/{good_sha}", good),
+                (f"{lying_sha[:2]}/{lying_sha}", b"not what the name says"),
+                ("../../escape", b"x"),
+                (f"/{good_sha[:2]}/abs", b"x"),
+            ]:
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+            link = tarfile.TarInfo(f"{lying_sha[:2]}/{lying_sha[:2]}{'0' * 62}")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "/etc/passwd"
+            tar.addfile(link)
+
+        restored, skipped = system.restore_attachments(archive)
+
+        assert (restored, skipped) == (1, 4)
+        assert (store / good_sha[:2] / good_sha).read_bytes() == good
+        assert not (store / lying_sha[:2] / lying_sha).exists()
+        assert not (store / lying_sha[:2] / f"{lying_sha[:2]}{'0' * 62}").exists()
+        assert not (tmp_path / "escape").exists() and not (store.parent.parent / "escape").exists()
+
+    def test_cleanup_removes_an_old_backups_archive(self, live_db, store, monkeypatch):
+        db, _ = live_db
+        _blob(store, b"x")
+        stamps = iter(["20260101-000000", "20260102-000000"])
+        monkeypatch.setattr(system, "get_backup_path", lambda ts=None: db.parent / f"chaotic.db.backup-{next(stamps)}")
+        old = system.create_backup()
+        os.utime(old, (1, 1))
+        new = system.create_backup()
+
+        system.cleanup_old_backups(keep=1)
+
+        assert not old.exists() and not system.attachments_backup_for(old).exists()
+        assert new.exists() and system.attachments_backup_for(new).exists()
+
+    def test_the_restore_command_restores_both(self, live_db, store, installed):
+        from click.testing import CliRunner
+
+        db, writer = live_db
+        _, path = _blob(store, b"evidence")
+        backup = system.create_backup()
+        path.unlink()
+        writer.close()
+
+        stamp = backup.name.removeprefix("chaotic.db.backup-")
+        result = CliRunner().invoke(system.system, ["backup", "--restore", stamp])
+
+        assert result.exit_code == 0, result.output
+        assert "Database restored" in result.output
+        assert "Attachments restored: 1 file(s)" in result.output
+        assert path.read_bytes() == b"evidence"
+
+    def test_an_unreadable_archive_fails_the_restore_after_the_database(self, live_db, store, installed):
+        from click.testing import CliRunner
+
+        db, writer = live_db
+        _blob(store, b"evidence")
+        backup = system.create_backup()
+        system.attachments_backup_for(backup).write_bytes(b"not a tar")
+        writer.close()
+
+        result = CliRunner().invoke(system.system, ["backup", "--restore", "latest"])
+
+        assert result.exit_code == 1, result.output
+        assert "Database restored" in result.output
+        assert "Could not restore the attachments" in result.output
+
+    def test_a_backup_without_an_archive_says_so(self, live_db, installed):
+        from click.testing import CliRunner
+
+        db, writer = live_db
+        system.create_backup()
+        writer.close()
+
+        result = CliRunner().invoke(system.system, ["backup", "--restore", "latest"])
+
+        assert result.exit_code == 0, result.output
+        assert "no attachments archive" in result.output
+
+    def test_backup_and_list_report_the_archive(self, live_db, store, installed):
+        from click.testing import CliRunner
+
+        _blob(store, b"evidence")
+
+        made = CliRunner().invoke(system.system, ["backup"])
+        listed = CliRunner().invoke(system.system, ["backup", "--list"])
+
+        assert made.exit_code == 0, made.output
+        assert "Attachments archived: attachments.backup-" in made.output
+        assert "attachments" in listed.output

@@ -83,13 +83,7 @@ ROUTES_NOT_FOR_THE_CLIENT = {
 
 # Routes that exist server-side but have no Client method yet. Empty since
 # CHT-1383; a new route lands here (with a reason) or gets a method.
-_ATTACHMENTS_CLI = "attachments (CHT-1996): the backend lands first; `issue attach` and `comment --attach` come next"
-ROUTES_WITHOUT_A_CLIENT_METHOD: dict = {
-    ("POST", "/api/issues/{issue_id}/attachments"): _ATTACHMENTS_CLI,
-    ("GET", "/api/issues/{issue_id}/attachments"): _ATTACHMENTS_CLI,
-    ("GET", "/api/attachments/{attachment_id}/content"): _ATTACHMENTS_CLI,
-    ("DELETE", "/api/attachments/{attachment_id}"): _ATTACHMENTS_CLI,
-}
+ROUTES_WITHOUT_A_CLIENT_METHOD: dict = {}
 
 # Query parameters a reachable route declares that the client cannot emit.
 # Keyed by (method, route template) -> {param: reason}. Pagination is no

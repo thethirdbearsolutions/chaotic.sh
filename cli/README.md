@@ -734,6 +734,7 @@ registers them; the canonical descriptions and schemas are in
 | `issue_create` | `issue create` |
 | `issue_update` | `issue update` + `issue assign` (status/priority/estimate/assignee/title/description/type/parent; `assignee: "unassigned"` clears; `no_parent` is `--no-parent`; `attest` map for ritual notes) |
 | `issue_comment` | `issue comment` |
+| `issue_attach` | `issue attach` |
 | `issue_start` | `issue start` |
 | `issue_ready` | `issue ready` |
 | `issue_relations` | `issue relations` |

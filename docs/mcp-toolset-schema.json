@@ -495,6 +495,62 @@
         "type": "object"
       }
     },
+    "issue_attach": {
+      "description": "Attach a file to an issue with no comment: a screenshot as\nevidence, say. The file is a PNG, JPEG, GIF, WebP, PDF or UTF-8\nplain text, at most 10 MiB by default. Returns the attachment; its\n`markdown` is the line that shows it in a comment. To attach files\nwith a comment, use issue_comment's `attach`.",
+      "inputSchema": {
+        "properties": {
+          "content_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The file's bytes, base64-encoded. Give this or path, not both.",
+            "title": "Content Base64"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The name to show for it. Defaults to the path's file name (with content_base64: 'attachment').",
+            "title": "Filename"
+          },
+          "identifier": {
+            "description": "Issue identifier, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A file on the machine the MCP server runs on. Only the stdio server (`chaotic mcp`) can read one, and not a hidden file or one in a hidden directory outside its working directory; with the hosted server send content_base64.",
+            "title": "Path"
+          }
+        },
+        "required": [
+          "identifier"
+        ],
+        "title": "issue_attachArguments",
+        "type": "object"
+      }
+    },
     "issue_block": {
       "description": "Relate two issues: by default, `identifier` blocks `blocked`.\n\nDirection matters for `blocks` -- the issue named first is the one\nholding the other up, and it's the second one that stops showing up\nin issue_ready.\n\nFor closing a duplicate there is no single MCP tool: the CLI's\n`chaotic issue duplicate DUP ORIGINAL` does it in one step. Over MCP,\nrelate with relation_type='duplicates', then issue_comment, then\nissue_update status='canceled'.\n\nRe-relating a pair with the same relation_type is a no-op that\nreturns the existing relation. A plain relates_to on the pair (such\nas the auto-link made when one issue's text names the other) is\nupgraded to the 'blocks' or 'duplicates' you ask for. A 'blocks'\npair asked to become 'duplicates' (or the reverse) is refused with a\nconflict naming the existing relation: issue_unblock it first.",
       "inputSchema": {
@@ -530,8 +586,57 @@
       }
     },
     "issue_comment": {
-      "description": "Add a comment to an issue, optionally assigning it in the same call.\n\nAn @handle that reached nobody (unknown, or ambiguous: it names\nseveral principals) is reported back in `warnings`, an ambiguous one\nwith the unique handles to use instead (absent otherwise).",
+      "description": "Add a comment to an issue, optionally assigning it in the same call.\n\nAn @handle that reached nobody (unknown, or ambiguous: it names\nseveral principals) is reported back in `warnings`, an ambiguous one\nwith the unique handles to use instead (absent otherwise).\n\nWith `attach`, the comment carries `attachments`. If a file is\nrefused, nothing is posted and the files already uploaded are\nremoved again; the error says so.",
       "inputSchema": {
+        "$defs": {
+          "AttachmentInput": {
+            "additionalProperties": false,
+            "description": "One file for issue_comment's `attach`.",
+            "properties": {
+              "content_base64": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The file's bytes, base64-encoded. Give this or path, not both.",
+                "title": "Content Base64"
+              },
+              "filename": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The name to show for it. Defaults to the path's file name (with content_base64: 'attachment').",
+                "title": "Filename"
+              },
+              "path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "A file on the machine the MCP server runs on. Only the stdio server (`chaotic mcp`) can read one, and not a hidden file or one in a hidden directory outside its working directory; with the hosted server send content_base64.",
+                "title": "Path"
+              }
+            },
+            "title": "AttachmentInput",
+            "type": "object"
+          }
+        },
         "properties": {
           "assign_to": {
             "anyOf": [
@@ -545,6 +650,22 @@
             "default": null,
             "description": "Also assign the issue: 'me', a user/agent id, or a name/email.",
             "title": "Assign To"
+          },
+          "attach": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/AttachmentInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Files to attach with the comment (PNG, JPEG, GIF, WebP, PDF or UTF-8 plain text, at most 10 MiB by default), each as {path} or {content_base64, filename}. They are uploaded first; the comment then ends with a line for each (images show inline).",
+            "title": "Attach"
           },
           "content": {
             "description": "Comment body (markdown).",
