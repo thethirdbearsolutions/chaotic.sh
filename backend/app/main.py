@@ -353,6 +353,7 @@ def _render_index(request: Request):
     info = _version_info()
     response = templates.TemplateResponse(request, "index.html", {
         "asset_version": info["bundle_hash"],
+        "editor_version": info["editor_hash"],
         "css_version": info["css_hash"],
         "git_sha_short": info["git_sha_short"],
     })

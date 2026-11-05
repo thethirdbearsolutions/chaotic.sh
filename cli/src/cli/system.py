@@ -2440,6 +2440,10 @@ def rebuild_frontend() -> tuple[bool, str]:
 # migrate, copy, start.
 STAGING_DIR = GLOBAL_CONFIG_DIR / "staging"
 FRONTEND_BUNDLE = Path("frontend") / "static" / "js" / "app.bundle.js"
+# Built beside app.bundle.js and loaded by it on demand (CHT-2028): the
+# rich comment editor. Copied in with it, before it, so the new app bundle
+# never asks for an old editor.
+FRONTEND_SIDE_BUNDLES = ("editor.bundle.js",)
 STAGING_MARKER = ".chaotic-staging"
 
 
@@ -2575,17 +2579,21 @@ def install_prepared_frontend(prepared: PreparedRelease | None) -> tuple[bool, s
         return False, (f"staged bundle is for {prepared.commit[:7]}, not the checked-out {head[:7]}; "
                        "serving the committed bundle")
     dest = PROJECT_DIR / FRONTEND_BUNDLE
-    tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(prepared.bundle, tmp)
-        os.replace(tmp, dest)
-    except OSError as e:
+    copies = [(prepared.bundle.with_name(name), dest.with_name(name)) for name in FRONTEND_SIDE_BUNDLES]
+    copies = [(src, to) for src, to in copies if src.is_file()]
+    copies.append((prepared.bundle, dest))
+    for src, to in copies:
+        tmp = to.with_name(f".{to.name}.{os.getpid()}.tmp")
         try:
-            tmp.unlink()
-        except OSError:
-            pass
-        return False, f"could not copy the built bundle: {e}"
+            to.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, tmp)
+            os.replace(tmp, to)
+        except OSError as e:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return False, f"could not copy the built bundle: {e}"
     return True, "built before the stop; copied in"
 
 

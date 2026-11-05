@@ -285,3 +285,14 @@ export function isApprovalsExplainerDismissed() {
 export function dismissApprovalsExplainer() {
     set('approvals_explainer_dismissed', '1');
 }
+
+// --- Comment composer mode (CHT-2028) ---
+
+/** 'markdown' when the person last switched the comment box to raw markdown, else 'rich'. */
+export function getComposerMode() {
+    return get('composer_mode') === 'markdown' ? 'markdown' : 'rich';
+}
+
+export function setComposerMode(mode) {
+    set('composer_mode', mode === 'markdown' ? 'markdown' : 'rich');
+}
