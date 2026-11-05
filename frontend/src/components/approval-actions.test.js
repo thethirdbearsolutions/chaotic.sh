@@ -35,4 +35,17 @@ describe('renderApprovalActions', () => {
         expect(out).toHaveLength(1);
         expect(out[0].getAttribute('aria-busy')).toBe('true');
     });
+
+    it('takes the caller class for Send back in a row of buttons', () => {
+        const [, back] = buttons(renderApprovalActions('review', {
+            approveAction: 'a', sendBackAction: 'b', sendBackClass: 'inbox-action-btn',
+        }));
+        expect(back.className).toBe('inbox-action-btn');
+    });
+
+    it('keeps Send back a text button by default, and busy with the primary step', () => {
+        const [, back] = buttons(renderApprovalActions('review', { approveAction: 'a', sendBackAction: 'b', busy: true }));
+        expect(back.className).toBe('ticket-gate-text-btn');
+        expect(back.getAttribute('aria-disabled')).toBe('true');
+    });
 });
