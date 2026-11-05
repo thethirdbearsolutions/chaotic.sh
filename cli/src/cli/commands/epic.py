@@ -178,6 +178,7 @@ def register(cli):
         # JSON output
         if m.is_json_output():
             issue['comments'] = fetch_all_comments(issue["id"])
+            issue['comment_count'] = len(issue['comments'])
             try:
                 issue['sub_issues'] = _client().get_sub_issues(issue["id"])
             except m.APIError:

@@ -7,7 +7,9 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def mock_dependencies(patched_client, patched_auth, patched_project):
+def mock_dependencies(patched_client, patched_auth, patched_project, monkeypatch):
+    # The real page is 1000; 100 keeps the paging cases small.
+    monkeypatch.setattr("cli.commands.shared.COMMENT_PAGE_SIZE", 100)
     yield
 
 
@@ -127,4 +129,62 @@ def test_epic_show_json_has_every_comment(cli_runner):
     result = cli_runner.invoke(cli, ["--json", "epic", "show", "CHT-100"])
 
     assert result.exit_code == 0, result.output
-    assert len(json.loads(result.output)["comments"]) == 150
+    data = json.loads(result.output)
+    assert len(data["comments"]) == 150
+    assert data["comment_count"] == 150
+
+
+def test_a_page_overlapping_the_last_one_is_deduped(cli_runner):
+    from cli.main import cli, client
+    rows = _comments(150)
+    pages = [rows[:100], rows[95:150]]
+    _paged_client(client, 0)
+    client.get_comments = MagicMock(side_effect=lambda *a, **k: pages.pop(0))
+
+    result = cli_runner.invoke(cli, ["--json", "issue", "show", "CHT-100"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert [c["id"] for c in data["comments"]] == [f"c{i}" for i in range(150)]
+
+
+def test_last_zero_is_refused(cli_runner):
+    from cli.main import cli, client
+    _paged_client(client, 3)
+
+    result = cli_runner.invoke(cli, ["issue", "show", "CHT-100", "--last", "0"])
+
+    assert result.exit_code == 2
+
+
+def test_last_with_several_identifiers_is_refused(cli_runner):
+    from cli.main import cli, client
+    _paged_client(client, 3)
+
+    for args in (["issue", "show"], ["--json", "issue", "show"], ["issue", "view"]):
+        result = cli_runner.invoke(cli, args + ["CHT-100", "CHT-101", "--last", "2"])
+        assert result.exit_code == 2, result.output
+        assert "--last takes a single identifier" in result.output
+
+
+def test_formatted_view_last_cuts_too(cli_runner):
+    from cli.main import cli, client
+    _paged_client(client, 12)
+
+    result = cli_runner.invoke(cli, ["issue", "view", "CHT-100", "--last", "2"])
+
+    assert result.exit_code == 0, result.output
+    assert "newest 2 of 12" in result.output
+    assert "comment number 11" in result.output
+    assert "comment number 9" not in result.output
+
+
+def test_last_past_the_total_shows_everything_without_a_note(cli_runner):
+    from cli.main import cli, client
+    _paged_client(client, 3)
+
+    result = cli_runner.invoke(cli, ["issue", "show", "CHT-100", "--last", "50"])
+
+    assert result.exit_code == 0, result.output
+    assert "comment number 0" in result.output
+    assert "newest" not in result.output

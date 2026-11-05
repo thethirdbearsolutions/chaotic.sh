@@ -847,8 +847,9 @@ def register(cli):
         """Show issue details.
 
         Pass one identifier for detailed view, or multiple for a summary table.
-        Every comment is shown, oldest first; --last N keeps only the newest N
-        (the JSON then carries comment_count, the total).
+        Every comment is shown, oldest first; --last N keeps only the newest
+        N, and takes a single identifier. The single-issue JSON always
+        carries comment_count, the total.
 
         Examples:
             chaotic issue show CHT-123
@@ -859,6 +860,8 @@ def register(cli):
         if not identifiers:
             console.print("[yellow]Usage: chaotic issue show IDENTIFIER [IDENTIFIER...][/yellow]")
             return
+        if last and len(identifiers) > 1:
+            raise click.UsageError("--last takes a single identifier")
 
         # JSON output mode (CHT-170)
         if m.is_json_output():
