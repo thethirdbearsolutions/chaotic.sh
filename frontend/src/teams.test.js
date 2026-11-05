@@ -11,6 +11,7 @@ import {
   loadTeamMembersQuiet,
   loadTeamMembers,
   loadTeamInvitations,
+  clearTeamInvitations,
   loadLabels,
   showInviteModal,
   handleInvite,
@@ -716,6 +717,38 @@ describe('loadTeamInvitations', () => {
       expect(list.innerHTML).toBe('');
       expect(list.innerHTML).not.toContain("Couldn't load invitations");
     });
+  });
+});
+
+describe('invitations never outlive their team (CHT-2044 review)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="people-invitations"><span id="people-invitations-count"></span><div id="team-invitations-list"></div></div>';
+    vi.clearAllMocks();
+    setCurrentTeam({ id: 'team-1' });
+  });
+  afterEach(() => setCurrentTeam(null));
+
+  it('clears the list and hides the section', async () => {
+    api.getTeamInvitations.mockResolvedValue([{ id: 'inv-1', email: 'a@example.com', role: 'member', expires_at: '2024-12-31' }]);
+    await loadTeamInvitations();
+    clearTeamInvitations();
+    expect(document.getElementById('team-invitations-list').innerHTML).toBe('');
+    expect(document.getElementById('people-invitations').classList.contains('hidden')).toBe(true);
+  });
+
+  it('drops an answer that lands after a clear or a team switch', async () => {
+    let resolve;
+    api.getTeamInvitations.mockImplementation(() => new Promise(r => { resolve = r; }));
+    const pending = loadTeamInvitations();
+    setCurrentTeam({ id: 'team-2' });
+    resolve([{ id: 'inv-1', email: 'a@example.com', role: 'member', expires_at: '2024-12-31' }]);
+    await pending;
+    expect(document.getElementById('team-invitations-list').textContent).not.toContain('a@example.com');
+  });
+
+  it('acts on a click, not the keydown Enter also fires', async () => {
+    await teamsActions['delete-invitation']({ type: 'keydown' }, { invitationId: 'inv-1' });
+    expect(api.deleteInvitation).not.toHaveBeenCalled();
   });
 });
 

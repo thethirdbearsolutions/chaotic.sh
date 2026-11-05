@@ -140,11 +140,11 @@ export function renderAgents() {
       ].filter(Boolean).join(' · ');
       return `
       <a class="list-row-2line agent-link-row" href="/people/${id}" data-action="view-person" data-user-id="${id}">
-        <span class="agent-link-avatar" aria-hidden="true">${renderAgentAvatar(agent)}</span>
-        <span class="list-row-main">
-          <span class="list-row-title">${escapeHtml(agent.name)}</span>
-          <span class="list-row-sub">${escapeHtml(sub)}</span>
-        </span>
+        <div class="agent-link-avatar" aria-hidden="true">${renderAgentAvatar(agent)}</div>
+        <div class="list-row-main">
+          <div class="list-row-title">${escapeHtml(agent.name)}${agent.is_active === false ? ' <span class="badge badge-neutral">Deactivated</span>' : ''}</div>
+          <div class="list-row-sub">${escapeHtml(sub)}</div>
+        </div>
         <span class="list-row-right list-row-sub">Open profile</span>
       </a>`;
     })
@@ -267,6 +267,9 @@ export async function handleCreateAgent(event) {
 
     // Show the API key in a new modal (only shown once)
     showAgentKeyRevealModal('Agent Created', result.api_key, Boolean(result.can_register));
+    // People lists it once the team's agents are fresh.
+    await loadAgents();
+    agentsChanged(result.id, { created: true });
   } catch (e) {
     showApiError('create agent', e);
   }
@@ -290,7 +293,9 @@ export async function generateAgentKey(agentId, agentName) {
   try {
     const result = await api.createAgentKey(agentId);
     showAgentKeyRevealModal('New Agent Key', result.key);
-    agentsChanged(agentId);
+    // Only its credentials changed: the profile refreshes those, not the page
+    // behind the reveal modal.
+    agentsChanged(agentId, { credentials: true });
   } catch (e) {
     showApiError('generate agent key', e);
   }
@@ -326,10 +331,10 @@ export async function setAgentRegistrar(agentId, agentName, makeRegistrar) {
  * Tell whatever shows this agent (its profile page, CHT-2044) that it
  * changed. An event rather than an import: the profile imports this module.
  * @param {string} agentId
- * @param {{deleted?: boolean}} [detail]
+ * @param {{deleted?: boolean, created?: boolean, credentials?: boolean}} [detail]
  */
-function agentsChanged(agentId, { deleted = false } = {}) {
-  window.dispatchEvent(new CustomEvent('chaotic:agent-changed', { detail: { agentId, deleted } }));
+function agentsChanged(agentId, { deleted = false, created = false, credentials = false } = {}) {
+  window.dispatchEvent(new CustomEvent('chaotic:agent-changed', { detail: { agentId, deleted, created, credentials } }));
 }
 
 /**
@@ -384,13 +389,16 @@ registerActions({
         closeModal();
         loadAgents();
     },
-    'delete-agent': (_event, data) => {
+    'delete-agent': (event, data) => {
+        if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
         deleteAgent(data.agentId, data.agentName);
     },
-    'generate-agent-key': (_event, data) => {
+    'generate-agent-key': (event, data) => {
+        if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
         generateAgentKey(data.agentId, data.agentName);
     },
-    'toggle-agent-registrar': (_event, data) => {
+    'toggle-agent-registrar': (event, data) => {
+        if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
         setAgentRegistrar(data.agentId, data.agentName, data.canRegister !== 'true');
     },
 });

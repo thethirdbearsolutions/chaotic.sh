@@ -24,8 +24,9 @@ import { navigateTo, saveScrollPosition, setActiveNav, navigateToIssueByIdentifi
 import { renderDescriptionContent } from './rich-text.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { updateUserInfo } from './auth.js';
-import { isCurrentUserAdmin, getMembers, loadTeamInvitations, loadTeamMembers } from './teams.js';
-import { renderAgentSections, loadAgentCredentials, revokeAgentKey, canManageAgent, agentScope, agentFor } from './agent-profile.js';
+import { isCurrentUserAdmin, getMembers, loadTeamInvitations, loadTeamMembers, clearTeamInvitations } from './teams.js';
+import { renderAgentSections, loadAgentCredentials, revokeAgentKey, canManageAgent, agentScope, agentFor, isRegistrar } from './agent-profile.js';
+import { getAgents } from './agents.js';
 import { revokeConnection } from './connected-apps.js';
 
 // The server's caps (app.schemas.user.PROFILE_LIMITS); the server enforces
@@ -123,7 +124,11 @@ export async function loadPeople() {
     if (toggle) toggle.checked = showIdle;
     // The viewer's role gates Invite, Edit team and the invitations list.
     loadTeamMembers().then(() => {
-        if (requestId === loadRequestId && isCurrentUserAdmin()) loadTeamInvitations();
+        if (requestId !== loadRequestId) return;
+        if (isCurrentUserAdmin()) loadTeamInvitations();
+        else clearTeamInvitations();
+        // The admin-only "not on the roster" rows depend on the members.
+        if (rosterTeamId === team.id) renderPeople();
     });
     try {
         const [fetched, work] = await Promise.all([fetchRoster(team.id, includeIdle), fetchWorking(team.id)]);
@@ -180,7 +185,7 @@ function rosterRow(entry) {
     const badges = [];
     if (entry.is_agent) {
         badges.push(`<span class="badge badge-neutral">${escapeHtml(agentScope(entry.project_id))}</span>`);
-        if (entry.kind === 'service' || agentFor(entry)?.can_register) badges.push('<span class="badge badge-accent">Registrar</span>');
+        if (isRegistrar(entry)) badges.push('<span class="badge badge-accent">Registrar</span>');
         else if (entry.kind === 'session') badges.push('<span class="badge badge-neutral">Session</span>');
     } else if (entry.role && entry.role !== 'member') {
         badges.push(`<span class="badge badge-neutral">${escapeHtml(rosterRole(entry))}</span>`);
@@ -216,7 +221,50 @@ export function renderPeople() {
     const me = getCurrentUser();
     const edit = me ? `<button class="btn btn-secondary btn-small" data-action="edit-profile" data-user-id="${escapeAttr(me.id)}">Edit your profile</button>` : '';
     list.innerHTML = rosterSection('Humans', people, 'No one yet.', edit)
-        + rosterSection('Agents', agents, 'No agents yet.');
+        + rosterSection('Agents', agents, 'No agents yet.')
+        + offRosterSection();
+}
+
+/**
+ * Members the roster leaves out (a deactivated account), for team admins:
+ * the Team view listed every membership, and Remove must stay reachable.
+ */
+function offRosterSection() {
+    if (!isCurrentUserAdmin()) return '';
+    const shown = new Set(roster.map(r => r.user_id));
+    const agentIds = new Set(getAgents().map(a => a.id));
+    const me = getCurrentUser()?.id;
+    const missing = getMembers().filter(m => !shown.has(m.user_id) && !agentIds.has(m.user_id));
+    if (!missing.length) return '';
+    return `
+        <div class="section-header people-section-header">
+            <h3>Not on the roster <span class="section-count">${missing.length}</span></h3>
+        </div>
+        <div class="people-rows">${missing.map(m => `
+            <div class="list-row-2line">
+                <div class="list-row-main">
+                    <div class="list-row-title">${escapeHtml(m.user_name || 'Unknown')}</div>
+                    <div class="list-row-sub">${escapeHtml(m.user_email || '')}${m.user_email ? ' · ' : ''}deactivated account, ${escapeHtml(m.role || 'member')}</div>
+                </div>
+                ${m.user_id !== me && m.role !== 'owner' ? `<div class="list-row-right"><button class="btn btn-danger-outline btn-small" data-action="remove-member" data-user-id="${escapeAttr(m.user_id)}">Remove from team</button></div>` : ''}
+            </div>`).join('')}
+        </div>
+    `;
+}
+
+/**
+ * A profile for one of the team's agents the roster leaves out (a
+ * deactivated one), from the team's agent list, so its owner can still
+ * open it and delete it.
+ */
+function entryFromAgent(agent) {
+    return {
+        user_id: agent.id, name: agent.name, avatar_url: agent.avatar_url,
+        pronouns: agent.pronouns, tagline: agent.tagline, bio: agent.bio,
+        mention_handle: null, is_agent: true, role: null, kind: agent.kind,
+        owner_id: agent.parent_user_id, owner_name: agent.parent_user_name,
+        project_id: agent.agent_project_id, idle: !!agent.idle, joined_at: agent.created_at,
+    };
 }
 
 /** May the viewer edit this entry? Their own, or an agent they own. */
@@ -272,6 +320,10 @@ export async function viewPerson(userId, pushHistory = true) {
         return;
     }
     if (stale()) return;
+    if (!entry) {
+        const agent = getAgents().find(a => a.id === userId);
+        if (agent) entry = entryFromAgent(agent);
+    }
     if (!entry) {
         showToast('Not on this team’s roster', 'error');
         // Arrived by address: leave it pointing at the roster shown.
@@ -337,7 +389,8 @@ export function renderPerson(entry, { withIssues = true } = {}) {
                 <div class="section-header"><h3>Working on</h3></div>
                 <div id="person-issues" class="person-issues"><div class="skeleton skeleton-title"></div></div>
             </section>
-            ${entry.is_agent ? renderAgentSections(entry, roster) : memberSection(entry)}
+            ${entry.is_agent ? renderAgentSections(entry, roster) : ''}
+            ${!entry.is_agent || !agentFor(entry) ? memberSection(entry) : ''}
         </div>
     `;
     if (withIssues) loadPersonIssues(entry.user_id);
@@ -366,20 +419,36 @@ function memberSection(entry) {
 }
 
 /** Redraw the profile shown, if it is this member's, after it changed. */
+function showingRoster() {
+    const view = document.getElementById('people-view');
+    return !!view && !view.classList.contains('hidden');
+}
+
 function onAgentChanged(event) {
-    const { agentId, deleted } = event.detail || {};
+    const { agentId, deleted, created, credentials } = event.detail || {};
+    if (credentials) {
+        loadAgentCredentials(agentId);
+        return;
+    }
     if (deleted) {
         roster = roster.filter(r => r.user_id !== agentId);
         if (showingProfileOf(agentId)) navigateTo('people');
+        else if (showingRoster()) renderPeople();
+        return;
+    }
+    if (created) {
+        if (showingRoster()) loadPeople();
         return;
     }
     if (showingProfileOf(agentId) && shownEntry) renderPerson(shownEntry);
+    else if (showingRoster()) renderPeople();
 }
 
 function onMemberRemoved(event) {
     const { userId } = event.detail || {};
     roster = roster.filter(r => r.user_id !== userId);
     if (showingProfileOf(userId)) navigateTo('people');
+    else if (showingRoster()) renderPeople();
 }
 
 if (typeof window !== 'undefined') {

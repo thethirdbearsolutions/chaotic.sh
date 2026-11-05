@@ -101,12 +101,14 @@ export function renderTeamList() {
 export async function selectTeam(team, isInitialLoad = false, { seed = null } = {}) {
   loadedTeamId = null;
   setCurrentTeam(team);
+  // The last team's invitations are its admins' business, not this team's.
+  clearTeamInvitations();
   document.getElementById('current-team-name').textContent = team.name;
   const mobileTeamName = document.getElementById('mobile-team-name');
   if (mobileTeamName) mobileTeamName.textContent = team.name;
   const teamDescription = document.getElementById('team-description-text');
   if (teamDescription) {
-    teamDescription.textContent = team.description || 'No description';
+    teamDescription.textContent = team.description || '';
   }
   // Close dropdown instead of toggle (fix for dropdown staying open)
   document.getElementById('team-dropdown').classList.add('hidden');
@@ -313,14 +315,16 @@ export async function loadTeamInvitations() {
   if (!getCurrentTeam()) return;
 
   const requestId = ++loadTeamInvitationsRequestId;
+  const teamId = getCurrentTeam().id;
   // CHT-1226: was the only one of the three team lists with no loading
   // state at all -- the DOM just sat at whatever it last rendered.
   const list = document.getElementById('team-invitations-list');
   if (list) list.innerHTML = memberListSkeleton();
 
   try {
-    const fetched = await api.getTeamInvitations(getCurrentTeam().id);
+    const fetched = await api.getTeamInvitations(teamId);
     if (requestId !== loadTeamInvitationsRequestId) return; // a newer loadTeamInvitations() has since started — drop this stale response
+    if (getCurrentTeam()?.id !== teamId) return; // answered for a team switched away from
     invitations = fetched;
     renderTeamInvitations();
   } catch (e) {
@@ -344,6 +348,17 @@ export async function loadTeamInvitations() {
       </div>
     `;
   }
+}
+
+/**
+ * Forget the invitations shown: on a team switch, and when the viewer is
+ * not (or no longer known to be) an admin. Bumps the request id so a load
+ * still in flight cannot repaint them.
+ */
+export function clearTeamInvitations() {
+  loadTeamInvitationsRequestId++;
+  invitations = [];
+  renderTeamInvitations();
 }
 
 /** People's Pending invitations section shows only while it has something. */
@@ -776,7 +791,7 @@ export async function handleUpdateTeam(event) {
     document.getElementById('current-team-name').textContent = updated.name;
     const teamDescription = document.getElementById('team-description-text');
     if (teamDescription) {
-      teamDescription.textContent = updated.description || 'No description';
+      teamDescription.textContent = updated.description || '';
     }
     await loadTeams();
     closeModal();
@@ -834,12 +849,15 @@ registerActions({
     selectTeam(JSON.parse(dataset.teamJson));
   },
   'remove-member': (event, dataset) => {
+    if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
     removeMember(dataset.userId);
   },
   'delete-invitation': (event, dataset) => {
+    if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
     deleteInvitation(dataset.invitationId);
   },
   'issue-invitation-code': (event, dataset) => {
+    if (event?.type && event.type !== 'click') return; // Enter fires keydown and click
     issueInvitationCode(dataset.invitationId);
   },
   'retry-load-team-invitations': () => {

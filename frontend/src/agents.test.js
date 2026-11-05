@@ -593,3 +593,40 @@ describe('registrars (CHT-1600)', () => {
     expect(showApiError).toHaveBeenCalledWith('change registrar', err);
   });
 });
+
+describe('telling the profile what changed (CHT-2044)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setCurrentTeam({ id: 'team-1' });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    api.getTeamAgents.mockResolvedValue([]);
+  });
+  afterEach(() => {
+    setCurrentTeam(null);
+    vi.restoreAllMocks();
+  });
+
+  const seen = () => {
+    const events = [];
+    const on = (e) => events.push(e.detail);
+    window.addEventListener('chaotic:agent-changed', on);
+    return { events, stop: () => window.removeEventListener('chaotic:agent-changed', on) };
+  };
+
+  it('says only the credentials changed when a key is generated', async () => {
+    api.createAgentKey.mockResolvedValue({ key: 'ck_x' });
+    document.body.innerHTML = '<div id="modal-title"></div><div id="modal-content"></div>';
+    const w = seen();
+    await generateAgentKey('a-1', 'A');
+    w.stop();
+    expect(w.events).toEqual([expect.objectContaining({ agentId: 'a-1', credentials: true })]);
+  });
+
+  it('says it was deleted', async () => {
+    api.deleteAgent.mockResolvedValue();
+    const w = seen();
+    await deleteAgent('a-1', 'A');
+    w.stop();
+    expect(w.events).toEqual([expect.objectContaining({ agentId: 'a-1', deleted: true })]);
+  });
+});

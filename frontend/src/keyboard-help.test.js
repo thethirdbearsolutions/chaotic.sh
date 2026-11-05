@@ -111,7 +111,7 @@ describe('keyboard-help', () => {
             expect(content).toContain('Projects');
             expect(content).toContain('Sprints');
             expect(content).toContain('Documents');
-            expect(content).toContain('Team');
+            expect(content).toContain('People');
         });
 
         it('renders issue detail shortcuts', () => {

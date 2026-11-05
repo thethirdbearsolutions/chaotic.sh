@@ -9744,7 +9744,11 @@ body.theme-light .picker-popover {
 .person-row-handle { color: var(--text-muted); font-weight: 400; }
 .person-row-idle { opacity: 0.6; }
 .list-row-2line.person-row-skeleton { grid-template-columns: 1fr; min-height: 44px; }
-.person-row .list-row-right { flex-wrap: wrap; justify-content: flex-end; }
+.people-rows .list-row-right,
+.agent-credentials .list-row-right { flex-wrap: wrap; justify-content: flex-end; }
+/* Rows that are not links keep still on hover. */
+.people-rows > div.list-row-2line:hover,
+.agent-credentials > .list-row-2line:hover { background: transparent; }
 #people-view .team-description:empty { display: none; }
 /* An agent's page: access, credentials and what its owner can do. */
 .person-sections { max-width: 72ch; }

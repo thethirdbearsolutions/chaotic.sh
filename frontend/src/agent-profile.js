@@ -37,7 +37,21 @@ export function agentScope(projectId) {
  */
 export function canManageAgent(entry, me = getCurrentUser()) {
     if (!entry?.is_agent || !me) return false;
+    // A guest (another team's agent holding a membership here) is managed
+    // in its own team; this team's agent list does not carry it.
+    if (!agentFor(entry)) return false;
     return entry.owner_id === me.id || isCurrentUserAdmin();
+}
+
+/** Is this agent a registrar? The agent record is fresher than the roster. */
+export function isRegistrar(entry) {
+    const agent = agentFor(entry);
+    return agent ? !!agent.can_register : entry?.kind === 'service';
+}
+
+/** An agent's name from the team's agent list, which loads at boot. */
+function agentName(id, roster) {
+    return getAgents().find(a => a.id === id)?.name || roster.find(r => r.user_id === id)?.name;
 }
 
 function row(label, value) {
@@ -56,33 +70,44 @@ function personLink(id, name) {
 export function renderAgentSections(entry, roster = []) {
     if (!entry?.is_agent) return '';
     const agent = agentFor(entry);
-    const nameOf = (id) => roster.find(r => r.user_id === id)?.name;
-    const isSession = entry.kind === 'session';
-    const registrar = agent?.can_register || entry.kind === 'service';
+    if (!agent) {
+        // A guest: another team's agent with a membership in this one.
+        return `
+        <section class="agent-profile-section">
+            <div class="section-header"><h3>Access</h3></div>
+            <dl class="agent-access">
+                ${row('Scope', 'A guest from another team, with a membership here')}
+                ${row('Owner', personLink(entry.owner_id, entry.owner_name))}
+            </dl>
+        </section>`;
+    }
+    const isSession = (agent.kind || entry.kind) === 'session';
+    const registrar = isRegistrar(entry);
     const rows = [
-        row('Scope', escapeHtml(agentScope(entry.project_id ?? agent?.agent_project_id))),
-        row('Owner', personLink(entry.owner_id, entry.owner_name)),
+        row('Scope', escapeHtml(agentScope(agent.agent_project_id ?? entry.project_id))),
+        row('Owner', personLink(entry.owner_id || agent.parent_user_id, entry.owner_name || agent.parent_user_name)),
     ];
+    if (agent.is_active === false) rows.push(row('Status', 'Deactivated: its keys no longer sign in'));
     if (isSession) {
-        const by = agent?.registered_by_id;
-        rows.push(row('Registered by', by ? personLink(by, nameOf(by)) : 'A registrar'));
-        rows.push(row('Last used', agent?.last_used_at ? escapeHtml(formatDate(agent.last_used_at)) : 'Never'));
+        const by = agent.registered_by_id;
+        rows.push(row('Registered by', by ? personLink(by, agentName(by, roster)) : 'A registrar'));
+        rows.push(row('Last used', agent.last_used_at ? escapeHtml(formatDate(agent.last_used_at)) : 'Never'));
     } else {
         rows.push(row('Registrar', registrar
             ? 'Yes: registers one identity per session and cannot write as itself'
             : 'No'));
     }
     if (registrar) {
-        const registered = roster.filter(r => r.is_agent && agentFor(r)?.registered_by_id === entry.user_id);
+        const registered = getAgents().filter(a => a.registered_by_id === entry.user_id && a.is_active !== false);
         rows.push(row('Sessions registered', registered.length
-            ? registered.map(r => personLink(r.user_id, r.name)).join(', ')
+            ? registered.map(a => personLink(a.id, a.name)).join(', ')
             : 'None active'));
     }
 
     const manage = canManageAgent(entry);
     const id = escapeAttr(entry.user_id);
     const name = escapeAttr(entry.name || 'Agent');
-    const active = agent?.is_active !== false;
+    const active = agent.is_active !== false;
     const actions = !manage ? '' : `
         <section class="agent-profile-section">
             <div class="section-header"><h3>Owner actions</h3></div>
@@ -97,7 +122,7 @@ export function renderAgentSections(entry, roster = []) {
                 <h3>Credentials</h3>
                 ${active ? `<button class="btn btn-secondary btn-small" data-action="generate-agent-key" data-agent-id="${id}" data-agent-name="${name}">Generate key</button>` : ''}
             </div>
-            <div id="agent-credentials" class="agent-credentials" aria-busy="true"><div class="skeleton skeleton-title"></div></div>
+            <div id="agent-credentials" class="agent-credentials" data-agent-id="${id}" aria-busy="true"><div class="skeleton skeleton-title"></div></div>
         </section>`;
     return `
         <section class="agent-profile-section">
@@ -116,6 +141,8 @@ let credentialsRequestId = 0;
  * own connected apps acting as it (the connections list is per person).
  */
 export async function loadAgentCredentials(agentId) {
+    // Nothing to do unless this agent's page is the one shown.
+    if (document.getElementById('agent-credentials')?.dataset.agentId !== agentId) return;
     const requestId = ++credentialsRequestId;
     let keys;
     let connections;
@@ -130,7 +157,9 @@ export async function loadAgentCredentials(agentId) {
     }
     if (requestId !== credentialsRequestId) return;
     const box = document.getElementById('agent-credentials');
-    if (!box) return;
+    // Painted only onto this agent's page: a reload finishing after the
+    // viewer moved to another agent leaves that one alone.
+    if (!box || box.dataset.agentId !== agentId) return;
     box.removeAttribute('aria-busy');
     if (keys === null) {
         box.innerHTML = '<p class="person-bio-empty">Couldn’t load its keys.</p>';

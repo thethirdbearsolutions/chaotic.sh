@@ -191,6 +191,11 @@ export function navigateTo(view, pushHistory = true, { transition = false } = {}
     }
 }
 
+// Backward-compat aliases for renamed routes. Team folded into People
+// (CHT-2044); its address is rewritten so a bookmark lands there for good.
+const routeAliases = { 'gate-approvals': 'approvals', team: 'people' };
+const rewrittenAliases = new Set(['team']);
+
 /**
  * Boot (CHT-1971): before the team's data loads, show the shell of the
  * view the address routes to, and leave no view current. The page HTML
@@ -200,11 +205,6 @@ export function navigateTo(view, pushHistory = true, { transition = false } = {}
  * nobody asked for. With no view current, no view's project subscriber
  * runs while the team loads; handleRoute() then loads the routed one.
  */
-// Backward-compat aliases for renamed routes. Team folded into People
-// (CHT-2044); its address is rewritten so a bookmark lands there for good.
-const routeAliases = { 'gate-approvals': 'approvals', team: 'people' };
-const rewrittenAliases = new Set(['team']);
-
 export function primeRoute() {
     setCurrentView(null);
     const parts = window.location.pathname.split('/').filter(Boolean);
