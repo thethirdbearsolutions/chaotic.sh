@@ -24,6 +24,7 @@ import { viewDocument } from './documents.js';
 import { renderRelatedWork, renderTimeline, renderMetaLine } from './ticket-body.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
+import { attachRichComposer, focusComposer, isRichComposerBusy } from './rich-composer.js';
 // Markdown post-processing (issue-link/mention rendering) lives in rich-text.js
 // (CHT-1213) so documents.js can share it without depending on this module.
 // Re-exported here too so existing imports of these from issue-detail-view.js
@@ -562,6 +563,7 @@ export function detailRefreshBlocker() {
     const mentions = document.getElementById('mention-suggestions');
     if (mentions && !mentions.classList.contains('hidden')) return 'transient';
     if (commentComposing) return 'transient';
+    if (isRichComposerBusy()) return 'transient';
     return null;
 }
 
@@ -1013,6 +1015,9 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     commentTextarea.closest('form')?.requestSubmit();
                 }
             });
+            // The rich editor over the textarea (CHT-2028), after the draft
+            // is restored so it opens with it.
+            attachRichComposer('new-comment', { signal: detailSignal, mentionContext: { projectId: issue.project_id }, placeholder: 'Write a comment…' });
         }
 
         // Set up prev/next keyboard navigation
@@ -1046,11 +1051,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             } else if (e.key === 'c') {
                 e.preventDefault();
                 e.stopImmediatePropagation();
-                const textarea = document.getElementById('new-comment');
-                if (textarea) {
-                    textarea.focus();
-                    textarea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                }
+                focusComposer('new-comment');
             } else if (e.key === 'j') {
                 e.preventDefault();
                 e.stopImmediatePropagation();

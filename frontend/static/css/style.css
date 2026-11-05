@@ -10688,3 +10688,128 @@ body.theme-light {
 .timeline-note { margin-top: 0; }
 .timeline-note .markdown-body { margin-top: 2px; font-size: var(--font-sm); }
 .timeline-note .markdown-body > :last-child { margin-bottom: 0; }
+
+/* ============================================================================
+   Rich comment composer (CHT-2028)
+   The editor takes the textarea's place and looks like it: one line until
+   you come to it, then it grows and the formatting row appears under it.
+   ============================================================================ */
+.comment-form textarea[hidden] { display: none; }
+
+.rich-composer[hidden] { display: none; }
+.rich-composer {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    transition: border-color var(--transition-fast);
+}
+.rich-composer:focus-within { border-color: var(--accent-color); }
+
+.rich-editor-content {
+    padding: 8px 12px;
+    min-height: 20px;
+    max-height: 20px;
+    overflow: hidden;
+    outline: none;
+    font-size: var(--font-base);
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+.composer-active .rich-editor-content {
+    min-height: 62px;
+    max-height: 240px;
+    overflow-y: auto;
+}
+.rich-editor-content > :first-child { margin-top: 0; }
+.rich-editor-content > :last-child { margin-bottom: 0; }
+.rich-editor-content :is(p, ul, ol, pre, blockquote, table) { margin: 0 0 6px; }
+.rich-editor-content p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    color: var(--text-muted);
+    float: left;
+    height: 0;
+    pointer-events: none;
+}
+.rich-editor-content ul[data-type="taskList"] { list-style: none; padding-left: 4px; }
+.rich-editor-content ul[data-type="taskList"] li { display: flex; gap: 6px; }
+.rich-editor-content ul[data-type="taskList"] li > label input { width: auto; }
+
+/* What the posted comment will look like; the box is already --bg-tertiary,
+   so code sits one step up. */
+.rich-editor-content code {
+    background: var(--bg-hover);
+    padding: 0.2em 0.4em;
+    border-radius: var(--radius-sm);
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.9em;
+}
+.rich-editor-content pre {
+    background: var(--bg-hover);
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+}
+.rich-editor-content pre code { background: none; padding: 0; }
+.rich-editor-content blockquote {
+    border-left: 3px solid var(--accent-color);
+    padding-left: 12px;
+    color: var(--text-secondary);
+}
+.rich-editor-content :is(ul, ol) { padding-left: 22px; }
+.rich-editor-content li > p { margin: 0; }
+.rich-editor-content a { color: var(--accent-color); }
+
+/* The formatting row sits under the box, across the form, once it is in use. */
+.rich-composer-toolbar {
+    display: none;
+    order: 3;
+    flex-basis: 100%;
+    align-items: center;
+    gap: 2px;
+}
+.composer-active .rich-composer-toolbar { display: flex; }
+.rich-tool {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 26px;
+    padding: 0 6px;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+    cursor: pointer;
+}
+.rich-tool:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+.rich-tool[aria-pressed="true"]:not(.rich-mode-toggle) { background: var(--bg-hover); color: var(--text-primary); }
+.rich-tool:disabled { opacity: 0.4; cursor: default; }
+.rich-tool:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+.rich-tool-spacer { flex: 1; }
+.rich-mode-toggle[aria-pressed="true"] { color: var(--accent-color); }
+/* In markdown mode the formatting buttons do nothing; only the toggle shows. */
+.rich-composer-toolbar.markdown-mode .rich-tool:not(.rich-mode-toggle) { display: none; }
+
+/* The editor's @mention list floats by the caret, outside the form. */
+.rich-mention-suggestions {
+    position: absolute;
+    z-index: 1000;
+    min-width: 220px;
+    max-width: 320px;
+    margin-top: 0;
+    box-shadow: var(--shadow-md);
+}
+.rich-mention-suggestions[hidden] { display: none; }
+.rich-mention-suggestions .mention-suggestion.selected {
+    border-color: var(--border-color);
+    background: var(--bg-tertiary);
+}
+
+@media (hover: none) {
+    .rich-tool { min-width: 36px; height: 34px; }
+}

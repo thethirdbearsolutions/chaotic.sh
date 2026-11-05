@@ -78,5 +78,7 @@ def get_version_info(repo_root: str, frontend_dir: str) -> dict:
         "git_dirty": bool(_git(repo_root, "status", "--porcelain")),
         "start_time": _START_TIME,
         "bundle_hash": asset_cache_buster(os.path.join(static, "js", "app.bundle.js")),
+        # The rich comment editor, loaded by app.bundle.js on demand (CHT-2028).
+        "editor_hash": asset_cache_buster(os.path.join(static, "js", "editor.bundle.js")),
         "css_hash": asset_cache_buster(os.path.join(static, "css", "style.css")),
     }

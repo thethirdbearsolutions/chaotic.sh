@@ -9,7 +9,8 @@
     <meta name="chaotic-version"
           content="{{ git_sha_short | default('unknown', true) }}"
           data-bundle="{{ asset_version | default('dev', true) }}"
-          data-css="{{ css_version | default('dev', true) }}">
+          data-css="{{ css_version | default('dev', true) }}"
+          data-editor="{{ editor_version | default('dev', true) }}">
     <script>console.info('chaotic build:', '{{ git_sha_short | default("unknown", true) }}', '· bundle', '{{ asset_version | default("dev", true) }}');</script>
     <link rel="icon" href="/static/favicon.ico" sizes="48x48">
     <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">

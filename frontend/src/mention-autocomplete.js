@@ -64,6 +64,19 @@ export function getMentionables(members = [], agents = [], { projectId } = {}) {
 }
 
 /**
+ * The mentionables matching what follows an "@", best few first. Shared
+ * by the textarea autocomplete and the rich editor (CHT-2028).
+ * @param {string} query - typed after "@"
+ * @param {{projectId?: string|null}} [context]
+ */
+export function mentionSuggestions(query, context = {}, limit = 6) {
+    const q = (query || '').toLowerCase();
+    return getMentionables(getMembers(), getAgents(), context)
+        .filter(m => !q || m.handle.includes(q) || m.name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q))
+        .slice(0, limit);
+}
+
+/**
  * True if `pos` in `text` falls inside a fenced ``` code block or an
  * inline `code` span (CHT-1272). Mirrors
  * backend/app/services/inbox_service.py's _strip_code_spans: an @handle
@@ -140,6 +153,11 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
     };
 
     const update = () => {
+        // The rich editor has its own list; its sync writes here (CHT-2028).
+        if (textarea.hidden) {
+            hide();
+            return;
+        }
         const caret = textarea.selectionStart || 0;
         if (isInsideCodeSpan(textarea.value, caret)) {
             hide();
@@ -152,9 +170,7 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
             return;
         }
         const query = match[2].toLowerCase();
-        const suggestions = getMentionables(getMembers(), getAgents(), textarea.mentionContext || {})
-            .filter(m => !query || m.handle.includes(query) || m.name.toLowerCase().includes(query) || m.email.toLowerCase().includes(query))
-            .slice(0, 6);
+        const suggestions = mentionSuggestions(query, textarea.mentionContext || {});
 
         if (!suggestions.length) {
             hide();

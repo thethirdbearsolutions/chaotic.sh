@@ -5,7 +5,7 @@
  * The handler is registered as a document keydown listener.
  */
 
-import { ISSUE_NAV_ROWS } from './constants.js';
+import { ISSUE_NAV_ROWS, isTextEntry } from './constants.js';
 
 /**
  * Creates a keyboard handler with the given action callbacks.
@@ -67,8 +67,8 @@ export function createKeyboardHandler(actions) {
         }
 
         // Don't trigger shortcuts when typing in input fields
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
-            if (e.key === 'Escape') {
+        if (isTextEntry(e.target)) {
+            if (e.key === 'Escape' && !e.defaultPrevented) {
                 // CHT-1231: a modal auto-focuses its first field, so blurring
                 // made Escape a no-op the first time. Close the modal when
                 // nothing in it has been entered; otherwise keep the old
@@ -352,7 +352,7 @@ export function createListNavigationHandler(actions) {
         // p/s/a fires before the detail view's own listener (registered
         // later) ever sees the key, killing the documented detail shortcuts.
         if (actions.isDetailViewActive?.()) return;
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (isTextEntry(e.target)) return;
         // Yield to the sidebar's own roving-focus handler while a nav link is
         // focused — these list handlers register earlier and would otherwise
         // ALSO move the list cursor on the same arrow press (CHT-1289 review).
@@ -447,7 +447,7 @@ export function createDocListNavigationHandler(actions) {
         // document detail leaves currentView === 'documents' and the hidden
         // .list-item elements in the DOM.
         if (actions.isDetailViewActive?.()) return;
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (isTextEntry(e.target)) return;
         // Yield to the sidebar's own roving-focus handler while a nav link is
         // focused — these list handlers register earlier and would otherwise
         // ALSO move the list cursor on the same arrow press (CHT-1289 review).
@@ -544,7 +544,7 @@ export function createInboxNavigationHandler(actions) {
         // detail view's own `e` opened the estimate field), j/k moved the
         // hidden cursor. Same check as the issues-list handler (CHT-1215).
         if (actions.isDetailViewActive?.()) return;
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (isTextEntry(e.target)) return;
         // Yield to the sidebar's own roving-focus handler while a nav link is
         // focused — these list handlers register earlier and would otherwise
         // ALSO move the list cursor on the same arrow press (CHT-1289 review).
@@ -669,7 +669,7 @@ export function createBoardNavigationHandler(actions) {
         // the hidden .kanban-card elements in the DOM; without this, Enter
         // on the detail view would re-open the stale board selection.
         if (actions.isDetailViewActive?.()) return;
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (isTextEntry(e.target)) return;
         // Yield to the sidebar's own roving-focus handler while a nav link is
         // focused — these list handlers register earlier and would otherwise
         // ALSO move the list cursor on the same arrow press (CHT-1289 review).
@@ -790,7 +790,7 @@ export function createSimpleListNavigationHandler(config) {
     return function handleSimpleListNavigation(e) {
         if (config.getCurrentView() !== view) return;
         if (config.isDetailViewActive?.()) return;
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (isTextEntry(e.target)) return;
         if (yieldsToSidebar(e)) return;
         if (config.isModalOpen()) return;
         if (config.isCommandPaletteOpen()) return;

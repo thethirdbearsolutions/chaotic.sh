@@ -304,6 +304,26 @@ class TestInstallPreparedFrontend:
         assert list((project / FRONTEND_BUNDLE).parent.iterdir()) == [project / FRONTEND_BUNDLE]
         rebuild.assert_not_called()
 
+    def test_copies_the_editor_bundle_too(self, tmp_path, monkeypatch):
+        """The rich comment editor is a second bundle (CHT-2028); a staged
+        upgrade that copied only app.bundle.js would leave the old one."""
+        project = tmp_path / "server"
+        (project / FRONTEND_BUNDLE).parent.mkdir(parents=True)
+        (project / FRONTEND_BUNDLE).write_text("old bundle")
+        (project / FRONTEND_BUNDLE).with_name("editor.bundle.js").write_text("old editor")
+        monkeypatch.setattr(system, "PROJECT_DIR", project)
+        bundle = self._bundle(tmp_path)
+        bundle.with_name("editor.bundle.js").write_text("new editor")
+        prepared = PreparedRelease(True, "", staged=True, bundle=bundle,
+                                   frontend_message="built", commit="ab71cd5newer")
+        with patch("cli.system.get_current_commit", return_value="ab71cd5newer"):
+            ok, msg = install_prepared_frontend(prepared)
+
+        assert ok, msg
+        assert (project / FRONTEND_BUNDLE).read_text() == "new bundle"
+        assert (project / FRONTEND_BUNDLE).with_name("editor.bundle.js").read_text() == "new editor"
+        assert sorted(p.name for p in (project / FRONTEND_BUNDLE).parent.iterdir()) == ["app.bundle.js", "editor.bundle.js"]
+
     def test_refuses_a_bundle_for_another_commit(self, tmp_path, monkeypatch):
         project = tmp_path / "server"
         (project / FRONTEND_BUNDLE).parent.mkdir(parents=True)
