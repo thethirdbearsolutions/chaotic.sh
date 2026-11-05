@@ -142,7 +142,6 @@ vi.mock('./projects.js', () => ({
     saveProjectSettingsGeneral: vi.fn(),
     saveProjectSettingsRules: vi.fn(),
     showCreateProjectRitualModal: vi.fn(),
-    setOnRitualsChanged: vi.fn(),
     chooseAllProjects: vi.fn(),
     syncProjectSwitcher: vi.fn(),
     PROJECT_SWITCHER_ID: 'project-switcher',
@@ -163,7 +162,6 @@ vi.mock('./sprints.js', () => ({
 }));
 vi.mock('./rituals-view.js', () => ({
     loadRitualsView: vi.fn(),
-    switchRitualsTab: vi.fn(),
 }));
 vi.mock('./api-keys.js', () => ({
     loadApiKeys: vi.fn(),
@@ -256,7 +254,7 @@ import { viewIssueByPath, viewIssue } from './issue-detail-view.js';
 import { viewEpicByPath, viewEpic } from './epic-detail-view.js';
 import { viewDocument } from './documents.js';
 import { viewSprintByPath, viewSprint } from './sprints.js';
-import { viewProjectSettings, clearProjectSettingsState, setOnRitualsChanged, loadProjects, renderProjects, chooseAllProjects, syncProjectSwitcher } from './projects.js';
+import { viewProjectSettings, clearProjectSettingsState, loadProjects, renderProjects, chooseAllProjects, syncProjectSwitcher } from './projects.js';
 import { setQueryScope } from './query-view.js';
 import { openSelectPicker } from './select-picker.js';
 import { readSnapshot, clearSnapshot } from './boot-cache.js';
@@ -293,7 +291,6 @@ import {
     toggleFilterMenu, toggleDisplayMenu, closeAllFilterMenus, debounceSearch, filterIssues, updateGroupBy,
 } from './issues-view.js';
 import { switchProjectSettingsTab, saveProjectSettingsGeneral, saveProjectSettingsRules, showCreateProjectRitualModal } from './projects.js';
-import { switchRitualsTab } from './rituals-view.js';
 import { handleQuickCreate } from './quick-create.js';
 import { setTheme } from './storage.js';
 
@@ -580,7 +577,22 @@ describe('app.js router configuration', () => {
     it('configures detailRoute for project settings paths', () => {
         const result = routerConfig.detailRoute(['projects', 'proj-1', 'settings']);
         expect(result).toBe(true);
-        expect(viewProjectSettings).toHaveBeenCalledWith('proj-1');
+        expect(viewProjectSettings).toHaveBeenCalledWith('proj-1', { tab: undefined, replace: true });
+    });
+
+    // PR #546 review I4: the tab is in the address, and the state.
+    it('detailRoute reopens the tab named in the address', () => {
+        const prev = window.location.href;
+        window.history.replaceState(null, '', '/projects/proj-1/settings?tab=close-rituals');
+        routerConfig.detailRoute(['projects', 'proj-1', 'settings']);
+        expect(viewProjectSettings).toHaveBeenCalledWith('proj-1', { tab: 'close-rituals', replace: true });
+        window.history.replaceState(null, '', prev);
+    });
+
+    it('detailPopstate reopens a settings entry in place', () => {
+        const result = routerConfig.detailPopstate({ view: 'project-settings', settingsProjectId: 'proj-2', tab: 'sprint-rituals' });
+        expect(result).toBe(true);
+        expect(viewProjectSettings).toHaveBeenCalledWith('proj-2', { tab: 'sprint-rituals', replace: true });
     });
 
     it('detailRoute returns false for unknown paths', () => {
@@ -621,7 +633,6 @@ describe('app.js router configuration', () => {
     it('beforeNavigate clears detail state and closes sidebar', () => {
         routerConfig.beforeNavigate();
         expect(clearProjectSettingsState).toHaveBeenCalled();
-        expect(setOnRitualsChanged).toHaveBeenCalledWith(null);
         expect(setCurrentDetailIssue).toHaveBeenCalledWith(null);
         expect(setCurrentDetailSprints).toHaveBeenCalledWith(null);
         expect(closeSidebar).toHaveBeenCalled();
@@ -1509,27 +1520,56 @@ describe('initProjectSettings DOM bindings', () => {
     });
 });
 
-describe('initRitualsView DOM bindings', () => {
+// CHT-2076: Board left the sidebar; Issues and Board both carry a
+// List | Board toggle whose links navigate in-app.
+describe('Issues layout toggle DOM bindings', () => {
     let container;
 
     beforeEach(async () => {
         container = document.createElement('div');
-        container.id = 'rituals-view';
         container.innerHTML = `
-            <button class="settings-tab" data-tab="sprint">Sprint</button>
-            <button class="settings-tab" data-tab="close">Close</button>
+            <div id="issues-view">
+                <nav class="issues-layout-toggle"><a href="/issues" data-view="issues">List</a><a href="/board" data-view="board">Board</a></nav>
+            </div>
+            <div id="board-view">
+                <nav class="issues-layout-toggle"><a href="/issues" data-view="issues">List</a><a href="/board" data-view="board">Board</a></nav>
+            </div>
         `;
         document.body.appendChild(container);
 
         api.getToken.mockReturnValue(null);
         await domReadyCallback();
+        navigateTo.mockClear();
     });
 
     afterEach(() => container.remove());
 
-    it('rituals tab click switches tab', () => {
-        container.querySelector('[data-tab="close"]').click();
-        expect(switchRitualsTab).toHaveBeenCalledWith('close');
+    it('Board navigates to the board and moves focus to the board view\'s toggle', () => {
+        getCurrentView.mockReturnValue('issues');
+        container.querySelector('#issues-view a[data-view="board"]').click();
+        expect(navigateTo).toHaveBeenCalledWith('board');
+        expect(document.activeElement).toBe(container.querySelector('#board-view a[data-view="board"]'));
+    });
+
+    it('List navigates back to issues', () => {
+        getCurrentView.mockReturnValue('board');
+        container.querySelector('#board-view a[data-view="issues"]').click();
+        expect(navigateTo).toHaveBeenCalledWith('issues');
+    });
+
+    it('the current layout does not navigate again', () => {
+        getCurrentView.mockReturnValue('issues');
+        container.querySelector('#issues-view a[data-view="issues"]').click();
+        expect(navigateTo).not.toHaveBeenCalled();
+    });
+
+    it('a modified click is left to the browser', () => {
+        getCurrentView.mockReturnValue('issues');
+        const link = container.querySelector('#issues-view a[data-view="board"]');
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true });
+        link.dispatchEvent(event);
+        expect(navigateTo).not.toHaveBeenCalled();
+        expect(event.defaultPrevented).toBe(false);
     });
 });
 

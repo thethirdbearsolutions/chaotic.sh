@@ -73,7 +73,7 @@ describe('keyboard-help', () => {
         it('renders shortcut descriptions', () => {
             showKeyboardShortcutsHelp();
             const content = document.getElementById('modal-content').innerHTML;
-            expect(content).toContain('Dashboard');
+            expect(content).toContain('Home');
             expect(content).toContain('Command palette');
             expect(content).toContain('Focus comment box');
         });
@@ -106,8 +106,8 @@ describe('keyboard-help', () => {
         it('renders navigation shortcuts', () => {
             showKeyboardShortcutsHelp();
             const content = document.getElementById('modal-content').innerHTML;
-            expect(content).toContain('All Issues');
-            expect(content).toContain('Board');
+            expect(content).toContain('Issues');
+            expect(content).toContain('Issues as a board');
             expect(content).toContain('Projects');
             expect(content).toContain('Sprints');
             expect(content).toContain('Documents');

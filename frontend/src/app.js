@@ -69,7 +69,6 @@ import {
     saveProjectSettingsGeneral,
     saveProjectSettingsRules,
     showCreateProjectRitualModal,
-    setOnRitualsChanged,
     chooseAllProjects,
     syncProjectSwitcher,
     PROJECT_SWITCHER_ID,
@@ -83,7 +82,6 @@ import {
 } from './sprints.js';
 import {
     loadRitualsView,
-    switchRitualsTab,
 } from './rituals-view.js';
 import { loadApiKeys, showCreateApiKeyModal } from './api-keys.js';
 import { loadConnections } from './connected-apps.js';
@@ -138,7 +136,6 @@ configureRouter({
     beforeNavigate: () => {
         abandonIssueLoad();
         clearProjectSettingsState();
-        setOnRitualsChanged(null);
         setCurrentDetailIssue(null);
         setCurrentDetailSprints(null);
         closeSidebar();
@@ -181,7 +178,8 @@ configureRouter({
             return true;
         }
         if (parts[0] === 'projects' && parts[1] && parts[2] === 'settings') {
-            viewProjectSettings(parts[1]);
+            const tab = new URLSearchParams(window.location.search).get('tab') || undefined;
+            viewProjectSettings(decodeURIComponent(parts[1]), { tab, replace: true });
             return true;
         }
         return false;
@@ -193,6 +191,10 @@ configureRouter({
         if (state.documentId) { viewDocument(state.documentId, false); return true; }
         if (state.sprintId) { viewSprint(state.sprintId, false); return true; }
         if (state.personId) { viewPerson(state.personId, false); return true; }
+        if (state.settingsProjectId) {
+            viewProjectSettings(state.settingsProjectId, { tab: state.tab, replace: true });
+            return true;
+        }
         return false;
     },
     restoreProject: () => {
@@ -482,19 +484,6 @@ function initIssuesView() {
 }
 
 /**
- * Initialize rituals view event listeners (CHT-1057)
- */
-function initRitualsView() {
-    // Rituals tabs (use data-tab attribute)
-    const ritualsView = document.getElementById('rituals-view');
-    if (ritualsView) {
-        ritualsView.querySelectorAll('.settings-tab[data-tab]').forEach(tab => {
-            tab.addEventListener('click', () => switchRitualsTab(tab.dataset.tab));
-        });
-    }
-}
-
-/**
  * Initialize sidebar/nav event listeners (CHT-1057)
  * Replaces inline onclick handlers on sidebar, nav, and mobile header elements.
  */
@@ -519,6 +508,19 @@ function initSidebarNav() {
             // keeps focus in the sidebar for arrow roving (CHT-1289); j/k
             // from there still reach the list through yieldsToSidebar.
             if (e.detail > 0) focusMainContent();
+        });
+    });
+
+    // Issues List | Board toggle (CHT-2076). Board left the sidebar; both
+    // layouts carry the toggle. Focus follows to the same toggle in the
+    // view it opened, since the one clicked is now hidden.
+    document.querySelectorAll('.issues-layout-toggle a[data-view]').forEach(link => {
+        link.addEventListener('click', (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            const view = link.dataset.view;
+            if (getCurrentView() !== view) navigateTo(view);
+            document.querySelector(`#${view}-view .issues-layout-toggle a[data-view="${view}"]`)?.focus();
         });
     });
 
@@ -669,7 +671,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     initModal();
     initDashboardView();
     initIssuesView();
-    initRitualsView();
     initProjectSettings();
     initDocumentsView();
     initThemeToggle();
@@ -911,15 +912,15 @@ document.addEventListener('keydown', createKeyboardHandler({
 // Initialize command palette with available commands
 setCommandPaletteCommands([
     // Navigation
-    { id: 'nav-my-issues', title: 'Dashboard', subtitle: 'View issues assigned to you', icon: '👤', shortcut: 'M', action: () => navigateTo('my-issues'), category: 'Navigation' },
+    { id: 'nav-my-issues', title: 'Home', subtitle: 'View issues assigned to you', icon: '👤', shortcut: 'M', action: () => navigateTo('my-issues'), category: 'Navigation' },
     { id: 'nav-issues', title: 'Issues', subtitle: 'View all issues', icon: '📋', shortcut: 'I', action: () => navigateTo('issues'), category: 'Navigation' },
-    { id: 'nav-board', title: 'Board', subtitle: 'View kanban board', icon: '📊', shortcut: 'B', action: () => navigateTo('board'), category: 'Navigation' },
+    { id: 'nav-board', title: 'Board', subtitle: 'Issues laid out by status', icon: '📊', shortcut: 'B', action: () => navigateTo('board'), category: 'Navigation' },
     { id: 'switch-project', title: 'Switch project', subtitle: 'Change the project every view shows', icon: '🔀', shortcut: 'P', action: () => openProjectSwitcher(), category: 'Navigation' },
     { id: 'nav-projects', title: 'Go to Projects', subtitle: 'View all projects', icon: '📁', shortcut: 'G P', action: () => navigateTo('projects'), category: 'Navigation' },
     { id: 'nav-sprints', title: 'Go to Sprints', subtitle: 'View all sprints', icon: '🏃', shortcut: 'G S', action: () => navigateTo('sprints'), category: 'Navigation' },
     { id: 'nav-documents', title: 'Go to Documents', subtitle: 'View all documents', icon: '📄', shortcut: 'G D', action: () => navigateTo('documents'), category: 'Navigation' },
     { id: 'nav-epics', title: 'Go to Epics', subtitle: 'View all epics', icon: '🎯', shortcut: 'G E', action: () => navigateTo('epics'), category: 'Navigation' },
-    { id: 'nav-rituals', title: 'Go to Rituals', subtitle: 'View project rituals', icon: '🔮', shortcut: 'G R', action: () => navigateTo('rituals'), category: 'Navigation' },
+    { id: 'nav-rituals', title: 'Go to Rituals', subtitle: 'The rituals tabs in Project settings', icon: '🔮', shortcut: 'G R', action: () => navigateTo('rituals'), category: 'Navigation' },
     { id: 'nav-approvals', title: 'Go to Approvals', subtitle: 'Review pending approvals', icon: '✅', shortcut: 'G A', action: () => navigateTo('approvals'), category: 'Navigation' },
     { id: 'nav-inbox', title: 'Go to Inbox', subtitle: 'Gates, mentions, assignments, and reviews awaiting you', icon: '📥', shortcut: 'G W', action: () => navigateTo('inbox'), category: 'Navigation' },
     { id: 'nav-team', title: 'Go to People', subtitle: 'Everyone on the team, people and agents', icon: '👥', shortcut: 'G T', action: () => navigateTo('people'), category: 'Navigation' },

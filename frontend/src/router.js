@@ -97,12 +97,18 @@ const detailRouteSection = {
     people: 'people',
 };
 
+// Views with no sidebar item of their own, and the item that stands for
+// them (CHT-2076): Board is the Issues list in another layout, and the
+// rituals route opens Project settings, reached from Projects.
+const navItemFor = { board: 'issues', rituals: 'projects' };
+
 /**
  * Mark the sidebar nav item for `view` active and clear the others.
  */
 export function setActiveNav(view) {
+    const target = navItemFor[view] || view;
     document.querySelectorAll('.nav-item').forEach(item => {
-        item.classList.toggle('active', item.dataset.view === view);
+        item.classList.toggle('active', item.dataset.view === target);
     });
 }
 

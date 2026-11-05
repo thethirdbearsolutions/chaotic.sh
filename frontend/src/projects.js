@@ -7,7 +7,7 @@ import { api } from './api.js';
 import { escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getSavedProject, setSavedProject } from './storage.js';
-import { getCurrentTeam, getCurrentProject, setCurrentProject, subscribe } from './state.js';
+import { getCurrentTeam, getCurrentProject, setCurrentProject, getCurrentView, setCurrentView, subscribe } from './state.js';
 import { updateUrlWithProject } from './url-helpers.js';
 import { registerActions } from './event-delegation.js';
 import { navigateTo } from './router.js';
@@ -17,9 +17,6 @@ import { renderConditionBuilder, collectConditions } from './rituals.js';
 
 // Module state
 let projects = [];
-
-// Callback for when rituals change (set by rituals-view)
-let _onRitualsChangedCallback = null;
 
 // The one project scope picker, in the sidebar (CHT-2058). Every view
 // follows currentProject; an empty value is "All projects".
@@ -103,15 +100,6 @@ const ESTIMATE_SCALES = {
     { value: 8, label: 'XL' },
   ],
 };
-
-/**
- * Set the callback to be called when rituals change.
- * Used by rituals-view to register its refresh function.
- * @param {Function|null} callback
- */
-export function setOnRitualsChanged(callback) {
-  _onRitualsChangedCallback = callback;
-}
 
 /**
  * Get current projects list
@@ -562,14 +550,29 @@ export async function populateDefaultEpicSelect(project) {
 /**
  * Navigate to and load the project settings page
  * @param {string} projectId - Project ID
+ * @param {Object} [options]
+ * @param {string} [options.tab='general'] - Tab to open (see switchProjectSettingsTab)
+ * @param {boolean} [options.replace=false] - Replace the current history entry
+ *   instead of pushing one: for a route that redirects here (/rituals,
+ *   CHT-2076), so Back skips the redirect, and for Back/Forward onto a
+ *   settings entry, which must not truncate the forward stack.
+ * @param {string} [options.onlyIfView] - Give up if the current view has
+ *   changed by the time the project list loads (PR #546 review M1), so a
+ *   late redirect cannot replace the page the user went to instead.
  */
-export async function viewProjectSettings(projectId) {
-  currentSettingsProjectId = projectId;
-
+export async function viewProjectSettings(projectId, { tab = 'general', replace = false, onlyIfView } = {}) {
   // Ensure projects are loaded
   if (projects.length === 0) {
     await loadProjects();
+    if (onlyIfView && getCurrentView() !== onlyIfView) return;
   }
+
+  if (projectId !== currentSettingsProjectId) projectRituals = [];
+  currentSettingsProjectId = projectId;
+  // Settings belongs to the Projects section, however it was reached
+  // (Projects, /rituals, Back, a link). Leaving an earlier view current let
+  // that view's project subscriber act behind this page on a switch.
+  setCurrentView('projects');
 
   const project = projects.find(p => p.id === projectId);
   if (!project) {
@@ -601,11 +604,30 @@ export async function viewProjectSettings(projectId) {
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
   document.getElementById('project-settings-view').classList.remove('hidden');
 
-  // Activate first tab
-  switchProjectSettingsTab('general');
+  // The entry carries the project and tab, so Back, Forward and reload
+  // reopen this page as it was, whatever the switcher shows by then
+  // (PR #546 review I1, I4).
+  const state = settingsHistoryState(projectId, tab);
+  const url = settingsUrl(projectId, state.tab);
+  if (replace) window.history.replaceState(state, '', url);
+  else window.history.pushState(state, '', url);
 
-  // Update URL
-  window.history.pushState({}, '', `/projects/${encodeURIComponent(projectId)}/settings`);
+  switchProjectSettingsTab(tab);
+}
+
+const SETTINGS_TABS = ['general', 'rules', 'sprint-rituals', 'close-rituals', 'claim-rituals'];
+
+function settingsHistoryState(projectId, tab) {
+  return {
+    view: 'project-settings',
+    settingsProjectId: projectId,
+    tab: SETTINGS_TABS.includes(tab) ? tab : 'general',
+  };
+}
+
+function settingsUrl(projectId, tab) {
+  const base = `/projects/${encodeURIComponent(projectId)}/settings`;
+  return tab === 'general' ? base : `${base}?tab=${tab}`;
 }
 
 /**
@@ -614,9 +636,14 @@ export async function viewProjectSettings(projectId) {
  */
 export function switchProjectSettingsTab(tabName) {
   // Validate tab name, fallback to 'general'
-  const validTabs = ['general', 'rules', 'sprint-rituals', 'close-rituals', 'claim-rituals'];
-  if (!validTabs.includes(tabName)) {
+  if (!SETTINGS_TABS.includes(tabName)) {
     tabName = 'general';
+  }
+
+  // Keep the open tab in the address (PR #546 review I4).
+  const id = currentSettingsProjectId;
+  if (id && window.location.pathname === `/projects/${encodeURIComponent(id)}/settings`) {
+    window.history.replaceState(settingsHistoryState(id, tabName), '', settingsUrl(id, tabName));
   }
 
   // Update tab buttons
@@ -648,17 +675,10 @@ export function clearProjectSettingsState() {
 }
 
 /**
- * Set the current settings project ID (used by rituals view to reuse CRUD functions)
+ * Set the current settings project ID
  */
 export function setCurrentSettingsProjectId(projectId) {
   currentSettingsProjectId = projectId;
-}
-
-/**
- * Get the current project rituals array
- */
-export function getProjectRituals() {
-  return projectRituals;
 }
 
 /**
@@ -739,20 +759,22 @@ let projectRituals = [];
  * Load rituals for the current project settings page.
  *
  * @returns {Promise<boolean>} true on success — the catch below swallows
- *   API failures (toast only, no rethrow), so callers that need to render
- *   their own in-page error state (rituals-view.js, CHT-1226 PR #212
- *   review) must check the return value rather than try/catch.
+ *   API failures (toast only, no rethrow), so a caller that needs to
+ *   render its own in-page error state must check the return value rather
+ *   than try/catch (CHT-1226 PR #212 review).
  */
 export async function loadProjectSettingsRituals() {
-  if (!currentSettingsProjectId) return false;
+  const projectId = currentSettingsProjectId;
+  if (!projectId) return false;
 
   try {
-    projectRituals = await api.getRituals(currentSettingsProjectId);
+    const rituals = await api.getRituals(projectId);
+    // A newer project's page has opened since: drop this answer rather
+    // than paint one project's rituals on another's (PR #546 review I3,
+    // the guard CHT-1226 gave the old rituals view).
+    if (projectId !== currentSettingsProjectId) return false;
+    projectRituals = rituals;
     renderProjectSettingsRituals();
-    // Notify rituals view if active (for CRUD operations triggered from modals)
-    if (typeof _onRitualsChangedCallback === 'function') {
-      _onRitualsChangedCallback();
-    }
     return true;
   } catch (e) {
     showApiError('load rituals', e);
@@ -764,7 +786,7 @@ export async function loadProjectSettingsRituals() {
  * Render rituals in all three ritual tab containers
  */
 function renderProjectSettingsRituals() {
-  // Skip if project settings containers aren't in the DOM (e.g., on the rituals view)
+  // Skip if project settings containers aren't in the DOM
   if (!document.getElementById('ps-sprint-rituals-list')) return;
 
   const sprintRituals = projectRituals.filter(r => !r.trigger || r.trigger === 'every_sprint');
