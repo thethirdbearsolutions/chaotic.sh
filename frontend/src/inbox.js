@@ -39,11 +39,6 @@ const KIND_LABELS = {
     sprint_ritual: 'Sprint',
 };
 
-// A kind whose badge is a shared state colour rather than its own
-// (CHT-2032): a sprint ritual holds the whole project, a warning.
-const KIND_BADGE_CLASS = {
-    sprint_ritual: 'badge badge-warning',
-};
 
 // Only entries of these kinds are read-only within a fixed request race
 // window; see loadInboxRequestId below (same doctrine as gate-approvals.js's
@@ -1265,7 +1260,7 @@ function renderInboxRow(entry) {
     const isUnread = !entry.read_at;
     const isExpanded = entry.id === expandedEntryId;
     const kindLabel = KIND_LABELS[entry.kind] || entry.kind;
-    const badgeClass = KIND_BADGE_CLASS[entry.kind] || `badge badge-inbox-${entry.kind}`;
+    const badgeClass = `badge badge-inbox-${entry.kind}`;
     const project = entry.kind === 'sprint_ritual' && entry.project_id
         ? getProjects().find(p => p.id === entry.project_id) : null;
     const sourceRef = entry.issue_identifier || entry.document_title || project?.name || '';
@@ -1446,10 +1441,8 @@ function renderInboxGroups(entries) {
         if (sprint.length) {
             pinned = `
         <section class="inbox-group inbox-sprint-close" aria-labelledby="inbox-group-sprint">
-            <div class="section-header">
-                <h3 id="inbox-group-sprint">Sprint close <span class="section-count">${sprint.length}</span></h3>
-            </div>
-            <p class="text-muted">The sprint closes when these are done.</p>
+            <h3 class="inbox-group-header" id="inbox-group-sprint">Sprint close <span class="section-count">${sprint.length}</span></h3>
+            <p class="inbox-group-note text-muted">The sprint closes when these are done.</p>
             ${sprint.map(entry => renderInboxRow(entry)).join('')}
         </section>`;
         }

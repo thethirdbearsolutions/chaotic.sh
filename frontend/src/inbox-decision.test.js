@@ -559,7 +559,7 @@ describe('sprint close rituals (CHT-2032)', () => {
         expect(api.getLimboStatus).toHaveBeenCalledWith('proj-1');
         expect(api.getTicketRitualsStatus).not.toHaveBeenCalled();
         expect(r.querySelector('.inbox-row-source').textContent).toBe('Website');
-        expect(r.querySelector('.badge').className).toContain('badge-warning');
+        expect(r.querySelector('.badge').className).toContain('badge-inbox-sprint_ritual');
         expect(r.textContent).toContain('builder-bot attested');
         expect(r.textContent).toContain('Retro notes are in the doc.');
     });
@@ -629,6 +629,7 @@ describe('sprint close rituals (CHT-2032)', () => {
             const section = document.querySelector('.inbox-sprint-close');
             expect(section.querySelector('h3').textContent).toContain('Sprint close');
             expect(section.querySelector('.section-count').textContent).toBe('2');
+            expect(section.querySelector('h3').className).toBe('inbox-group-header');
             expect(section.querySelector('p.text-muted').textContent).toBe('The sprint closes when these are done.');
             expect([...section.querySelectorAll('.inbox-row')].map(r => r.dataset.entryId)).toEqual(['sprint-1', 'sprint-2']);
             // Pinned first in the list itself too, so keyboard order matches.
