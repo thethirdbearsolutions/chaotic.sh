@@ -393,6 +393,8 @@ describe('dashboard module', () => {
             renderSprintStatus([{ project: { id: 'p1', name: 'P' }, sprint: sprint('a', { points_spent: 23 }), statusCounts: {} }], { single: true });
             const html = document.getElementById('dashboard-sprint-status').innerHTML;
             expect(html).toContain('<strong>3</strong> pts over budget');
+            expect(html).toContain('badge badge-danger');
+            expect(html).toContain('meter is-over');
             expect(html).toContain('Close the sprint');
             expect(html).toContain('No issues planned');
         });
@@ -479,8 +481,10 @@ describe('dashboard module', () => {
             ], { single: false });
             const rows = document.querySelectorAll('.sprint-row');
             expect(rows[0].classList.contains('near')).toBe(true);
-            expect(rows[1].querySelector('.sprint-row-bar.none')).not.toBeNull();
-            expect(rows[1].querySelector('.sprint-row-points').textContent).toContain('4 pts');
+            expect(rows[0].querySelector('.meter.is-near')).not.toBeNull();
+            expect(rows[0].querySelector('.state-dot.is-near')).not.toBeNull();
+            expect(rows[1].querySelector('.sprint-row-nometer')).not.toBeNull();
+            expect(rows[1].querySelector('.meter-label').textContent).toContain('4 pts');
         });
 
         it('escapes project and sprint names in rows and the card', () => {

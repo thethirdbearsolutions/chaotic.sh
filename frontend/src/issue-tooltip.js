@@ -16,22 +16,23 @@ let showTimeout = null;
 let currentIdentifier = null;
 let listenersRegistered = false;
 
-// Status and priority colors (matching CSS)
+// Status and priority colours come from the CSS tokens (CHT-2042), so the
+// tooltip matches every other status mark in both themes.
 const STATUS_COLORS = {
-    backlog: '#6b7280',
-    todo: '#9ca3af',
-    in_progress: '#f59e0b',
-    in_review: '#8b5cf6',
-    done: '#22c55e',
-    canceled: '#ef4444',
+    backlog: 'var(--status-backlog)',
+    todo: 'var(--status-todo)',
+    in_progress: 'var(--status-in-progress)',
+    in_review: 'var(--status-in-review)',
+    done: 'var(--status-done)',
+    canceled: 'var(--status-canceled)',
 };
 
 const PRIORITY_COLORS = {
-    urgent: '#ef4444',
-    high: '#f59e0b',
-    medium: '#3b82f6',
-    low: '#9ca3af',
-    no_priority: '#6b7280',
+    urgent: 'var(--priority-urgent)',
+    high: 'var(--priority-high)',
+    medium: 'var(--priority-medium)',
+    low: 'var(--priority-low)',
+    no_priority: 'var(--priority-none)',
 };
 
 // Default dependencies (can be overridden for testing)
@@ -220,8 +221,8 @@ async function fetchIssue(identifier) {
  * Render the tooltip content
  */
 function renderTooltip(issue) {
-    const statusColor = STATUS_COLORS[issue.status] || '#6b7280';
-    const priorityColor = PRIORITY_COLORS[issue.priority] || '#6b7280';
+    const statusColor = STATUS_COLORS[issue.status] || STATUS_COLORS.backlog;
+    const priorityColor = PRIORITY_COLORS[issue.priority] || PRIORITY_COLORS.no_priority;
     const typeLabel = (issue.issue_type || 'task').replace(/_/g, ' ');
     const estimateText = issue.estimate != null ? `${issue.estimate}pt` : '';
 

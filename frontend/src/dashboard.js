@@ -487,9 +487,19 @@ function sprintBudgetHeadline(b) {
 }
 
 function sprintStateBadge(sprint, b) {
-    if (sprint.limbo) return '<span class="sprint-status-badge limbo" title="Closed, waiting on sprint rituals">Limbo</span>';
-    if (b.overBudget) return '<span class="sprint-status-badge arrears" title="Over budget: close the sprint to keep working">Arrears</span>';
+    if (sprint.limbo) return '<span class="badge badge-warning" title="Closed, waiting on sprint rituals">Limbo</span>';
+    if (b.overBudget) return '<span class="badge badge-danger" title="Over budget: close the sprint to keep working">Arrears</span>';
     return '';
+}
+
+// State modifier for the shared .meter / .state-dot (CHT-2040).
+const STATE_MODIFIER = { near: 'is-near', arrears: 'is-over', limbo: 'is-limbo' };
+function stateModifier(b) {
+    return STATE_MODIFIER[b.state] || '';
+}
+
+function sprintMeter(b) {
+    return `<span class="meter ${stateModifier(b)}" aria-hidden="true"><span class="meter-fill" style="width: ${b.pct}%"></span></span>`;
 }
 
 function sprintStateText(sprint, b) {
@@ -524,9 +534,7 @@ function renderSprintFocus({ sprint, statusCounts, countsFailed }) {
                 <span class="sprint-focus-meta">${escapeHtml(meta)}</span>
             </span>
             <span class="sprint-focus-headline">${sprintBudgetHeadline(b)}</span>
-            ${b.hasBudget ? `
-                <span class="sprint-progress-bar" aria-hidden="true"><span class="sprint-progress-fill ${b.state}" style="width: ${b.pct}%"></span></span>
-            ` : ''}
+            ${b.hasBudget ? sprintMeter(b) : ''}
             ${total ? `
                 <span class="sprint-issue-breakdown">
                     <span class="sprint-stacked-bar" aria-hidden="true">
@@ -555,11 +563,11 @@ function renderSprintRow({ project, sprint }) {
     return `
         <li>
             <button type="button" class="sprint-row ${b.state}" ${sprintActionAttrs(sprint)} title="${escapeAttr(title)}">
-                <span class="sprint-row-dot ${b.state}" aria-hidden="true"></span>
+                <span class="state-dot ${stateModifier(b)}" aria-hidden="true"></span>
                 <span class="sprint-row-project">${escapeHtml(project.name)}</span>
                 <span class="sprint-row-sprint">${escapeHtml(sprint.name)}</span>
-                <span class="sprint-row-bar ${b.hasBudget ? '' : 'none'}" aria-hidden="true">${b.hasBudget ? `<span class="sprint-progress-fill ${b.state}" style="width: ${b.pct}%"></span>` : ''}</span>
-                <span class="sprint-row-points">${points}<span class="sprint-row-unit"> pts</span>${b.hasBudget ? '' : '<span class="sr-only">, no budget</span>'}</span>
+                ${b.hasBudget ? sprintMeter(b) : '<span class="sprint-row-nometer" aria-hidden="true"></span>'}
+                <span class="meter-label">${points}<span class="sprint-row-unit"> pts</span>${b.hasBudget ? '' : '<span class="sr-only">, no budget</span>'}</span>
                 ${stateText ? `<span class="sr-only">, ${stateText}</span>` : ''}
             </button>
         </li>
