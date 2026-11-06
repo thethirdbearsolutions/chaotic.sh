@@ -815,6 +815,17 @@ describe('inline-dropdown', () => {
             `;
         });
 
+        it('updates a row under the title, outside the sidebar (CHT-2093)', () => {
+            document.getElementById('issue-detail-view').insertAdjacentHTML('afterbegin', `
+                <div class="issue-state">
+                    <div class="property-row" data-field="priority"><span class="property-label sr-only">Priority</span><button class="property-value" id="hp">old</button></div>
+                </div>`);
+            document.querySelector('.detail-sidebar [data-field="priority"]').remove();
+            updateDetailViewField('priority', { priority: 'high' });
+            expect(document.getElementById('hp').innerHTML).toContain('igh');
+            expect(document.getElementById('hp').innerHTML).not.toContain('old');
+        });
+
         it('updates status field in detail view', () => {
             updateDetailViewField('status', { status: 'done' });
 

@@ -76,6 +76,7 @@
     --font-lg: 16px;
     --font-xl: 18px;
     --font-2xl: 24px;
+    --on-accent: #ffffff; /* text and icons on an accent fill (CHT-2093) */
     --font-title: 28px;  /* page titles (CHT-2093) */
     --font-read: 15px;   /* text you read: descriptions, comments */
 
@@ -11074,7 +11075,8 @@ body.theme-light {
     color: var(--text-muted);
 }
 #issue-detail-view .related-row { border: 0; }
-#issue-detail-view .attachments.is-empty > :not(.attachments-status) { display: none; }
+/* An empty strip hides, but shows while a file is dragged over the page. */
+#issue-detail-view .attachments.is-empty:not(.is-dragover) > :not(.attachments-status) { display: none; }
 
 /* Conversation: comments lead; runs of events fold into one quiet line. */
 #issue-detail-view .timeline-comment { padding: 14px 0; }
@@ -11097,10 +11099,12 @@ body.theme-light {
 #issue-detail-view .detail-sidebar .property-value-static { display: inline-flex; align-items: center; gap: var(--space-sm); }
 #issue-detail-view .sidebar-actions { gap: 2px; border: 0; padding-top: var(--space-md); }
 #issue-detail-view .sidebar-actions .icon-btn-danger:hover { color: var(--danger-fg); }
+/* The paperclip is a label around a hidden file input: show focus on it. */
+#issue-detail-view .sidebar-actions label.icon-btn:has(input:focus-visible) { outline: 2px solid var(--accent-color); outline-offset: 2px; }
 
 /* Comment box: one box; tools on the left of its footer, send on the right.
    The tools show only while you are writing. */
-#issue-detail-view .comment-form-sticky { display: block; padding: var(--space-lg) 56px var(--space-xl); }
+#issue-detail-view .comment-form-sticky { display: block; margin: 0 -56px; padding: var(--space-lg) 56px var(--space-xl); }
 #issue-detail-view .comment-box {
     position: relative;
     max-width: 720px;
@@ -11125,9 +11129,9 @@ body.theme-light {
 #issue-detail-view .comment-box .rich-composer[hidden] { display: none; }
 #issue-detail-view .comment-box-foot { display: flex; align-items: center; gap: var(--space-xs); padding: 2px 6px 6px 8px; }
 #issue-detail-view .comment-box-foot .rich-composer-toolbar { width: auto; flex: 0 1 auto; flex-basis: auto; margin: 0; padding: 0; border: 0; }
-#issue-detail-view .comment-form:not(.composer-active) .rich-composer-toolbar { visibility: hidden; }
-#issue-detail-view .comment-submit-btn { background: var(--accent-color); color: white; border-radius: var(--radius-md); }
-#issue-detail-view .comment-submit-btn:hover:not(:disabled) { background: var(--accent-hover); color: white; }
+/* The same fill as .btn-primary. */
+#issue-detail-view .comment-submit-btn { background: var(--accent-color); color: var(--on-accent); border-radius: var(--radius-md); }
+#issue-detail-view .comment-submit-btn:hover:not(:disabled) { background: var(--accent-hover); color: var(--on-accent); }
 /* While a ritual waits on you, Approve is the one solid button. */
 #issue-detail-view:has(.ticket-gate.you) .comment-submit-btn { background: none; color: var(--text-secondary); border: 1px solid var(--border-color); }
 #issue-detail-view .comment-box .mention-suggestions { left: 0; right: 0; }

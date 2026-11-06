@@ -824,7 +824,6 @@ describe('app.js keyboard handler wiring', () => {
                 <div id="display-menu-dropdown" class="hidden"></div>
                 <div id="issue-detail-view">
                     <button class="back-link"></button>
-                    <div class="overflow-menu-dropdown hidden"></div>
                 </div>
             `;
             document.body.appendChild(container);
@@ -842,11 +841,6 @@ describe('app.js keyboard handler wiring', () => {
                 expect(keyboardHandlerConfig.isMenuOpen()).toBe(true);
             });
 
-        it('reports the detail overflow menu as an open menu', () => {
-            container.querySelector('.overflow-menu-dropdown').classList.remove('hidden');
-            expect(keyboardHandlerConfig.isMenuOpen()).toBe(true);
-        });
-
         it('reports a visible Quote tooltip as an open menu', () => {
             isQuoteTooltipVisible.mockReturnValue(true);
             try {
@@ -854,17 +848,6 @@ describe('app.js keyboard handler wiring', () => {
             } finally {
                 isQuoteTooltipVisible.mockReturnValue(false);
             }
-        });
-
-        it('closeDropdowns closes the overflow menu opened by click', () => {
-            container.querySelector('#issue-detail-view').insertAdjacentHTML('beforeend',
-                '<button class="sidebar-overflow-trigger" aria-expanded="true"></button>');
-            const menu = container.querySelector('.overflow-menu-dropdown');
-            menu.classList.remove('hidden');
-            keyboardHandlerConfig.closeDropdowns();
-            expect(menu.classList.contains('hidden')).toBe(true);
-            expect(container.querySelector('.sidebar-overflow-trigger').getAttribute('aria-expanded')).toBe('false');
-            expect(keyboardHandlerConfig.isMenuOpen()).toBe(false);
         });
 
         it('leaves through the Back button', () => {

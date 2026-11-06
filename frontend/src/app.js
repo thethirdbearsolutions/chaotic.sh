@@ -858,7 +858,6 @@ function isAnyMenuOpen() {
     };
     return shown('team-dropdown') || shown('user-dropdown')
         || shown('filter-menu-dropdown') || shown('display-menu-dropdown')
-        || !!document.querySelector('#issue-detail-view .overflow-menu-dropdown:not(.hidden)')
         || !!document.querySelector('#issue-detail-view details.related-add[open]')
         || isQuoteTooltipVisible();
 }
@@ -883,13 +882,6 @@ document.addEventListener('keydown', createKeyboardHandler({
         document.getElementById('team-dropdown').classList.add('hidden');
         document.getElementById('user-dropdown').classList.add('hidden');
         closeAllFilterMenus();
-        // The detail overflow menu, opened by click with focus left on its
-        // trigger, where its own Escape listener never hears the key.
-        const overflow = document.querySelector('#issue-detail-view .overflow-menu-dropdown:not(.hidden)');
-        if (overflow) {
-            overflow.classList.add('hidden');
-            document.querySelector('#issue-detail-view .sidebar-overflow-trigger')?.setAttribute('aria-expanded', 'false');
-        }
     },
     // CHT-1215: lets bare 'p'/'c' defer to the issue detail view's own
     // Priority/focus-comment-box actions instead of Projects/Create Issue.

@@ -568,7 +568,8 @@ let commentComposing = false;
  * Why a background refresh of the open issue must wait right now, or null.
  *  - 'editor': the inline description editor is open. The refresh is noted
  *    and resolved by the editor's Cancel/Save (CHT-1214); nothing retries.
- *  - 'transient': an inline field dropdown, the related-work menu or the
+ *  - 'transient': an inline field dropdown, the related-work menu, an
+ *    opened "N updates" run, or the
  *    @mention list is open, or an IME composition is in progress in the
  *    comment box. A re-render would orphan the dropdown on a replaced row
  *    (the CHT-1290 bug class), wipe the mention list, or abort the IME
@@ -580,6 +581,8 @@ export function detailRefreshBlocker() {
     if (isInlineDropdownOpen()) return 'transient';
     const detailView = document.getElementById('issue-detail-view');
     if (detailView?.querySelector('details.related-add[open]')) return 'transient';
+    // An opened "N updates" run would re-render closed (CHT-2093).
+    if (detailView?.querySelector('.timeline-run details[open]')) return 'transient';
     const mentions = document.getElementById('mention-suggestions');
     if (mentions && !mentions.classList.contains('hidden')) return 'transient';
     if (commentComposing) return 'transient';
@@ -817,21 +820,21 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     <h1 class="issue-detail-title">${escapeHtml(issue.title)}</h1>
                     <div class="issue-state" role="group" aria-label="Status, assignee and priority">
                     <div class="property-row" data-field="status" data-action="show-detail-dropdown" data-dropdown-type="status" data-issue-id="${escapeAttr(issue.id)}">
-                        <span class="property-label sr-only">Status</span>
-                        <button class="property-value">
+                        <span class="property-label sr-only" id="issue-state-status-label">Status</span>
+                        <button class="property-value" id="issue-state-status" aria-labelledby="issue-state-status-label issue-state-status">
                             ${getStatusIcon(issue.status)}
                             <span>${formatStatus(issue.status)}</span>
                         </button>
                     </div>
                     <div class="property-row" data-field="assignee" data-action="show-detail-dropdown" data-dropdown-type="assignee" data-issue-id="${escapeAttr(issue.id)}">
-                        <span class="property-label sr-only">Assignee</span>
-                        <button class="property-value">
+                        <span class="property-label sr-only" id="issue-state-assignee-label">Assignee</span>
+                        <button class="property-value" id="issue-state-assignee" aria-labelledby="issue-state-assignee-label issue-state-assignee">
                             ${assigneeName ? `${renderAvatar(assignee, 'avatar-small')}<span>${escapeHtml(assigneeName)}</span>` : `<span class="text-muted">Unassigned</span>`}
                         </button>
                     </div>
                     <div class="property-row" data-field="priority" data-action="show-detail-dropdown" data-dropdown-type="priority" data-issue-id="${escapeAttr(issue.id)}">
-                        <span class="property-label sr-only">Priority</span>
-                        <button class="property-value">
+                        <span class="property-label sr-only" id="issue-state-priority-label">Priority</span>
+                        <button class="property-value" id="issue-state-priority" aria-labelledby="issue-state-priority-label issue-state-priority">
                             ${getPriorityIcon(issue.priority)}
                             <span>${formatPriority(issue.priority)}</span>
                         </button>
@@ -893,15 +896,12 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     <div class="sidebar-section">
                         <h4>Details</h4>
 
-
-
                         <div class="property-row" data-field="type" data-action="show-detail-dropdown" data-dropdown-type="type" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Type</span>
                             <button class="property-value">
                                 <span class="issue-type-badge type-${issue.issue_type || 'task'}">${formatIssueType(issue.issue_type)}</span>
                             </button>
                         </div>
-
 
                         <div class="property-row" data-field="sprint" data-action="show-detail-dropdown" data-dropdown-type="sprint" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Sprint</span>
@@ -956,7 +956,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                         </div>
                     </div>
 
-                    <div class="sidebar-section sidebar-actions toolbar" role="toolbar" aria-label="Issue actions">
+                    <div class="sidebar-section sidebar-actions toolbar" aria-label="Issue actions">
                         <button class="icon-btn" data-action="edit" data-issue-id="${escapeAttr(issue.id)}" title="Edit all fields" aria-label="Edit all fields">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         </button>

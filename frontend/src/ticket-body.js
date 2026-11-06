@@ -170,18 +170,6 @@ function attestationsMissingFrom(activities, ritualStatus) {
 }
 
 /**
- * Comments and activity as one stream, oldest first.
- * @param {Object} data
- * @param {Array} data.comments
- * @param {Array} data.activities - newest page of the issue's activity
- * @param {Object|null} data.ritualStatus - `GET /rituals/issue/{id}/pending`
- * @param {string|null} [data.gateRitualName] - the ritual whose attestation the gate shows
- * @param {boolean} [data.activitiesTruncated] - older activity was left out
- * @param {boolean} [data.commentsLoadFailed]
- * @param {string} data.issueId
- * @param {{formatText: Function, formatActor: Function}} fmt
- */
-/**
  * Join timeline items, folding each run of two or more foldable events
  * into one collapsed "N updates" item. A single event stays as it is.
  */
@@ -202,6 +190,18 @@ export function foldRuns(items) {
     return out.join('');
 }
 
+/**
+ * Comments and activity as one stream, oldest first.
+ * @param {Object} data
+ * @param {Array} data.comments
+ * @param {Array} data.activities - newest page of the issue's activity
+ * @param {Object|null} data.ritualStatus - `GET /rituals/issue/{id}/pending`
+ * @param {string|null} [data.gateRitualName] - the ritual whose attestation the gate shows
+ * @param {boolean} [data.activitiesTruncated] - older activity was left out
+ * @param {boolean} [data.commentsLoadFailed]
+ * @param {string} data.issueId
+ * @param {{formatText: Function, formatActor: Function}} fmt
+ */
 export function renderTimeline({ comments = [], activities = [], ritualStatus = null, gateRitualName = null, activitiesTruncated = false, commentsLoadFailed = false, issueId }, fmt) {
     const awaiting = new Set(((ritualStatus && ritualStatus.pending_rituals) || [])
         .filter(r => r.attestation && !r.attestation.approved_at)
@@ -224,7 +224,9 @@ export function renderTimeline({ comments = [], activities = [], ritualStatus = 
             return {
                 at: a.created_at,
                 html: renderEvent(a, { ...fmt, awaitingReview: current, gateShowsIt: current && a.field_name === gateRitualName }),
-                fold: !current,
+                // A send-back and its reason stay in view, like the
+                // attestation waiting for review (CHT-2093).
+                fold: !current && a.activity_type !== 'ritual_rejected',
             };
         }),
     ].sort((a, b) => new Date(a.at) - new Date(b.at));

@@ -520,9 +520,13 @@ export async function deleteAttachment(id, filename) {
     if (section) {
         const left = current.attachments || [];
         const next = left[Math.min(Math.max(index, 0), left.length - 1)];
+        // With none left the strip hides (CHT-2093), so focus goes to the
+        // sidebar's attach button, which is where adding happens now.
         const target = next
             ? section.querySelector(`.attachment-open[data-attachment-id="${next.id}"]`)
-            : section.querySelector('#attachments-heading');
+            : (section.classList.contains('is-empty')
+                ? document.querySelector('.sidebar-actions input[data-action="pick-attachments"]')
+                : null) || section.querySelector('#attachments-heading');
         target?.focus();
         setStatus(issueId, `${filename || 'Attachment'} deleted`);
     }

@@ -949,26 +949,14 @@ export function updateDetailViewField(field, updatedIssue) {
     const detailView = document.getElementById('issue-detail-view');
     if (!detailView || detailView.classList.contains('hidden')) return;
 
-    // Status, assignee and priority sit under the title; the rest in the
-    // sidebar (CHT-2093). Both are .property-row, so search the whole view.
-    const sidebar = detailView;
-
-    // Find the property row for this field
+    // Status, assignee and priority sit under the title, the rest in the
+    // sidebar (CHT-2093); both are .property-row[data-field], so look in
+    // the whole view.
     let fieldName = field;
     if (field === 'assignee_id') fieldName = 'assignee';
     if (field === 'sprint_id') fieldName = 'sprint';
     if (field === 'issue_type') fieldName = 'type';
-
-    // Find the property row by looking for the label
-    const propertyRows = sidebar.querySelectorAll('.property-row');
-    let targetRow = null;
-    for (const row of propertyRows) {
-        const label = row.querySelector('.property-label');
-        if (label && label.textContent.toLowerCase() === fieldName.toLowerCase()) {
-            targetRow = row;
-            break;
-        }
-    }
+    const targetRow = detailView.querySelector(`.property-row[data-field="${fieldName}"]`);
 
     if (!targetRow) return;
 
