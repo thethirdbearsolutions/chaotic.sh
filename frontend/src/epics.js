@@ -87,6 +87,10 @@ export async function loadEpics({ fromMemory = false } = {}) {
     if (!listEl) return;
 
     const requestId = ++loadEpicsRequestId;
+    // Until this load paints, the filter box has nothing current to
+    // repaint: an old project's epics, or none (CHT-2096 review).
+    listEl._epicProgress = null;
+    wireFilterBox(listEl);
 
     // A revisit paints the epics shown last time for this team and
     // project at once, and the request below refreshes them (CHT-1973).
@@ -135,6 +139,7 @@ export async function loadEpics({ fromMemory = false } = {}) {
         paintEpics(progress, listEl);
     } catch (e) {
         if (requestId !== loadEpicsRequestId) return;
+        currentEpics = [];
         listEl.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.epics,
             heading: 'Failed to load epics',
@@ -223,7 +228,9 @@ function rollUp(node) {
     for (const sub of node.subs) {
         const r = rollUp(sub);
         const st = sub.epic.status;
-        if (children[st] > 0) {
+        // An open sub-epic with no tickets yet stays one open ticket of
+        // its parent, so the parent never reads "all done" over it.
+        if (rolledTotal(r.children) > 0 && children[st] > 0) {
             children[st] -= 1;
             children.total = (children.total || 0) - 1;
         }
@@ -248,7 +255,8 @@ function rolledOpen(children) {
 /** Every ticket done, the epic itself still open: close it? (CHT-1901) */
 function allDone(node) {
     const c = node.rolled.children;
-    return !CLOSED.has(node.epic.status) && rolledTotal(c) > 0 && rolledOpen(c) === 0;
+    return !CLOSED.has(node.epic.status) && rolledTotal(c) > 0 && rolledOpen(c) === 0
+        && node.subs.every(s => CLOSED.has(s.epic.status));
 }
 
 const MATCHES = {
@@ -403,25 +411,7 @@ export function renderEpics(progress, container) {
     `;
     container._epicProgress = progress;
 
-    // The filter box sits in the view header, outside the re-rendered
-    // list, so typing keeps its focus (CHT-2096).
-    const box = document.getElementById('epics-filter');
-    if (box && !box._epicFilterHandler) {
-        box._epicFilterHandler = () => {
-            query = box.value.trim().toLowerCase();
-            setSelectedEpicIndex(-1);
-            renderEpics(container._epicProgress, container);
-        };
-        box.addEventListener('input', box._epicFilterHandler);
-        // Enter hands the keyboard back to the list (j/k, Enter).
-        box.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Enter') {
-                ev.preventDefault();
-                box.blur();
-            }
-        });
-    }
-    if (box && box.value.trim().toLowerCase() !== query) box.value = query;
+    wireFilterBox(container);
 
     // Event delegation for row clicks — attach once per container
     if (!container._epicClickHandler) {
@@ -449,6 +439,32 @@ export function renderEpics(progress, container) {
             }
         };
         container.addEventListener('click', container._epicClickHandler);
+    }
+}
+
+/**
+ * The filter box sits in the view header, outside the re-rendered list,
+ * so typing keeps its focus (CHT-2096). Wired from the first load, so
+ * what is typed before the epics arrive still counts.
+ */
+function wireFilterBox(container) {
+    const box = document.getElementById('epics-filter');
+    if (box && !box._epicFilterHandler) {
+        box._epicFilterHandler = () => {
+            query = box.value.trim().toLowerCase();
+            // Mid-load or after a failure, the next paint applies it.
+            if (!container._epicProgress) return;
+            setSelectedEpicIndex(-1);
+            renderEpics(container._epicProgress, container);
+        };
+        box.addEventListener('input', box._epicFilterHandler);
+        // Enter hands the keyboard back to the list (j/k, Enter).
+        box.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') {
+                ev.preventDefault();
+                box.blur();
+            }
+        });
     }
 }
 

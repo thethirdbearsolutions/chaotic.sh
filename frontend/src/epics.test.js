@@ -302,6 +302,36 @@ describe('renderEpics (CHT-2095)', () => {
         expect(rowIds(container)).toEqual(['CHT-1', 'CHT-3']);
     });
 
+    it('never calls a parent all done over an open sub-epic, even one with no tickets', () => {
+        renderEpics(response([
+            epic({ id: 'p', identifier: 'CHT-1', children: { ...kids(2, 3), todo: 0, in_progress: 1 }, last_activity_at: ago(MIN) }),
+            epic({ id: 's', identifier: 'CHT-2', parent_epic_id: 'p', children: kids(0, 0), open_children: 0 }),
+        ]), container);
+        const parent = container.querySelector('[data-identifier="CHT-1"]');
+        expect(parent.querySelector('.meter-label').textContent).toBe('2 of 3');
+        expect(parent.querySelector('.list-row-sub').textContent).toContain('1 in progress');
+        chip(container, 'all_done').click();
+        expect(rowIds(container)).toEqual([]);
+    });
+
+    it('typing before the epics load, or after they fail, keeps the page as it is', async () => {
+        let resolve;
+        api.getTeamEpicProgress.mockReturnValue(new Promise(r => { resolve = r; }));
+        setCurrentTeam({ id: 't1', name: 'T' });
+        setCurrentProject(null);
+        container._epicProgress = response([epic({ title: 'Old project' })]);
+        const loading = loadEpics();
+        const box = document.getElementById('epics-filter');
+        box.value = 'auth';
+        box.dispatchEvent(new Event('input'));
+        expect(container.textContent).not.toContain('Old project');
+        expect(container.querySelector('.skeleton-list-item')).toBeTruthy();
+        resolve(response([epic({ title: 'Auth Epic' }), epic({ id: 'e2', identifier: 'CHT-2', title: 'Other' })]));
+        await loading;
+        // The load paints with what was typed meanwhile.
+        expect(rowIds(container)).toEqual(['CHT-10']);
+    });
+
     it('lifts a sub-epic to the top when its parent is filtered out', () => {
         renderEpics(response([
             epic({ id: 'p', identifier: 'CHT-1', status: 'done', completed_at: ago(MIN) }),
