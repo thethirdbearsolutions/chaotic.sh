@@ -8335,17 +8335,23 @@ button.stat-card-link:hover .stat-note {
     grid-row: 1 / span 2;
 }
 .epic-row .list-row-right {
-    flex-direction: row-reverse;
+    flex-direction: row;
     align-items: center;
     gap: var(--space-sm);
-    width: 160px;
+    width: 196px;
     text-align: right;
 }
 .epic-row .list-row-right .meter {
     flex: 1;
 }
 .epic-row .list-row-right .meter-label {
+    order: -1;
     min-width: 4.5em;
+}
+.epic-assignee {
+    display: inline-flex;
+    flex: none;
+    color: var(--text-muted);
 }
 /* The keyboard cursor (CHT-1964). */
 .epic-row.keyboard-selected {

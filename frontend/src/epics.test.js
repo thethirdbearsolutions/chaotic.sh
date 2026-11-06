@@ -219,7 +219,7 @@ describe('renderEpics (CHT-2095)', () => {
         expect(getCurrentEpics().map(e => e.identifier)).toEqual(rowIds(container));
         expect(container.querySelectorAll('.epic-section').length).toBe(1);
         // All done stays in its place and asks the question on its row.
-        expect(container.querySelector('[data-identifier="CHT-3"] .list-row-sub').textContent).toBe('All sub-issues done');
+        expect(container.querySelector('[data-identifier="CHT-3"] .list-row-sub').textContent).toBe('');
     });
 
     it('says what is moving, who holds it on hover, and every status on the meter', () => {
@@ -380,13 +380,16 @@ describe('renderEpics (CHT-2095)', () => {
         expect(container.querySelector('.epic-filter-empty b')).toBeNull();
     });
 
-    it('shows the epic owner after the title, and nothing when unassigned', () => {
+    it('shows the epic\'s assignee as an avatar beside the meter, as /issues does', () => {
         renderEpics(response([
             moving({ identifier: 'CHT-1', owner: person('Rowan'), last_activity_at: ago(MIN) }),
             moving({ id: 'e2', identifier: 'CHT-2', last_activity_at: ago(5 * MIN) }),
         ]), container);
-        const owners = [...container.querySelectorAll('.epic-row')].map(r => r.querySelector('.epic-owner')?.textContent || null);
-        expect(owners).toEqual(['· Rowan', null]);
+        const owners = [...container.querySelectorAll('.epic-row .list-row-right .epic-assignee')];
+        expect(owners.map(o => o.getAttribute('title'))).toEqual(['Rowan', 'Unassigned']);
+        expect(owners[0].querySelector('.avatar-small').textContent).toBe('R');
+        expect(owners[1].querySelector('svg')).not.toBeNull();
+        expect(container.querySelector('.list-row-title').textContent).not.toContain('Rowan');
     });
 
     it('leads each epic row with its sprint strip, ends it with the meter, and says when it was touched on hover', () => {

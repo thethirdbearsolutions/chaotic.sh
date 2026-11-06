@@ -3,7 +3,8 @@
  */
 
 import { api } from './api.js';
-import { escapeHtml, escapeAttr, formatTimeAgo } from './utils.js';
+import { escapeHtml, escapeAttr, formatTimeAgo, renderAvatar } from './utils.js';
+import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { navigateToEpicByIdentifier } from './router.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
@@ -305,13 +306,18 @@ function renderRow(node, { grouped, depth, shownSubs }) {
         : '';
     const canceled = e.status === 'canceled' ? ' <span class="epic-canceled-tag">Canceled</span>' : '';
     const key = grouped ? `<span class="epic-project-key">${escapeHtml(e.project_key)}</span> ` : '';
-    const owner = e.owner ? ` <span class="epic-owner">· ${escapeHtml(e.owner.name)}</span>` : '';
+    // The epic's assignee as /issues draws one: an avatar, named on hover,
+    // or the empty-person mark (CHT-2097 review).
+    const who = e.owner ? (getAssigneeById(e.owner.id) || e.owner) : null;
+    const owner = `<span class="epic-assignee" title="${escapeAttr(who ? formatAssigneeName(who) : 'Unassigned')}">${who
+        ? renderAvatar(who, 'avatar-small')
+        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>'}</span>`;
     const empty = rolledTotal(children) <= 0;
 
     const sub = [];
     if (closed) sub.push(e.completed_at ? `Closed ${escapeHtml(when(e.completed_at))}` : 'Closed');
-    else if (allDone(node)) sub.push('<span class="epic-all-done">All sub-issues done</span>');
-    else {
+    // A full meter already says every sub-issue is done (CHT-2097 review).
+    else if (!allDone(node)) {
         const counts = renderCounts(children);
         const who = whoTitle(e);
         if (counts) sub.push(who ? `<span title="${escapeAttr(who)}">${counts}</span>` : counts);
@@ -330,9 +336,9 @@ function renderRow(node, { grouped, depth, shownSubs }) {
     return `
         <div class="list-row-2line epic-row${closed ? ' epic-row-closed' : ''}${empty ? ' epic-row-empty' : ''}${depth ? ' epic-row-sub' : ''}" data-identifier="${escapeAttr(e.identifier)}" title="${escapeAttr(tip)}" style="--epic-depth: ${depth}">
             <span class="epic-spark">${renderSprintStrip(e.sprints)}</span>
-            <span class="list-row-title">${toggle}${key}${escapeHtml(e.title)}${owner}${pinned}${canceled}</span>
+            <span class="list-row-title">${toggle}${key}${escapeHtml(e.title)}${pinned}${canceled}</span>
             <span class="list-row-sub">${sub.join(' · ')}</span>
-            <span class="list-row-right">${renderMeter(children)}</span>
+            <span class="list-row-right">${renderMeter(children)}${owner}</span>
         </div>`;
 }
 
