@@ -511,7 +511,9 @@ async def issue_update(
             '{"close-gate": "ADR written", "doc-refresh": "README updated"}. '
             "Use when closing (status=done) or claiming (status=in_progress) "
             "a ticket whose rituals require notes — without them the status "
-            "change is blocked by pending rituals (CHT-1326)."
+            "change is blocked by pending rituals (CHT-1326). Each note "
+            "renders as Markdown: when a ritual's prompt asks several things, "
+            "answer each on its own line or bullet, not in one paragraph."
         )),
     ] = None,
 ) -> dict:
@@ -805,7 +807,9 @@ async def issue_start(
             'ritual name -> note, e.g. {"claim-gate": "branch cut"}. Required '
             "when the ticket has pending claim rituals -- without them the "
             "claim is blocked (CHT-1326). Use ritual_pending to see which "
-            "rituals apply and what each one asks."
+            "rituals apply and what each one asks. Each note renders as "
+            "Markdown: when a prompt asks several things, answer each on its "
+            "own line or bullet, not in one paragraph."
         )),
     ] = None,
     lease_seconds: Annotated[
