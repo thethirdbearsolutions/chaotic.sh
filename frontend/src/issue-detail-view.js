@@ -313,6 +313,27 @@ export function attachmentViewer(issue) {
     return { userId: user?.id || null, isAdmin: !!self && (self.role === 'admin' || self.role === 'owner') };
 }
 
+/**
+ * Keep the ticket sidebar in view on long tickets (CHT-2087). The inner
+ * column is sticky; when it is taller than the window, its sticky top goes
+ * negative by the overflow, so it scrolls with the page until its bottom is
+ * in view and then stays. Nothing in it is ever out of reach, and it needs no
+ * scroll box of its own, which would clip the actions menu.
+ */
+export function stickSidebar(inner, signal) {
+    if (!inner || typeof ResizeObserver === 'undefined') return;
+    const update = () => {
+        // A 24px gap from the window's edge, matching the aside's padding.
+        const top = Math.min(24, window.innerHeight - inner.offsetHeight - 24);
+        inner.style.setProperty('--sidebar-stick-top', `${top}px`);
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(inner);
+    window.addEventListener('resize', update, { signal });
+    signal?.addEventListener('abort', () => observer.disconnect(), { once: true });
+    update();
+}
+
 // Watches the gate panel so the sticky bar shows only once it has scrolled
 // out of view (CHT-2020).
 let gateObserver = null;
@@ -864,6 +885,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                 </div>
 
                 <aside class="detail-sidebar">
+                    <div class="detail-sidebar-inner">
                     <div class="sidebar-section">
                         <h4>Properties</h4>
 
@@ -971,6 +993,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                             </div>
                         </div>
                     </div>
+                    </div>
                 </aside>
             </div>
         `;
@@ -1022,6 +1045,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         setupQuoteComment({ signal: detailSignal });
         setupRelatedAddMenu(detailSignal);
         setupAttachmentDrop(detailView.querySelector('.detail-main'), issue.id, detailSignal);
+        stickSidebar(detailView.querySelector('.detail-sidebar-inner'), detailSignal);
         hydrateAttachments(detailView);
 
         // Cmd/Ctrl+Enter to submit comment + draft persistence (CHT-1041)
