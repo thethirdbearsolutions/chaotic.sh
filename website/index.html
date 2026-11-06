@@ -210,19 +210,33 @@
         </div>
     </section>
 
-    <!-- Product Section (CHT-694): real screenshots of the web UI, captured
-         from a throwaway instance seeded with made-up data. -->
+    <!-- Product Section (CHT-694, CHT-2089): real screenshots of the web
+         UI, captured from a throwaway server seeded with made-up people,
+         agents and tickets, cropped to 1440x810 at 2x. -->
     <section class="section" id="product">
         <div class="section-content">
             <h2 class="section-title">The Dashboard</h2>
-            <figure class="screenshot screenshot-hero">
-                <a href="images/app-issues.png"><img src="images/app-issues.png" width="1440" height="810" loading="lazy"
-                     alt="Chaotic issues view: a Backend API project grouped by status, with a sprint progress bar showing 6 of 20 points spent"></a>
-            </figure>
-            <figure class="screenshot">
-                <a href="images/app-board.png"><img src="images/app-board.png" width="1440" height="460" loading="lazy"
-                     alt="Board view with Backlog, Todo, In Progress and In Review columns"></a>
-            </figure>
+            <div class="carousel" data-carousel aria-roledescription="carousel" aria-label="Screens from the web app">
+                <div class="carousel-track">
+                    <figure class="carousel-slide is-active" aria-label="Inbox">
+                        <img src="images/app-inbox.webp" width="1440" height="810"
+                             alt="Inbox: an assignment, mentions from people and agents, and code reviews waiting for approval">
+                    </figure>
+                    <figure class="carousel-slide" aria-label="Epics" aria-hidden="true">
+                        <img src="images/app-epics.webp" width="1440" height="810" loading="lazy"
+                             alt="Epics: approvals waiting on you, then each epic with who is working on it and how far along it is">
+                    </figure>
+                    <figure class="carousel-slide" aria-label="Ticket" aria-hidden="true">
+                        <img src="images/app-detail.webp" width="1440" height="810" loading="lazy"
+                             alt="A ticket in review: an agent attested its code-review ritual, and it waits for a person to approve">
+                    </figure>
+                </div>
+                <div class="carousel-dots" role="tablist">
+                    <button type="button" class="carousel-dot is-active" role="tab" aria-selected="true" aria-label="Inbox"></button>
+                    <button type="button" class="carousel-dot" role="tab" aria-selected="false" aria-label="Epics"></button>
+                    <button type="button" class="carousel-dot" role="tab" aria-selected="false" aria-label="Ticket"></button>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -510,6 +524,35 @@
     </footer>
 
     <script>
+        // Product carousel (CHT-2089): advances every 5s, pauses on hover
+        // or focus, and stays put for prefers-reduced-motion.
+        document.querySelectorAll('[data-carousel]').forEach((root) => {
+            const slides = [...root.querySelectorAll('.carousel-slide')];
+            const dots = [...root.querySelectorAll('.carousel-dot')];
+            let current = 0;
+            let timer = null;
+            const show = (i) => {
+                current = (i + slides.length) % slides.length;
+                slides.forEach((s, j) => {
+                    s.classList.toggle('is-active', j === current);
+                    s.setAttribute('aria-hidden', j === current ? 'false' : 'true');
+                });
+                dots.forEach((d, j) => {
+                    d.classList.toggle('is-active', j === current);
+                    d.setAttribute('aria-selected', j === current ? 'true' : 'false');
+                });
+            };
+            const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const start = () => { if (!reduce && !timer) timer = setInterval(() => show(current + 1), 5000); };
+            const stop = () => { clearInterval(timer); timer = null; };
+            dots.forEach((d, j) => d.addEventListener('click', () => { show(j); stop(); start(); }));
+            root.addEventListener('mouseenter', stop);
+            root.addEventListener('mouseleave', start);
+            root.addEventListener('focusin', stop);
+            root.addEventListener('focusout', start);
+            start();
+        });
+
         const sliders = document.querySelectorAll('.growth-slider');
 
         const updateGrowth = (slider) => {

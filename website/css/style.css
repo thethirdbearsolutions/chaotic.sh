@@ -1203,36 +1203,56 @@ section[id] {
 }
 
 /* Product screenshots (CHT-694) */
-.screenshot {
-    margin: 0;
-}
-
-.screenshot img {
-    display: block;
-    width: 100%;
-    height: auto;
+/* Product carousel (CHT-2089) */
+.carousel-track {
+    display: grid;
     border: 1px solid var(--border-color);
     border-radius: 12px;
+    overflow: hidden;
     box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
     background: var(--bg-secondary);
 }
 
-.screenshot figcaption {
-    margin-top: 0.875rem;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 0.875rem;
+.carousel-slide {
+    grid-area: 1 / 1;
+    margin: 0;
+    opacity: 0;
+    transition: opacity 0.6s ease;
 }
 
-.screenshot-hero {
-    margin-bottom: 3rem;
+.carousel-slide.is-active {
+    opacity: 1;
 }
 
-.screenshot-pair {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
-    align-items: start;
+.carousel-slide img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.carousel-dots {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+}
+
+.carousel-dot {
+    width: 0.625rem;
+    height: 0.625rem;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--bg-hover);
+    cursor: pointer;
+}
+
+.carousel-dot.is-active {
+    background: var(--accent-color);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .carousel-slide { transition: none; }
 }
 
 /* Agents & MCP (CHT-1479) */
@@ -1536,9 +1556,7 @@ section[id] {
         padding: 0.75rem 1rem;
     }
 
-    .screenshot-pair,
     .agents-grid,
-    .identity-grid,
     .identity-extra {
         grid-template-columns: 1fr;
     }
