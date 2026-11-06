@@ -1246,6 +1246,12 @@ configured with `{"estimate__gte": 3}` only fires on tickets estimated
 ≥3 points; smaller tickets close without it). If a ritual's conditions
 don't match the issue, it's skipped ("conditions do not match").
 
+**Write notes people can skim.** An attestation note renders as Markdown
+in the inbox and on the ticket. When a ritual's prompt asks several
+things (problem, approach, edge cases...), answer each on its own line
+or bullet rather than in one paragraph. From the CLI, pass a multi-line
+note as a file or on stdin: `--note @note.md` or `--note -`.
+
 **Supply attestation notes inline when closing non-interactively**
 (CHT-1326 / ADR-0004). A bare `issue_update {status: "done"}` on a
 ticket with note-required close rituals is *blocked* with

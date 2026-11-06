@@ -267,7 +267,7 @@ def register(cli):
                     print_rejection(rejection)
                 console.print(f"\n[bold]Next pending ritual for {esc(ticket_id)}:[/bold] {esc(r['name'])} {mode_markup}")
                 print_ritual_prompt(r['prompt'])
-                console.print(f"\n  [dim]Usage: chaotic ritual attest {esc(r['name'])} --ticket {esc(ticket_id)} --note \"your note here\"[/dim]")
+                console.print(f"\n  [dim]Usage: chaotic ritual attest {esc(r['name'])} --ticket {esc(ticket_id)} --note @FILE (Markdown; or --note - for stdin)[/dim]")
                 raise SystemExit(1)
         else:
             status = _client().get_limbo_status(project_id)
@@ -295,12 +295,12 @@ def register(cli):
             else:
                 console.print(f"\n[bold]Next pending ritual:[/bold] {esc(next_r['name'])} {mode_markup}")
                 print_ritual_prompt(next_r['prompt'])
-                console.print(f"\n  [dim]Usage: chaotic ritual attest {esc(next_r['name'])} --note \"your note here\"[/dim]")
+                console.print(f"\n  [dim]Usage: chaotic ritual attest {esc(next_r['name'])} --note @FILE (Markdown; or --note - for stdin)[/dim]")
                 raise SystemExit(1)
 
     @ritual.command("attest")
     @click.argument("ritual_name")
-    @click.option("--note", "--notes", help="Note about the attestation (required by default; error shows ritual prompt if omitted)", callback=resolve_content_value)
+    @click.option("--note", "--notes", help="Your answer to the ritual's prompt, rendered as Markdown (required by default; error shows ritual prompt if omitted). For a multi-part answer write one line or bullet per item and pass it as @FILE or - (stdin).", callback=resolve_content_value)
     @click.option("--ticket", "ticket_id", help="Issue identifier for ticket-level rituals (e.g., CHT-123)")
     @click.option("--document", "document_ref", help="For a ritual whose artifact is a document: the document you wrote for it (id, id prefix, or title)")
     @click.option("--url", help="For a ritual whose artifact is a URL: the link to it (a PR review comment, a report)")
@@ -335,9 +335,9 @@ def register(cli):
             console.print(f"[bold]This ritual asks:[/bold] \"{esc(rit['prompt'])}\"")
             console.print()
             if ticket_id:
-                console.print(f"[dim]Usage: chaotic ritual attest {esc(ritual_name)} --ticket {esc(ticket_id)} --note \"your note here\"[/dim]")
+                console.print(f"[dim]Usage: chaotic ritual attest {esc(ritual_name)} --ticket {esc(ticket_id)} --note @FILE (Markdown; or --note - for stdin)[/dim]")
             else:
-                console.print(f"[dim]Usage: chaotic ritual attest {esc(ritual_name)} --note \"your note here\"[/dim]")
+                console.print(f"[dim]Usage: chaotic ritual attest {esc(ritual_name)} --note @FILE (Markdown; or --note - for stdin)[/dim]")
             raise SystemExit(1)
 
         # Check if this is a ticket-level ritual (close or claim)

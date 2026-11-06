@@ -1178,7 +1178,7 @@
               }
             ],
             "default": null,
-            "description": "Ritual attestation notes to record BEFORE claiming, as a map of ritual name -> note, e.g. {\"claim-gate\": \"branch cut\"}. Required when the ticket has pending claim rituals -- without them the claim is blocked (CHT-1326). Use ritual_pending to see which rituals apply and what each one asks.",
+            "description": "Ritual attestation notes to record BEFORE claiming, as a map of ritual name -> note, e.g. {\"claim-gate\": \"branch cut\"}. Required when the ticket has pending claim rituals -- without them the claim is blocked (CHT-1326). Use ritual_pending to see which rituals apply and what each one asks. Each note renders as Markdown: when a prompt asks several things, answer each on its own line or bullet, not in one paragraph.",
             "title": "Attest"
           },
           "identifier": {
@@ -1281,7 +1281,7 @@
               }
             ],
             "default": null,
-            "description": "Ritual attestation notes to record BEFORE applying the update, as a map of ritual name -> note, e.g. {\"close-gate\": \"ADR written\", \"doc-refresh\": \"README updated\"}. Use when closing (status=done) or claiming (status=in_progress) a ticket whose rituals require notes \u2014 without them the status change is blocked by pending rituals (CHT-1326).",
+            "description": "Ritual attestation notes to record BEFORE applying the update, as a map of ritual name -> note, e.g. {\"close-gate\": \"ADR written\", \"doc-refresh\": \"README updated\"}. Use when closing (status=done) or claiming (status=in_progress) a ticket whose rituals require notes \u2014 without them the status change is blocked by pending rituals (CHT-1326). Each note renders as Markdown: when a ritual's prompt asks several things, answer each on its own line or bullet, not in one paragraph.",
             "title": "Attest"
           },
           "description": {
@@ -1601,7 +1601,7 @@
               }
             ],
             "default": null,
-            "description": "Your attestation note -- the answer to the ritual's prompt. Required unless the ritual sets note_required=false.",
+            "description": "Your attestation note -- the answer to the ritual's prompt. Rendered as Markdown for the people who read it, so make it skimmable: when the prompt asks several things, give each its own short labeled line or bullet rather than one paragraph. Required unless the ritual sets note_required=false.",
             "title": "Note"
           },
           "project": {

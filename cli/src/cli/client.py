@@ -625,12 +625,12 @@ class Client:
                 if _rejected(r):
                     lines.append(_rejected(r))
                 lines.append(
-                    f"\nUsage: chaotic ritual attest {name} --ticket {issue_id} --note \"your note here\""
+                    f"\nUsage: chaotic ritual attest {name} --ticket {issue_id} --note @FILE (Markdown; or --note - for stdin)"
                 )
             else:
                 lines.append(f"Pending ritual: {r}")
                 lines.append(
-                    f"\nUsage: chaotic ritual attest {r} --ticket {issue_id} --note \"your note here\""
+                    f"\nUsage: chaotic ritual attest {r} --ticket {issue_id} --note @FILE (Markdown; or --note - for stdin)"
                 )
             if len(todo) > 1:
                 lines.append(f"\n({len(todo) - 1} more ritual(s) pending after this one)")

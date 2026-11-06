@@ -1078,7 +1078,7 @@ def register(cli):
     @click.option("--relates-to", "relates_to", multiple=True, help="Add relates-to relation(s) (can be used multiple times)")
     @click.option("--unceremoniously-attest-all-rituals", "unceremonious", is_flag=True,
                   help="Auto-attest all pending ticket rituals (requires --note)")
-    @click.option("--note", help="Note for ritual attestations (required with --unceremoniously-attest-all-rituals)", callback=resolve_content_value)
+    @click.option("--note", help="Note for ritual attestations, rendered as Markdown; pass @FILE or - for a multi-line note (required with --unceremoniously-attest-all-rituals)", callback=resolve_content_value)
     @click.option("--attest", "attest_specs", multiple=True, metavar="RITUAL:NOTE",
                   help="Attest a specific pending ticket ritual with its own note "
                        "before applying the update (repeatable), e.g. "

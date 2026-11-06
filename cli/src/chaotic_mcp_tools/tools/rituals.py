@@ -174,6 +174,9 @@ async def ritual_attest(
     note: Annotated[
         str | None,
         Field(description="Your attestation note -- the answer to the ritual's prompt. "
+                          "Rendered as Markdown for the people who read it, so make it "
+                          "skimmable: when the prompt asks several things, give each its "
+                          "own short labeled line or bullet rather than one paragraph. "
                           "Required unless the ritual sets note_required=false.")
     ] = None,
     identifier: Annotated[
