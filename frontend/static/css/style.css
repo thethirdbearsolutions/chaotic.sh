@@ -76,6 +76,8 @@
     --font-lg: 16px;
     --font-xl: 18px;
     --font-2xl: 24px;
+    --font-title: 28px;  /* page titles (CHT-2093) */
+    --font-read: 15px;   /* text you read: descriptions, comments */
 
     /* Shadows */
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -11002,4 +11004,136 @@ body.theme-light {
         margin-top: 0;
         margin-bottom: 4px;
     }
+}
+
+/* ============================================================================
+   Ticket screen v2 (CHT-2093). One type scale: --font-title for the title,
+   --font-xl for the step waiting on you, --font-read for anything you read,
+   --font-base for controls, --font-xs capitals for section labels. Space,
+   not rules, separates sections; the reading column is capped.
+   ============================================================================ */
+#issue-detail-view .detail-main { padding: 32px 56px 0; }
+#issue-detail-view .detail-main > :not(.ticket-gate-sticky):not(.comment-form) { max-width: 720px; }
+#issue-detail-view .issue-detail-nav { gap: var(--space-lg); margin-bottom: var(--space-xl); }
+#issue-detail-view .back-link { padding: 4px; }
+#issue-detail-view .issue-detail-breadcrumb { font-size: var(--font-sm); color: var(--text-muted); }
+#issue-detail-view .issue-detail-title {
+    font-size: var(--font-title);
+    line-height: 1.2;
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    margin: 0 0 var(--space-md);
+}
+
+/* State under the title: the sidebar's own rows, laid out as one line. */
+#issue-detail-view .issue-state {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px var(--space-md);
+    margin: 0 0 32px -8px;
+}
+#issue-detail-view .issue-state .property-row { border: 0; margin: 0; padding: 0; }
+#issue-detail-view .issue-state .property-row + .property-row::before {
+    content: "·";
+    color: var(--text-muted);
+    margin-right: var(--space-md);
+}
+#issue-detail-view .issue-state .property-row { display: inline-flex; align-items: center; }
+#issue-detail-view .issue-state .property-value {
+    font-size: var(--font-md);
+    color: var(--text-secondary);
+    padding: 4px 8px;
+}
+#issue-detail-view .issue-state .property-row:first-child .property-value { color: var(--text-primary); font-weight: 500; }
+
+/* Waiting on you: one flat callout; the evidence is a quote, not a box. */
+#issue-detail-view .ticket-gate { margin-bottom: 40px; }
+#issue-detail-view .ticket-gate-step { font-size: var(--font-xl); }
+#issue-detail-view .ticket-gate-asks { font-size: var(--font-md); }
+#issue-detail-view .ticket-gate-attestation {
+    background: none;
+    border-radius: 0;
+    border-left: 1px solid var(--border-color);
+    padding: 2px 0 2px var(--space-xl);
+    margin: var(--space-xl) 0;
+}
+
+/* Reading text. */
+#issue-detail-view .description-content,
+#issue-detail-view .comment-content { font-size: var(--font-read); line-height: 1.65; }
+#issue-detail-view .issue-detail-description { margin-bottom: 40px; }
+#issue-detail-view .related-work { margin-bottom: 40px; }
+#issue-detail-view .related-head { border: 0; }
+#issue-detail-view .related-head h3,
+#issue-detail-view .ticket-timeline > h3 {
+    font-size: var(--font-xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+#issue-detail-view .related-row { border: 0; }
+#issue-detail-view .attachments.is-empty > :not(.attachments-status) { display: none; }
+
+/* Conversation: comments lead; runs of events fold into one quiet line. */
+#issue-detail-view .timeline-comment { padding: 14px 0; }
+#issue-detail-view .comment-author { font-size: var(--font-md); }
+#issue-detail-view .timeline-run { list-style: none; margin: 2px 0; padding-left: 36px; font-size: var(--font-sm); color: var(--text-muted); }
+#issue-detail-view .timeline-run > details > summary { cursor: pointer; padding: 4px 0; width: fit-content; }
+#issue-detail-view .timeline-run-list { padding: 0; margin: 0; }
+
+/* Sidebar: label over value, no rules. */
+#issue-detail-view .detail-sidebar { padding: 32px 24px; }
+#issue-detail-view .detail-sidebar h4 { font-size: var(--font-xs); letter-spacing: 0.06em; margin-bottom: var(--space-xl); }
+#issue-detail-view .detail-sidebar .property-row {
+    display: block;
+    border: 0;
+    margin: 0 0 var(--space-lg);
+    padding: 0;
+}
+#issue-detail-view .detail-sidebar .property-label { display: block; font-size: var(--font-sm); color: var(--text-muted); margin-bottom: 2px; }
+#issue-detail-view .detail-sidebar .property-value { justify-content: flex-start; padding: 2px 0; color: var(--text-primary); }
+#issue-detail-view .detail-sidebar .property-value-static { display: inline-flex; align-items: center; gap: var(--space-sm); }
+#issue-detail-view .sidebar-actions { gap: 2px; border: 0; padding-top: var(--space-md); }
+#issue-detail-view .sidebar-actions .icon-btn-danger:hover { color: var(--danger-fg); }
+
+/* Comment box: one box; tools on the left of its footer, send on the right.
+   The tools show only while you are writing. */
+#issue-detail-view .comment-form-sticky { display: block; padding: var(--space-lg) 56px var(--space-xl); }
+#issue-detail-view .comment-box {
+    position: relative;
+    max-width: 720px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+}
+#issue-detail-view .comment-box:focus-within { border-color: var(--accent-color); }
+#issue-detail-view .comment-box textarea,
+#issue-detail-view .comment-box .rich-composer {
+    display: block;
+    width: 100%;
+    border: 0;
+    background: none;
+    box-shadow: none;
+    outline: none;
+    resize: none;
+    font-size: var(--font-md);
+}
+#issue-detail-view .comment-box textarea { padding: 10px 12px 2px; }
+#issue-detail-view .comment-box textarea[hidden],
+#issue-detail-view .comment-box .rich-composer[hidden] { display: none; }
+#issue-detail-view .comment-box-foot { display: flex; align-items: center; gap: var(--space-xs); padding: 2px 6px 6px 8px; }
+#issue-detail-view .comment-box-foot .rich-composer-toolbar { width: auto; flex: 0 1 auto; flex-basis: auto; margin: 0; padding: 0; border: 0; }
+#issue-detail-view .comment-form:not(.composer-active) .rich-composer-toolbar { visibility: hidden; }
+#issue-detail-view .comment-submit-btn { background: var(--accent-color); color: white; border-radius: var(--radius-md); }
+#issue-detail-view .comment-submit-btn:hover:not(:disabled) { background: var(--accent-hover); color: white; }
+/* While a ritual waits on you, Approve is the one solid button. */
+#issue-detail-view:has(.ticket-gate.you) .comment-submit-btn { background: none; color: var(--text-secondary); border: 1px solid var(--border-color); }
+#issue-detail-view .comment-box .mention-suggestions { left: 0; right: 0; }
+
+@media (max-width: 900px) {
+    #issue-detail-view .detail-main { padding: 20px 16px 0; }
+    #issue-detail-view .comment-form-sticky { padding: var(--space-md) 16px; margin: 0 -16px; }
+    #issue-detail-view .issue-detail-title { font-size: var(--font-2xl); }
 }

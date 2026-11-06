@@ -739,10 +739,6 @@ describe('issue-detail-view', () => {
                         isInlineDropdownOpen.mockReturnValue(true);
                         return () => isInlineDropdownOpen.mockReturnValue(false);
                     },
-                    'the overflow menu': () => {
-                        document.querySelector('#issue-detail-view .overflow-menu-dropdown').classList.remove('hidden');
-                        return () => document.querySelector('#issue-detail-view .overflow-menu-dropdown').classList.add('hidden');
-                    },
                     'the @mention list': () => {
                         document.getElementById('mention-suggestions').classList.remove('hidden');
                         return () => document.getElementById('mention-suggestions').classList.add('hidden');
@@ -797,23 +793,6 @@ describe('issue-detail-view', () => {
                         isInlineDropdownOpen.mockReturnValue(false);
                     }
                 });
-            });
-
-            // CHT-1873: Escape on issue detail leaves it once no menu is
-            // open, so the overflow menu's own Escape must not reach it.
-            it('keeps the overflow menu Escape from reaching the global handler', async () => {
-                await viewIssue('issue-1');
-                const menu = document.querySelector('#issue-detail-view .overflow-menu-dropdown');
-                menu.classList.remove('hidden');
-                const global = vi.fn();
-                document.addEventListener('keydown', global);
-                try {
-                    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-                    expect(menu.classList.contains('hidden')).toBe(true);
-                    expect(global).not.toHaveBeenCalled();
-                } finally {
-                    document.removeEventListener('keydown', global);
-                }
             });
 
             it('logs instead of showing an error toast when the refresh fails', async () => {
@@ -979,12 +958,25 @@ describe('issue-detail-view', () => {
             expect(menu().open).toBe(false);
         });
 
-        it('puts a one-line summary of the properties under the title (CHT-2021)', async () => {
+        it('puts status, assignee and priority under the title, each opening its picker (CHT-2093)', async () => {
             await viewIssue('issue-1');
 
-            const line = document.querySelector('.issue-detail-title + .issue-meta-line');
-            expect(line).not.toBeNull();
-            expect(line.textContent).toContain('Unassigned');
+            const state = document.querySelector('.issue-detail-title + .issue-state');
+            expect(state).not.toBeNull();
+            expect([...state.querySelectorAll('.property-row')].map(r => r.dataset.field)).toEqual(['status', 'assignee', 'priority']);
+            state.querySelectorAll('.property-row').forEach(r => expect(r.dataset.action).toBe('show-detail-dropdown'));
+            expect(state.textContent).toContain('Unassigned');
+            // Not repeated in the sidebar.
+            expect(document.querySelector('.detail-sidebar [data-field="status"]')).toBeNull();
+        });
+
+        it('offers attach, edit, history and delete as labelled icons (CHT-2093)', async () => {
+            await viewIssue('issue-1');
+
+            const labels = [...document.querySelectorAll('.sidebar-actions button.icon-btn')].map(b => b.getAttribute('aria-label'));
+            expect(labels).toEqual(['Edit all fields', 'Description history', 'Delete issue']);
+            expect(document.querySelector('.sidebar-actions label.icon-btn input[type=file][data-action="pick-attachments"]')).not.toBeNull();
+            expect(document.querySelector('.overflow-menu-dropdown')).toBeNull();
         });
 
         it('shows error toast on API failure', async () => {

@@ -17,7 +17,6 @@ import { formatEstimate, getEstimateOptions } from './projects.js';
 import { formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList, getAssigneeById } from './assignees.js';
 import { updateSprintCacheForProject } from './sprints.js';
 import { updateSprintBudgetBar } from './issues-view.js';
-import { renderMetaLine } from './ticket-body.js';
 import { STATUS_ORDER, PRIORITY_OPTIONS } from './constants.js';
 
 // Dropdown options — re-export from constants for backward compatibility
@@ -950,15 +949,9 @@ export function updateDetailViewField(field, updatedIssue) {
     const detailView = document.getElementById('issue-detail-view');
     if (!detailView || detailView.classList.contains('hidden')) return;
 
-    // The one-line summary under the title shows the same fields (CHT-2021).
-    const meta = detailView.querySelector('.issue-meta-line');
-    if (meta) {
-        const assignee = updatedIssue.assignee_id ? getAssigneeById(updatedIssue.assignee_id) : null;
-        meta.outerHTML = renderMetaLine(updatedIssue, assignee ? formatAssigneeName(assignee) : null, { formatEstimate });
-    }
-
-    const sidebar = detailView.querySelector('.detail-sidebar');
-    if (!sidebar) return;
+    // Status, assignee and priority sit under the title; the rest in the
+    // sidebar (CHT-2093). Both are .property-row, so search the whole view.
+    const sidebar = detailView;
 
     // Find the property row for this field
     let fieldName = field;

@@ -22,7 +22,7 @@ import { getMembers } from './teams.js';
 import { renderAttachmentsSection, setupAttachmentDrop, hydrateAttachments } from './attachments.js';
 import { renderTicketGatePanel, renderTicketGateStickyBar, describeTicketGate, gateFocusRitual, isAwaitingApproval } from './ticket-gate.js';
 import { viewDocument } from './documents.js';
-import { renderRelatedWork, renderTimeline, renderMetaLine } from './ticket-body.js';
+import { renderRelatedWork, renderTimeline } from './ticket-body.js';
 import { showEditIssueModal, deleteIssue } from './issue-edit.js';
 import { setupQuoteComment, quoteSelectionIntoComment } from './quote-comment.js';
 import { attachRichComposer, focusComposer, isRichComposerBusy, captureComposerFocus } from './rich-composer.js';
@@ -568,7 +568,7 @@ let commentComposing = false;
  * Why a background refresh of the open issue must wait right now, or null.
  *  - 'editor': the inline description editor is open. The refresh is noted
  *    and resolved by the editor's Cancel/Save (CHT-1214); nothing retries.
- *  - 'transient': an inline field dropdown, the overflow menu or the
+ *  - 'transient': an inline field dropdown, the related-work menu or the
  *    @mention list is open, or an IME composition is in progress in the
  *    comment box. A re-render would orphan the dropdown on a replaced row
  *    (the CHT-1290 bug class), wipe the mention list, or abort the IME
@@ -579,7 +579,6 @@ export function detailRefreshBlocker() {
     if (document.querySelector('.description-inline-editor')) return 'editor';
     if (isInlineDropdownOpen()) return 'transient';
     const detailView = document.getElementById('issue-detail-view');
-    if (detailView?.querySelector('.overflow-menu-dropdown:not(.hidden)')) return 'transient';
     if (detailView?.querySelector('details.related-add[open]')) return 'transient';
     const mentions = document.getElementById('mention-suggestions');
     if (mentions && !mentions.classList.contains('hidden')) return 'transient';
@@ -645,9 +644,8 @@ function paintDetailFromRow(row) {
             <div class="detail-layout detail-from-row" aria-busy="true">
                 <div class="detail-main">
                     <div class="issue-detail-nav">
-                        <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}">
+                        <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}" title="Back" aria-label="Back">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                            Back
                         </button>
                         ${renderDetailNavArrows(nav)}
                         <span class="issue-detail-breadcrumb">${project ? escapeHtml(project.name) : 'Project'} › ${escapeHtml(row.identifier)}</span>
@@ -809,16 +807,36 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                 <div class="detail-main">
                     <div id="ticket-gate-sticky" class="ticket-gate-sticky hidden" role="region" aria-label="Rituals waiting on you"></div>
                     <div class="issue-detail-nav">
-                        <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}">
+                        <button class="back-link" data-action="navigate-to" data-view="${escapeAttr(backView)}" title="Back" aria-label="Back">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                            Back
                         </button>
                         ${renderDetailNavArrows(nav)}
                         <span class="issue-detail-breadcrumb">${project ? escapeHtml(project.name) : 'Project'} › ${escapeHtml(issue.identifier)}</span>
                     </div>
 
                     <h1 class="issue-detail-title">${escapeHtml(issue.title)}</h1>
-                    ${renderMetaLine(issue, assigneeName, { formatEstimate })}
+                    <div class="issue-state" role="group" aria-label="Status, assignee and priority">
+                    <div class="property-row" data-field="status" data-action="show-detail-dropdown" data-dropdown-type="status" data-issue-id="${escapeAttr(issue.id)}">
+                        <span class="property-label sr-only">Status</span>
+                        <button class="property-value">
+                            ${getStatusIcon(issue.status)}
+                            <span>${formatStatus(issue.status)}</span>
+                        </button>
+                    </div>
+                    <div class="property-row" data-field="assignee" data-action="show-detail-dropdown" data-dropdown-type="assignee" data-issue-id="${escapeAttr(issue.id)}">
+                        <span class="property-label sr-only">Assignee</span>
+                        <button class="property-value">
+                            ${assigneeName ? `${renderAvatar(assignee, 'avatar-small')}<span>${escapeHtml(assigneeName)}</span>` : `<span class="text-muted">Unassigned</span>`}
+                        </button>
+                    </div>
+                    <div class="property-row" data-field="priority" data-action="show-detail-dropdown" data-dropdown-type="priority" data-issue-id="${escapeAttr(issue.id)}">
+                        <span class="property-label sr-only">Priority</span>
+                        <button class="property-value">
+                            ${getPriorityIcon(issue.priority)}
+                            <span>${formatPriority(issue.priority)}</span>
+                        </button>
+                    </div>
+                    </div>
 
                     ${parentIssue ? `
                     <div class="parent-issue-link">
@@ -857,32 +875,25 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                     })}
 
                     <form class="comment-form comment-form-sticky" data-action="save-comment" data-issue-id="${escapeAttr(issue.id)}">
-                        <textarea id="new-comment" placeholder="Write a comment... (${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl'}+Enter to submit)" rows="1"></textarea>
-                        <div id="mention-suggestions" class="mention-suggestions hidden"></div>
-                        <button type="submit" class="btn btn-primary btn-sm comment-submit-btn">Comment</button>
+                        <div class="comment-box">
+                            <textarea id="new-comment" placeholder="Add a comment…" aria-label="Add a comment" rows="1"></textarea>
+                            <div id="mention-suggestions" class="mention-suggestions hidden"></div>
+                            <div class="comment-box-foot">
+                                <span class="toolbar-spacer"></span>
+                                <button type="submit" class="icon-btn comment-submit-btn" aria-label="Comment" title="Comment (${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl'}+Enter)">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                                </button>
+                            </div>
+                        </div>
                     </form>
                 </div>
 
                 <aside class="detail-sidebar">
                     <div class="detail-sidebar-inner">
                     <div class="sidebar-section">
-                        <h4>Properties</h4>
+                        <h4>Details</h4>
 
-                        <div class="property-row" data-field="status" data-action="show-detail-dropdown" data-dropdown-type="status" data-issue-id="${escapeAttr(issue.id)}">
-                            <span class="property-label">Status</span>
-                            <button class="property-value">
-                                ${getStatusIcon(issue.status)}
-                                <span>${formatStatus(issue.status)}</span>
-                            </button>
-                        </div>
 
-                        <div class="property-row" data-field="priority" data-action="show-detail-dropdown" data-dropdown-type="priority" data-issue-id="${escapeAttr(issue.id)}">
-                            <span class="property-label">Priority</span>
-                            <button class="property-value">
-                                ${getPriorityIcon(issue.priority)}
-                                <span>${formatPriority(issue.priority)}</span>
-                            </button>
-                        </div>
 
                         <div class="property-row" data-field="type" data-action="show-detail-dropdown" data-dropdown-type="type" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Type</span>
@@ -891,12 +902,6 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                             </button>
                         </div>
 
-                        <div class="property-row" data-field="assignee" data-action="show-detail-dropdown" data-dropdown-type="assignee" data-issue-id="${escapeAttr(issue.id)}">
-                            <span class="property-label">Assignee</span>
-                            <button class="property-value">
-                                ${assigneeName ? `${renderAvatar(assignee, 'avatar-small')}<span>${escapeHtml(assigneeName)}</span>` : `<span class="text-muted">Unassigned</span>`}
-                            </button>
-                        </div>
 
                         <div class="property-row" data-field="sprint" data-action="show-detail-dropdown" data-dropdown-type="sprint" data-issue-id="${escapeAttr(issue.id)}">
                             <span class="property-label">Sprint</span>
@@ -942,7 +947,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
 
                         <div class="property-row">
                             <span class="property-label">Created by</span>
-                            <span class="property-value-static">${escapeHtml(issue.creator_name || 'Unknown')} ${renderPrincipalBadge(issue.creator)}</span>
+                            <span class="property-value-static">${issue.creator ? renderAvatar(issue.creator, 'avatar-small') : ''}<span>${escapeHtml(issue.creator_name || 'Unknown')}</span> ${renderPrincipalBadge(issue.creator)}</span>
                         </div>
 
                         <div class="property-row">
@@ -951,26 +956,20 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                         </div>
                     </div>
 
-                    <div class="sidebar-section sidebar-actions">
-                        <div class="sidebar-overflow-menu">
-                            <button class="btn btn-secondary btn-sm sidebar-overflow-trigger" aria-label="More actions" aria-haspopup="true" aria-expanded="false">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
-                            </button>
-                            <div class="overflow-menu-dropdown hidden">
-                                <button class="overflow-menu-item" data-action="edit" data-issue-id="${escapeAttr(issue.id)}">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                                    Edit all fields
-                                </button>
-                                <button class="overflow-menu-item" data-action="show-issue-description-revisions" data-issue-id="${escapeAttr(issue.id)}">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                    Description history
-                                </button>
-                                <button class="overflow-menu-item overflow-menu-danger" data-action="delete" data-issue-id="${escapeAttr(issue.id)}">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                                    Delete issue
-                                </button>
-                            </div>
-                        </div>
+                    <div class="sidebar-section sidebar-actions toolbar" role="toolbar" aria-label="Issue actions">
+                        <button class="icon-btn" data-action="edit" data-issue-id="${escapeAttr(issue.id)}" title="Edit all fields" aria-label="Edit all fields">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <label class="icon-btn" title="Attach files">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                            <input type="file" multiple class="sr-only" data-action="pick-attachments" data-issue-id="${escapeAttr(issue.id)}" aria-label="Attach files">
+                        </label>
+                        <button class="icon-btn" data-action="show-issue-description-revisions" data-issue-id="${escapeAttr(issue.id)}" title="Description history" aria-label="Description history">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        </button>
+                        <button class="icon-btn icon-btn-danger" data-action="delete" data-issue-id="${escapeAttr(issue.id)}" title="Delete issue" aria-label="Delete issue">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>
                     </div>
                     </div>
                 </aside>
@@ -981,39 +980,6 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         if (detailAbortController) detailAbortController.abort();
         detailAbortController = new AbortController();
         const { signal: detailSignal } = detailAbortController;
-
-        // Set up overflow menu (click-outside, Escape, action handlers)
-        const overflowTrigger = document.querySelector('.sidebar-overflow-trigger');
-        const overflowDropdown = document.querySelector('.overflow-menu-dropdown');
-        if (overflowTrigger && overflowDropdown) {
-            const closeOverflow = () => {
-                overflowDropdown.classList.add('hidden');
-                overflowTrigger.setAttribute('aria-expanded', 'false');
-            };
-            const toggleOverflow = () => {
-                const isHidden = overflowDropdown.classList.toggle('hidden');
-                overflowTrigger.setAttribute('aria-expanded', String(!isHidden));
-            };
-            overflowTrigger.addEventListener('click', toggleOverflow, { signal: detailSignal });
-            // Click outside to close
-            document.addEventListener('click', (e) => {
-                if (!overflowTrigger.contains(e.target) && !overflowDropdown.contains(e.target)) {
-                    closeOverflow();
-                }
-            }, { signal: detailSignal });
-            // Escape to close
-            overflowDropdown.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') {
-                    // This Escape is spent closing the menu: the global
-                    // handler would otherwise see no menu open and leave
-                    // the issue too (CHT-1873).
-                    e.stopPropagation();
-                    closeOverflow();
-                    overflowTrigger.focus();
-                }
-            }, { signal: detailSignal });
-            // Edit/delete actions handled via event delegation (CHT-1119)
-        }
 
         // Render ticket rituals (data already fetched in Promise.all above)
         // Watch first, so the previous ticket's scroll state can't show
@@ -1052,7 +1018,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             attachRichComposer('new-comment', {
                 signal: detailSignal,
                 mentionContext: { projectId: issue.project_id },
-                placeholder: 'Write a comment…',
+                placeholder: 'Add a comment…',
                 restore: restoreComposer,
             });
         }
@@ -1645,16 +1611,6 @@ registerActions({
     },
     'navigate-prev-issue': () => navigateAdjacentIssue(-1),
     'navigate-next-issue': () => navigateAdjacentIssue(1),
-    'edit': (_event, data) => {
-        // Close overflow menu before showing edit modal (CHT-1119)
-        const dropdown = document.querySelector('.overflow-menu-dropdown:not(.hidden)');
-        if (dropdown) dropdown.classList.add('hidden');
-        showEditIssueModal(data.issueId);
-    },
-    'delete': (_event, data) => {
-        // Close overflow menu before showing delete confirmation (CHT-1119)
-        const dropdown = document.querySelector('.overflow-menu-dropdown:not(.hidden)');
-        if (dropdown) dropdown.classList.add('hidden');
-        deleteIssue(data.issueId);
-    },
+    'edit': (_event, data) => showEditIssueModal(data.issueId),
+    'delete': (_event, data) => deleteIssue(data.issueId),
 });

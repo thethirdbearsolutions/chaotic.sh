@@ -292,6 +292,15 @@ describe('the Attachments strip', () => {
     const png = { id: ID, issue_id: 'i1', uploader_id: 'u1', uploader_name: 'Sam', filename: 'shot.png', content_type: 'image/png', size: 2048, created_at: new Date().toISOString() };
     const pdf = { id: ID2, issue_id: 'i1', uploader_id: 'u2', uploader_name: 'Ana', filename: 'report.pdf', content_type: 'application/pdf', size: 3 * 1024 * 1024, created_at: new Date().toISOString() };
 
+    it('marks an empty list so it can hide, but not a failed one (CHT-2093)', () => {
+        document.body.innerHTML = renderAttachmentsSection('i1', [], { userId: 'u1' });
+        expect(document.getElementById('issue-attachments').classList.contains('is-empty')).toBe(true);
+        document.body.innerHTML = renderAttachmentsSection('i1', null, { userId: 'u1' });
+        expect(document.getElementById('issue-attachments').classList.contains('is-empty')).toBe(false);
+        document.body.innerHTML = renderAttachmentsSection('i1', [png], { userId: 'u1' });
+        expect(document.getElementById('issue-attachments').classList.contains('is-empty')).toBe(false);
+    });
+
     it('shows name, size, uploader and time; an image gets a thumbnail', () => {
         document.body.innerHTML = renderAttachmentsSection('i1', [png, pdf], { userId: 'u1' });
         const items = document.querySelectorAll('.attachment-item');

@@ -238,8 +238,15 @@ function buildToolbar(state, signal) {
         buttons[next].focus();
     }, { signal });
 
-    // After the Comment button, so the tab order matches what you see.
-    if (form) {
+    // In the box's footer, before the send button, when the form has one
+    // (CHT-2093); otherwise after the Comment button. Either way the tab
+    // order matches what you see.
+    const foot = form?.querySelector('.comment-box-foot');
+    if (foot) {
+        foot.prepend(toolbar);
+        form.append(note);
+        form.classList.add('has-rich-composer');
+    } else if (form) {
         form.append(toolbar, note);
         form.classList.add('has-rich-composer');
     } else {
