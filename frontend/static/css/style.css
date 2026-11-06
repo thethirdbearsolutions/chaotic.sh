@@ -8543,10 +8543,6 @@ button.stat-card-link:hover .stat-note {
     align-items: center;
     gap: var(--space-md);
 }
-.epic-page-sprints-label {
-    font-size: var(--font-xs);
-    color: var(--text-muted);
-}
 .epic-page-section > summary {
     cursor: pointer;
     list-style: none;

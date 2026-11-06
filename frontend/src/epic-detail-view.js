@@ -321,7 +321,6 @@ function renderEpicPage(state) {
                     ${self?.sprints?.length ? `
                     <div class="epic-page-sprints" title="Points closed toward this goal in each recent sprint, oldest first">
                         ${renderSprintStrip(self.sprints)}
-                        <span class="epic-page-sprints-label">${self.sprints.map(s => `${escapeHtml(s.name)}: ${s.points || 0}`).slice(-3).join(' · ')}</span>
                     </div>` : ''}
                 </div>
 
