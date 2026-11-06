@@ -3009,10 +3009,6 @@ ${zh(e,Hh)}`:"");return`
                             <span>${g.length?`${y}%`:"No sub-issues yet"}</span>
                         </div>
                     </div>
-                    ${(Y=d==null?void 0:d.sprints)!=null&&Y.length?`
-                    <div class="epic-page-sprints" title="Points closed toward this goal in each recent sprint, oldest first">
-                        ${Oh(d.sprints)}
-                    </div>`:""}
                 </div>
 
                 ${O.length?`
@@ -3063,6 +3059,11 @@ ${zh(e,Hh)}`:"");return`
                     <div class="property-row">
                         <span class="property-label">Project</span>
                         <span class="property-value-static">${u(o.name)}</span>
+                    </div>`:""}
+                    ${(Y=d==null?void 0:d.sprints)!=null&&Y.length?`
+                    <div class="property-row">
+                        <span class="property-label">Points per sprint</span>
+                        <span class="property-value-static epic-page-sprints" title="Points closed toward this goal in each recent sprint, oldest first">${Oh(d.sprints)}</span>
                     </div>`:""}
                     <div class="property-row">
                         <span class="property-label">Created</span>

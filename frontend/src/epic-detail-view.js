@@ -318,10 +318,6 @@ function renderEpicPage(state) {
                             <span>${counted.length ? `${pct}%` : 'No sub-issues yet'}</span>
                         </div>
                     </div>
-                    ${self?.sprints?.length ? `
-                    <div class="epic-page-sprints" title="Points closed toward this goal in each recent sprint, oldest first">
-                        ${renderSprintStrip(self.sprints)}
-                    </div>` : ''}
                 </div>
 
                 ${asks.length ? `
@@ -378,6 +374,11 @@ function renderEpicPage(state) {
                     <div class="property-row">
                         <span class="property-label">Project</span>
                         <span class="property-value-static">${escapeHtml(project.name)}</span>
+                    </div>` : ''}
+                    ${self?.sprints?.length ? `
+                    <div class="property-row">
+                        <span class="property-label">Points per sprint</span>
+                        <span class="property-value-static epic-page-sprints" title="Points closed toward this goal in each recent sprint, oldest first">${renderSprintStrip(self.sprints)}</span>
                     </div>` : ''}
                     <div class="property-row">
                         <span class="property-label">Created</span>
