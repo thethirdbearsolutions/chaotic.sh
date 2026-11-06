@@ -300,6 +300,23 @@ describe('PR #534 review fixes', () => {
         expect(stops).toHaveLength(1);
     });
 
+    it('puts the toolbar in the comment box footer, before send, when there is one (CHT-2093)', async () => {
+        document.body.innerHTML = `
+            <meta name="chaotic-version" content="abc" data-bundle="b1" data-editor="abc12345">
+            <form class="comment-form">
+                <div class="comment-box">
+                    <textarea id="new-comment"></textarea>
+                    <div class="comment-box-foot"><button type="submit">Send</button></div>
+                </div>
+            </form>`;
+        attachRichComposer('new-comment', { signal: controller.signal });
+        await tick();
+        const foot = document.querySelector('.comment-box-foot');
+        expect(foot.firstElementChild.classList.contains('toolbar')).toBe(true);
+        expect(foot.lastElementChild.type).toBe('submit');
+        expect(document.querySelector('form > .rich-composer-note')).not.toBeNull();
+    });
+
     it('arrow keys move along the toolbar', async () => {
         renderForm();
         attachRichComposer('new-comment', { signal: controller.signal });
