@@ -1966,3 +1966,8 @@ section[id] {
     color: var(--warning-color);
     font-size: 0.875rem;
 }
+
+.pypi-badge {
+    vertical-align: middle;
+    margin-right: 0.5rem;
+}

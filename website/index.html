@@ -27,8 +27,8 @@
             </button>
             <nav class="nav" id="site-nav" aria-label="Main">
                 <a href="#features" class="nav-link">Features</a>
-                <a href="#agents" class="nav-link">Agents &amp; MCP</a>
-                <a href="#whats-new" class="nav-link">What's New</a>
+                <a href="#agents" class="nav-link">Agents</a>
+                <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/cli/CHANGELOG.md" class="nav-link">Changelog</a>
                 <a href="manifesto.html" class="nav-link">Manifesto</a>
                 <a href="philosophy.html" class="nav-link">Philosophy</a>
                 <a href="/docs" class="nav-link">Docs</a>
@@ -43,9 +43,7 @@
             <h1 class="hero-title">Chaotic</h1>
             <p class="hero-tagline">Stop managing agents. Start designing their world.</p>
             <p class="hero-description">
-              A CLI-native issue tracker with enforced budgets and ritual checkpoints.
-              <br>
-              You define the physics. They learn the rules.
+              An issue tracker with budgets and rituals your agents can't skip.
             </p>
             <div class="hero-cta">
                 <a href="#install" class="btn btn-primary btn-large">Get Started</a>
@@ -60,8 +58,8 @@
             <h2 class="section-title">The Agent Runaway</h2>
             <div class="problem-grid">
                 <div class="problem-text">
-                    <p>AI coding agents have no brakes. They'll burn your token budget, ignore your architecture, and close 20 tickets in a loop without stopping to think.</p>
-                    <p>Jira and Linear are human-first. Agents are guests in our world. In their world, they need <strong>physics</strong>.</p>
+                    <p>Coding agents have no brakes. They'll close 20 tickets in a loop without stopping to think.</p>
+                    <p>You don't tell a toddler "don't fall down the stairs" 500 times. You put a gate in front of the stairs.</p>
                 </div>
                 <div class="problem-visual">
                     <div class="terminal-mock">
@@ -96,22 +94,6 @@
         </div>
     </section>
 
-    <!-- Insight Section -->
-    <section class="section section-alt" id="insight">
-        <div class="section-content">
-            <h2 class="section-title">The Insight</h2>
-            <div class="insight-content">
-                <blockquote class="insight-quote">
-                    You don't tell a toddler "don't fall down the stairs" 500 times.<br>
-                    You put a gate in front of the stairs.
-                </blockquote>
-                <p class="insight-text">
-                    <strong>Chaotic</strong> applies this to AI. The agent just uses a CLI. Sometimes commands succeed. Sometimes they fail with hard errors. The agent adapts to the world you've built.
-                </p>
-            </div>
-        </div>
-    </section>
-
     <!-- Core Mechanics Section -->
     <section class="section" id="features">
         <div class="section-content">
@@ -127,15 +109,13 @@
                         </svg>
                     </div>
                     <h3 class="feature-title">1. Rituals</h3>
-                    <p class="feature-description"><strong>Rituals</strong> are checkpoints you define. They can trigger on sprint close, ticket claim, or ticket close:</p>
+                    <p class="feature-description">Checkpoints you define, on sprint close, ticket claim or ticket close:</p>
                     <ul class="ritual-list">
                         <li>Run the test suite</li>
                         <li>Attest documentation is current</li>
-                        <li>Request an oppositional code review</li>
-                        <li>File a design spec with the alternatives you considered</li>
-                        <li>Reflect on what went well this sprint and vent about what frustrated you</li>
+                        <li>Reflect on the sprint</li>
                     </ul>
-                    <p class="feature-note">Until rituals complete, the action is blocked. The pause is the point.</p>
+                    <p class="feature-note">The pause is the point.</p>
                 </div>
 
                 <!-- Sprints & Limbo -->
@@ -147,11 +127,11 @@
                         </svg>
                     </div>
                     <h3 class="feature-title">2. Sprints & Limbo</h3>
-                    <p class="feature-description">Sprints have point budgets. Exceed it, and the project enters <strong>Arrears</strong>. Close a sprint, and it enters <strong>Limbo</strong> until rituals clear.</p>
+                    <p class="feature-description">Spend the budget and work stops until the sprint closes and its rituals clear.</p>
                     <div class="formula">
                         Points<sub>Spent</sub> > Budget &rArr; State: <span class="state-arrears">Arrears</span>
                     </div>
-                    <p class="feature-note">The CLI blocks work until the constraint clears. Not a suggestion. A wall.</p>
+                    <p class="feature-note">Not a suggestion. A wall.</p>
                 </div>
 
                 <!-- Human Gates -->
@@ -163,7 +143,7 @@
                         </svg>
                     </div>
                     <h3 class="feature-title">3. Human Gates</h3>
-                    <p class="feature-description">You set the autonomy level for each ritual.</p>
+                    <p class="feature-description">You set how much each ritual trusts the agent.</p>
                     <div class="gates-list">
                         <div class="gate-item">
                             <span class="gate-label auto">Auto:</span>
@@ -232,149 +212,28 @@
          from a throwaway instance seeded with made-up data. -->
     <section class="section" id="product">
         <div class="section-content">
-            <h2 class="section-title">The Dashboard, For Real</h2>
-            <p class="section-lead">Not a mockup. This is the web UI that ships with Chaotic, watching an agent work through a sprint. (The team and tickets are made up.)</p>
+            <h2 class="section-title">The Dashboard</h2>
             <figure class="screenshot screenshot-hero">
                 <a href="images/app-issues.png"><img src="images/app-issues.png" width="1440" height="810" loading="lazy"
                      alt="Chaotic issues view: a Backend API project grouped by status, with a sprint progress bar showing 6 of 20 points spent"></a>
-                <figcaption>Issues, grouped by status, with the sprint's point budget up top.</figcaption>
             </figure>
-            <div class="screenshot-pair">
-                <figure class="screenshot">
-                    <a href="images/app-approvals.png"><img src="images/app-approvals.png" width="1180" height="470" loading="lazy"
-                         alt="Approvals view: an agent attested the code-review ritual on a ticket, and it waits for a human to approve"></a>
-                    <figcaption>An agent attested a <code>review</code> ritual. The ticket can't close until you approve.</figcaption>
-                </figure>
-                <figure class="screenshot">
-                    <a href="images/app-board.png"><img src="images/app-board.png" width="1440" height="460" loading="lazy"
-                         alt="Board view with Backlog, Todo, In Progress and In Review columns"></a>
-                    <figcaption>The board, for when you'd rather see columns.</figcaption>
-                </figure>
-            </div>
-            <!-- Android (CHT-1732). The app is on main with no public build.
-                 It will ship as a signed APK to sideload or track with
-                 Obtainium, not on Google Play (CHT-1729). When a build is
-                 published, replace the badge and the last note with the
-                 download link. -->
-            <div class="feature-card android-card" id="android">
-                <h3 class="feature-title">On your phone: Chaotic for Android <span class="badge-next">No public build yet</span></h3>
-                <p class="feature-description">A native app for the human side: your inbox, issues and sprints, readable offline. Approve or reject a gate with a swipe, or straight from the notification on the lock screen. Push arrives through UnifiedPush (for example ntfy), so it needs no Google Play Services. You sign in as yourself, never as an agent.</p>
-                <p class="feature-note">The code is open on main, but there is no build to install yet. It is planned as an APK you sideload or follow with <a href="https://github.com/ImranR98/Obtainium">Obtainium</a>; it is not planned for Google Play. It signs in through the server's OAuth, so it needs a 0.1.0 or newer server with <code>OAUTH_ENABLED</code> on.</p>
-            </div>
+            <figure class="screenshot">
+                <a href="images/app-board.png"><img src="images/app-board.png" width="1440" height="460" loading="lazy"
+                     alt="Board view with Backlog, Todo, In Progress and In Review columns"></a>
+            </figure>
         </div>
     </section>
 
-    <!-- Agents & MCP Section (CHT-1479, CHT-1595, CHT-1732). Facts here
-         come from docs/agents.md and the code on main; keep them in step
-         when those change. Everything without a badge is in the latest
-         release on PyPI. "Next release" marks what is on main but not yet
-         on PyPI: drop those badges when the release ships. "Coming soon"
-         marks OAuth, which is in the code but off until a server sets
-         OAUTH_ENABLED: drop those (the "Remote: add by URL" card, the two
-         OAuth points under #identities, and the consent and Connected
-         Apps captions) once it is released and recommended on. -->
+    <!-- Agents Section (CHT-2089). A short pitch only: setup detail
+         (OAuth, registrars, token lifetimes, the toolset) lives in
+         docs/agents.md, so nothing here goes stale with a release. -->
     <section class="section section-alt" id="agents">
         <div class="section-content">
-            <h2 class="section-title">Agents &amp; MCP</h2>
-            <p class="section-lead">Agents can shell out to the CLI, or use Chaotic as native tools over the Model Context Protocol. Either way they get the same budgets, rituals and gates.</p>
-            <div class="agents-grid">
-                <div class="feature-card">
-                    <h3 class="feature-title">Local: <code>chaotic mcp</code></h3>
-                    <p class="feature-description">An MCP server over stdio for any harness on the same machine, such as Claude Code. It reuses the CLI's login and profile, so there is no separate MCP sign-in.</p>
-                    <pre class="code-block"><code>claude mcp add chaotic -- chaotic mcp
-
-# several agents on one machine? pin a profile
-claude mcp add chaotic -- chaotic --profile myprofile mcp</code></pre>
-                    <p class="feature-note">Any MCP host that takes a JSON config works the same way: command <code>chaotic</code>, args <code>["mcp"]</code>.</p>
-                </div>
-                <div class="feature-card">
-                    <h3 class="feature-title">Remote: add by URL <span class="badge-next">Coming soon</span></h3>
-                    <p class="feature-description">The server speaks MCP over Streamable HTTP at <code>/mcp</code> today, with an API key. Once OAuth is on, you give a client the URL and nothing else: it finds Chaotic's sign-in (OAuth), opens a consent page in your browser, and you approve it there. Setup is documented for claude.ai custom connectors, Claude Desktop, ChatGPT, Claude Code and MCP Inspector; the Claude Code flow is the one tested end to end so far. claude.ai, Claude Desktop and ChatGPT connect from their own servers, so they need yours on public https.</p>
-                    <pre class="code-block"><code>claude mcp add --transport http chaotic \
-  https://your-chaotic-host/mcp
-# then /mcp in a session → Authenticate</code></pre>
-                    <p class="feature-note">The code is on main but off unless a server turns it on (<code>chaotic system config set</code> <code>APP_BASE_URL</code>, then <code>OAUTH_ENABLED</code>), and it is not in a PyPI release yet. What works today: send an API key in an <code>Authorization</code> header, from scripts, CI or any client that can set one. The old <code>/mcp/ck_...</code> capability URL is deprecated.</p>
-                </div>
-            </div>
-
-            <h3 class="subsection-title" id="identities">Agents are identities</h3>
-            <p class="section-lead">An agent is a teammate with its own name, not a borrowed login. Everything it does is attributed to it, and a human answers for every one.</p>
-            <div class="identity-grid">
-                <figure class="screenshot identity-shot">
-                    <a href="images/app-consent.png"><img src="images/app-consent.png" width="560" height="636" loading="lazy"
-                         alt="Chaotic consent page: Connect MCP Inspector to Chaotic? An Unverified app badge, a warning that approval goes to a program on this computer, then Team, Acts as (create a new agent) and Projects choices"></a>
-                    <figcaption><span class="badge-next">Coming soon</span> The consent page that comes with add-by-URL, from a local server on main. The app asked; a person picks the team, the agent and the projects.</figcaption>
-                </figure>
-                <ul class="identity-points">
-                    <li>
-                        <h4>It acts as the agent, never as you</h4>
-                        <p>An agent is made with its own key (<code>chaotic agent create</code>), and issues, comments and claims land under its name. Its key only reaches its own team or project.</p>
-                    </li>
-                    <li>
-                        <h4>One identity per Claude Code session</h4>
-                        <p>Give a machine a registrar's key and opt in with <code>session_identity: auto</code>, and each Claude Code session there registers its own short-lived agent, so two sessions never claim a ticket "as each other". Details below.</p>
-                    </li>
-                    <li>
-                        <h4>A human behind every agent</h4>
-                        <p>Each agent has a human owner, and each agent key a human holder. Remove someone from the team, or deactivate them, and the agent keys they hold stop working; <code>chaotic agent deactivate</code> retires an agent while keeping its work attributed to it.</p>
-                    </li>
-                    <li>
-                        <h4>You approve every connection <span class="badge-next">Coming soon</span></h4>
-                        <p>The consent page names the app and the host the approval goes to. An app that registered itself is badged <em>Unverified app</em>, and an approval going to a program on this computer (a localhost redirect) gets a warning. You choose the team, which agent it acts as (a new one, or one you manage) and which projects. Nothing is approved silently, not even a recognized app.</p>
-                    </li>
-                    <li>
-                        <h4>Short-lived, and easy to cut off <span class="badge-next">Coming soon</span></h4>
-                        <p>An app connected by URL gets access tokens that last 10 minutes, acting as the agent with the <code>write</code> policy. One that asks to stay connected (<code>offline_access</code>) refreshes them while it is used at least once every 30 days, for at most 90 days before you approve again. Disconnect from Settings &rsaquo; Connected Apps or <code>chaotic auth connections revoke</code>.</p>
-                    </li>
-                </ul>
-            </div>
-            <div class="identity-extra">
-                <figure class="screenshot">
-                    <a href="images/app-connected-apps.png"><img src="images/app-connected-apps.png" width="792" height="225" loading="lazy"
-                         alt="Settings, Connected Apps: MCP Inspector, acting as the agent MCP Inspector (Maya Chen), 1 project in Acme Robotics, policy write, with a Disconnect button"></a>
-                    <figcaption><span class="badge-next">Coming soon</span> Connected Apps: what each connection acts as, where, and a Disconnect button.</figcaption>
-                </figure>
-                <div class="feature-card registration-card">
-                    <h3 class="feature-title">Per-session identity for Claude Code</h3>
-                    <p class="feature-description">Make a <em>registrar</em> once (from the CLI, or Agents &rsaquo; Create Agent &rsaquo; Registrar in the web app), give the machine its key and turn the setting on. It is off by default.</p>
-                    <pre class="code-block"><code>chaotic agent create "Claude Code" --registrar
-chaotic auth set-key ck_...   # the registrar's key
-chaotic config set-session-identity auto</code></pre>
-                    <p class="feature-description">Inside Claude Code, the CLI and <code>chaotic mcp</code> then register the session as its own agent, named after the registrar and the branch, with a key that expires in 7 days, and never fall back to the shared key. Other harnesses can call <code>POST /api/agents/register</code> the same way.</p>
-                    <p class="feature-note">A session identity is an ordinary agent, so gates, leases and the inbox apply. Its scope is never wider than its registrar's, its owner is the human behind the registrar's key, and a registrar cannot write as itself. Registrars are capped (200 live identities and 60 registrations an hour by default); identities idle for 7 days drop out of lists, and deactivating a registrar retires its sessions.</p>
-                </div>
-            </div>
-
-            <h3 class="subsection-title">What agents can do</h3>
-            <p class="section-lead">Both transports serve the same toolset, with typed schemas and structured errors an agent can act on.</p>
-            <div class="tool-families">
-                <div class="tool-family">
-                    <h4>Issues</h4>
-                    <p>List, view, create, update and comment; find ready work and claim it with a lease; block, unblock and label; read description history.</p>
-                </div>
-                <div class="tool-family">
-                    <h4>Sprints</h4>
-                    <p>Read the current sprint and its budget, add or remove issues, close the sprint, and audit the budget transactions behind its spend.</p>
-                </div>
-                <div class="tool-family">
-                    <h4>Rituals</h4>
-                    <p>See which rituals are pending, then attest or complete them, with a note or a linked document or URL as the evidence.</p>
-                </div>
-                <div class="tool-family">
-                    <h4>Docs</h4>
-                    <p>Write and update team documents, link them to issues, and browse every past revision.</p>
-                </div>
-                <div class="tool-family">
-                    <h4>Inbox</h4>
-                    <p>Read what's waiting on you, such as gates, reviews and assignments, and mark items read.</p>
-                </div>
-                <div class="tool-family">
-                    <h4>Context</h4>
-                    <p>Recent activity, projects, labels, and <code>server_info</code> to check the toolset after an upgrade.</p>
-                </div>
-            </div>
+            <h2 class="section-title">Works With Your Agents</h2>
+            <p class="section-lead">The CLI or MCP, local or remote. Every agent gets its own name and plays by the same rules.</p>
+            <pre class="code-block"><code>claude mcp add chaotic -- chaotic mcp</code></pre>
             <p class="section-footnote">
-                Setup details for every client are in <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/docs/agents.md">docs/agents.md</a>.
+                <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/docs/agents.md">Agent setup guide &rarr;</a>
             </p>
         </div>
     </section>
@@ -517,26 +376,26 @@ chaotic config set-session-identity auto</code></pre>
             <div class="growth-grid">
                 <div class="growth-copy">
                     <p class="growth-lead">
-                        Chaotic scales in two directions: human workflows and agent autonomy. Start with the essentials, then dial up the affordances when you need them.
+                        Start with a plain issue tracker. Add structure for people, or for agents, when you need it.
                     </p>
                     <div class="growth-points">
                         <div class="growth-point">
                             <span class="growth-dot human"></span>
                             <div>
                                 <h3>Human affordances</h3>
-                                <p>Begin with basic issue tracking, then layer on labels, issue types, docs, and sprints as the team expands.</p>
+                                <p>Labels, docs and sprints as the team grows.</p>
                             </div>
                         </div>
                         <div class="growth-point">
                             <span class="growth-dot agent"></span>
                             <div>
                                 <h3>Agent affordances</h3>
-                                <p>Delegate a ticket, then add rituals, budgets, estimation requirements, and multi-agent coordination when stakes rise.</p>
+                                <p>Rituals, budgets and gates as the stakes rise.</p>
                             </div>
                         </div>
                     </div>
                     <p class="growth-note">
-                        Drag the sliders to see the system surface more structure as you grow.
+                        Drag the sliders.
                     </p>
                 </div>
                 <div class="growth-panel">
@@ -594,99 +453,12 @@ chaotic config set-session-identity auto</code></pre>
         </div>
     </section>
     
-    <!-- What's New Section (CHT-1481)
-         A hand-kept summary of cli/CHANGELOG.md. On each release:
-           1. Add a new <li class="release"> at the top of the list below with
-              the version, the date from the CHANGELOG heading, and two to four
-              one-line highlights from that entry.
-           2. Keep up to four entries, the most recent first; delete the oldest.
-           3. Update the version in the install section's "Latest on PyPI" line.
-         Link targets stay the same: the full notes live in cli/CHANGELOG.md.
-         The first entry may be a "Coming soon" one (class release-next) for
-         work that is built but not switched on or published. An entry
-         marked release-pending is on main (deployed, for "Main") but not on
-         PyPI: when the release ships, give it its version and drop the
-         pending note, and fix the "Latest on PyPI" line. When OAuth is
-         switched on, drop the "Coming soon" badges in Agents & MCP. -->
-    <section class="section" id="whats-new">
-        <div class="section-content">
-            <h2 class="section-title">What's New</h2>
-            <ol class="release-list">
-                <li class="release release-next">
-                    <div class="release-meta">
-                        <span class="release-upcoming">Coming soon</span>
-                        <span>Built, not switched on or published yet</span>
-                    </div>
-                    <ul class="release-notes">
-                        <li><strong>Add MCP clients by URL and approve them in your browser.</strong> OAuth for <code>/mcp</code> is in 0.1.0 but off until a server enables it.</li>
-                        <li><strong>Connected Apps</strong> in Settings and <code>chaotic auth connections</code>, to see and disconnect what you approved.</li>
-                        <li><strong>Chaotic for Android</strong>: no public build yet. It is planned as a sideloaded APK you can track with Obtainium, not a Google Play listing.</li>
-                    </ul>
-                </li>
-                <li class="release">
-                    <div class="release-meta">
-                        <span class="release-version">0.1.3</span>
-                        <time datetime="2026-11-05">Nov 5, 2026</time>
-                    </div>
-                    <ul class="release-notes">
-                        <li><strong>Attach files to issues</strong> with <code>chaotic issue attach</code>, <code>issue comment --attach</code> or MCP <code>issue_attach</code>; images show inline, and backups include them.</li>
-                        <li>Profiles with a photo, bio and pronouns for people and agents alike, and <code>chaotic team roster</code> to see who is on the team.</li>
-                        <li>CLI writes are safe to resend, and on Linux a request that arrives mid-upgrade waits for the new server instead of failing.</li>
-                        <li>Four database migrations: install the 0.1.3 CLI, then run <code>chaotic system upgrade</code>, which backs up first.</li>
-                    </ul>
-                </li>
-                <li class="release">
-                    <div class="release-meta">
-                        <span class="release-version">0.1.2</span>
-                        <time datetime="2026-11-01">Nov 1, 2026</time>
-                    </div>
-                    <ul class="release-notes">
-                        <li>A new Claude Code session finds its team and project on its own; <code>CHAOTIC_TEAM</code> and <code>CHAOTIC_PROJECT</code> override them.</li>
-                        <li><code>chaotic system upgrade</code> builds the release before it stops the server, and says how long the server was down.</li>
-                        <li>The inbox is a triage list, and Epics shows progress toward each goal.</li>
-                    </ul>
-                </li>
-                <li class="release">
-                    <div class="release-meta">
-                        <span class="release-version">0.1.1</span>
-                        <time datetime="2026-11-01">Nov 1, 2026</time>
-                    </div>
-                    <ul class="release-notes">
-                        <li>A project-scoped agent or session identity can show, update and comment on its project's documents by name, and <code>chaotic doc list</code> falls back to its project.</li>
-                        <li>The error for an agent's document without an icon names the <code>icon</code> field as well as <code>--icon</code>.</li>
-                    </ul>
-                </li>
-                <li class="release">
-                    <div class="release-meta">
-                        <span class="release-version">0.1.0</span>
-                        <time datetime="2026-10-31">Oct 31, 2026</time>
-                    </div>
-                    <ul class="release-notes">
-                        <li><strong>One agent identity per Claude Code session</strong>, opt-in with <code>session_identity: auto</code> and a registrar (<code>chaotic agent create --registrar</code>, or in the web app). In a cloud environment the registrar key can be a network secret.</li>
-                        <li><strong>A human behind every agent</strong>: removed teammates lose the agent keys they hold, <code>chaotic agent deactivate</code> retires an agent, and every actor says whether it is an agent, and whose.</li>
-                        <li>Issue queries with <code>--where</code> and a query page; invitations that work without SMTP; ownership transfer and a team activity log.</li>
-                        <li><strong>Run the preflight checks in the upgrade notes before upgrading</strong>: some migrations refuse bad data (the upgrade then rolls back), and some agent keys stop working at upgrade.</li>
-                    </ul>
-                </li>
-            </ol>
-            <p class="section-footnote">
-                Full release notes: <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/cli/CHANGELOG.md">CHANGELOG</a>.
-            </p>
-        </div>
-    </section>
-
     <!-- License Section (CHT-695) -->
     <section class="section section-alt" id="open-source">
         <div class="section-content">
             <h2 class="section-title">Free and Open Source</h2>
             <div class="license-card">
-                <p class="license-lead">Chaotic is MIT licensed and self-hosted. It runs on your laptop or your own server, and your data stays there.</p>
-                <ul class="license-points">
-                    <li>MIT license: use it, fork it, ship it</li>
-                    <li>No hosted service to sign up for</li>
-                    <li>The full source is on GitHub, website included</li>
-                </ul>
-                <p class="feature-note">Chaotic is alpha software. Back up before upgrades; <code>chaotic system upgrade</code> does it for you.</p>
+                <p class="license-lead">MIT licensed and self-hosted. Your data stays on your machine.</p>
                 <div class="cta-buttons">
                     <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/LICENSE" class="btn btn-secondary">Read the License</a>
                     <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-secondary">Source on GitHub</a>
@@ -713,14 +485,11 @@ chaotic config set-session-identity auto</code></pre>
                     </div>
                 </div>
             </div>
+            <p class="install-note">Linux, macOS or WSL2, with Python 3.10+ and git.</p>
             <p class="install-note">
-                Needs Python 3.10+ and git on Linux or macOS (Windows via WSL2). The script installs the
-                <a href="https://pypi.org/project/chaotic-cli/">chaotic-cli</a> package with uv and starts a local server.
-                Prefer to do it by hand (you'll also need <a href="https://docs.astral.sh/uv/">uv</a> and
-                <a href="https://github.com/casey/just">just</a>)? Run <code>uv tool install chaotic-cli</code>,
-                then <code>chaotic system install</code> and <code>chaotic quickstart</code>.
+                <a href="https://pypi.org/project/chaotic-cli/"><img class="pypi-badge" src="https://img.shields.io/pypi/v/chaotic-cli?label=latest" alt="Latest chaotic-cli version on PyPI" height="20"></a>
+                <a href="https://github.com/thethirdbearsolutions/chaotic.sh/blob/main/cli/CHANGELOG.md">What's new</a>
             </p>
-            <p class="install-note">Latest on PyPI: <strong>0.1.3</strong>. OAuth stays off until a server enables it, and the Android app has no build yet.</p>
             <div class="cta-buttons">
                 <a href="https://github.com/thethirdbearsolutions/chaotic.sh" class="btn btn-primary btn-large">View on GitHub</a>
                 <a href="manifesto.html" class="btn btn-secondary btn-large">Read the Manifesto</a>
