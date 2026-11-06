@@ -11,14 +11,14 @@
  *   an event, not a second copy of its note: the one still waiting for
  *   review links up to the gate, which already shows it, and a finished
  *   one keeps its note behind "Note".
- * - Meta line: status, assignee, priority, type and points as one line
- *   under the title, for narrow screens where the sidebar sits at the
- *   bottom of the page.
+ * - Runs of two or more events between comments fold into one quiet
+ *   "N updates" line (CHT-2093). The attestation waiting for review
+ *   stays out of the fold, since it links up to the gate.
  *
  * Pure render functions; issue-detail-view.js owns the data and wiring.
  */
 
-import { escapeHtml, escapeAttr, formatTimeAgo, formatStatus, formatPriority, formatIssueType } from './utils.js';
+import { escapeHtml, escapeAttr, formatTimeAgo } from './utils.js';
 import { getStatusIcon } from './issue-list.js';
 import { renderCommentContent } from './rich-text.js';
 
@@ -170,6 +170,27 @@ function attestationsMissingFrom(activities, ritualStatus) {
 }
 
 /**
+ * Join timeline items, folding each run of two or more foldable events
+ * into one collapsed "N updates" item. A single event stays as it is.
+ */
+export function foldRuns(items) {
+    const out = [];
+    let run = [];
+    const flush = () => {
+        if (run.length > 1) {
+            out.push(`<li class="timeline-run"><details><summary>${run.length} updates</summary><ol class="timeline timeline-run-list">${run.join('')}</ol></details></li>`);
+        } else out.push(...run);
+        run = [];
+    };
+    for (const i of items) {
+        if (i.fold) run.push(i.html);
+        else { flush(); out.push(i.html); }
+    }
+    flush();
+    return out.join('');
+}
+
+/**
  * Comments and activity as one stream, oldest first.
  * @param {Object} data
  * @param {Array} data.comments
@@ -196,13 +217,16 @@ export function renderTimeline({ comments = [], activities = [], ritualStatus = 
     }
 
     const items = [
-        ...(comments || []).map(c => ({ at: c.created_at, html: renderComment(c) })),
+        ...(comments || []).map(c => ({ at: c.created_at, html: renderComment(c), fold: false })),
         // A comment is already in the stream; its "Added a comment" line would repeat it.
         ...events.filter(a => a.activity_type !== 'commented').map(a => {
             const current = latest.get(a.field_name) === a;
             return {
                 at: a.created_at,
                 html: renderEvent(a, { ...fmt, awaitingReview: current, gateShowsIt: current && a.field_name === gateRitualName }),
+                // A send-back and its reason stay in view, like the
+                // attestation waiting for review (CHT-2093).
+                fold: !current && a.activity_type !== 'ritual_rejected',
             };
         }),
     ].sort((a, b) => new Date(a.at) - new Date(b.at));
@@ -218,26 +242,8 @@ export function renderTimeline({ comments = [], activities = [], ritualStatus = 
                 </div>` : ''}
             ${activitiesTruncated ? '<div class="timeline-truncated">Older activity is not shown.</div>' : ''}
             ${items.length
-                ? `<ol class="timeline comments-list">${items.map(i => i.html).join('')}</ol>`
+                ? `<ol class="timeline comments-list">${foldRuns(items)}</ol>`
                 : (commentsLoadFailed ? '' : '<div class="comments-empty">No comments yet</div>')}
         </section>`;
 }
 
-/**
- * Status, assignee, priority, type and points as one line of text.
- * @param {Object} issue
- * @param {string|null} assigneeName
- * @param {{formatEstimate?: Function}} [opts] - the project's estimate labels
- */
-export function renderMetaLine(issue, assigneeName, { formatEstimate = null } = {}) {
-    const parts = [
-        `${getStatusIcon(issue.status)}<span>${escapeHtml(formatStatus(issue.status))}</span>`,
-        escapeHtml(assigneeName || 'Unassigned'),
-        escapeHtml(formatPriority(issue.priority)),
-        escapeHtml(formatIssueType(issue.issue_type)),
-    ];
-    if (issue.estimate != null) {
-        parts.push(escapeHtml(formatEstimate ? formatEstimate(issue.estimate, issue.project_id) : `${issue.estimate} pts`));
-    }
-    return `<div class="issue-meta-line">${parts.map(p => `<span class="issue-meta-part">${p}</span>`).join('<span class="issue-meta-sep" aria-hidden="true">·</span>')}</div>`;
-}

@@ -10,7 +10,7 @@ vi.mock('./issue-list.js', () => ({
     getStatusIcon: vi.fn(() => '<i class="status-icon"></i>'),
 }));
 
-import { renderRelatedWork, renderTimeline, renderMetaLine } from './ticket-body.js';
+import { renderRelatedWork, renderTimeline, foldRuns } from './ticket-body.js';
 
 const issue = { id: 'i1', project_id: 'p1', status: 'in_progress', priority: 'high', issue_type: 'bug', estimate: 3 };
 const dom = (html) => {
@@ -163,13 +163,22 @@ describe('renderTimeline', () => {
     });
 });
 
-describe('renderMetaLine', () => {
-    it('is one line of status, assignee, priority, type and points', () => {
-        const el = dom(renderMetaLine(issue, 'builder-agent'));
-        expect(el.querySelectorAll('.issue-meta-part').length).toBe(5);
-        expect(el.textContent).toContain('builder-agent');
-        expect(el.textContent).toContain('3 pts');
-        expect(dom(renderMetaLine({ ...issue, estimate: null }, null)).textContent).toContain('Unassigned');
-        expect(dom(renderMetaLine(issue, null, { formatEstimate: () => 'M' })).textContent).toContain('M');
+describe('foldRuns (CHT-2093)', () => {
+    const ev = n => ({ html: `<li class="timeline-event">e${n}</li>`, fold: true });
+    const c = n => ({ html: `<li class="comment">c${n}</li>`, fold: false });
+
+    it('folds a run of two or more events into one "N updates" item', () => {
+        const el = dom(`<ol>${foldRuns([ev(1), ev(2), ev(3), c(1)])}</ol>`);
+        const run = el.querySelector('.timeline-run');
+        expect(run.querySelector('summary').textContent).toBe('3 updates');
+        expect(run.querySelectorAll('.timeline-event').length).toBe(3);
+        expect(el.querySelector('ol').lastElementChild.textContent).toBe('c1');
+    });
+
+    it('leaves a single event, and an unfoldable one breaks the run', () => {
+        const keep = { html: '<li class="timeline-event keep">k</li>', fold: false };
+        const el = dom(`<ol>${foldRuns([ev(1), c(1), ev(2), keep, ev(3)])}</ol>`);
+        expect(el.querySelector('.timeline-run')).toBeNull();
+        expect(el.querySelectorAll('.timeline-event').length).toBe(4);
     });
 });

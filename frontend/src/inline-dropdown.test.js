@@ -5,9 +5,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock all dependencies before importing the module under test
 vi.mock('./epic-prompt.js', () => ({ handleCloseFollowups: vi.fn() }));
-vi.mock('./ticket-body.js', () => ({
-    renderMetaLine: vi.fn((issue) => `<div class="issue-meta-line">${issue.status}</div>`),
-}));
 
 vi.mock('./api.js', () => ({
     api: {
@@ -818,12 +815,15 @@ describe('inline-dropdown', () => {
             `;
         });
 
-        it('refreshes the one-line summary under the title too (CHT-2021)', () => {
-            document.getElementById('issue-detail-view').insertAdjacentHTML('afterbegin', '<div class="issue-meta-line">stale</div>');
-            updateDetailViewField('status', { status: 'done', priority: 'high', issue_type: 'bug' });
-            const meta = document.querySelector('.issue-meta-line');
-            expect(meta.textContent).not.toContain('stale');
-            expect(meta.textContent).toContain('done');
+        it('updates a row under the title, outside the sidebar (CHT-2093)', () => {
+            document.getElementById('issue-detail-view').insertAdjacentHTML('afterbegin', `
+                <div class="issue-state">
+                    <div class="property-row" data-field="priority"><span class="property-label sr-only">Priority</span><button class="property-value" id="hp">old</button></div>
+                </div>`);
+            document.querySelector('.detail-sidebar [data-field="priority"]').remove();
+            updateDetailViewField('priority', { priority: 'high' });
+            expect(document.getElementById('hp').innerHTML).toContain('igh');
+            expect(document.getElementById('hp').innerHTML).not.toContain('old');
         });
 
         it('updates status field in detail view', () => {

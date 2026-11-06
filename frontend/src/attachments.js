@@ -354,7 +354,7 @@ export function renderAttachmentsSection(issueId, attachments, { userId = null, 
     rememberAttachments(attachments || []);
     const count = attachments?.length || 0;
     return `
-        <section class="attachments" id="issue-attachments" aria-label="Attachments" data-issue-id="${escapeAttr(issueId)}">
+        <section class="attachments${Array.isArray(attachments) && !count ? ' is-empty' : ''}" id="issue-attachments" aria-label="Attachments" data-issue-id="${escapeAttr(issueId)}">
             <div class="related-head">
                 <h3 id="attachments-heading" tabindex="-1">Attachments <span class="section-count">${count || ''}</span></h3>
                 <label class="ticket-gate-text-btn attachments-add">
@@ -385,6 +385,9 @@ function refreshList(issueId) {
     if (!section) return;
     const { attachments, userId, isAdmin } = current;
     section.querySelector('.section-count').textContent = attachments?.length ? String(attachments.length) : '';
+    // An empty strip shows nothing but its live region (CHT-2093); a failed
+    // list (null) stays visible so its notice is seen.
+    section.classList.toggle('is-empty', Array.isArray(attachments) && attachments.length === 0);
     const body = section.querySelector('.attachments-body');
     body.innerHTML = renderBody(attachments, { userId, isAdmin });
     hydrateAttachments(body);
@@ -517,9 +520,13 @@ export async function deleteAttachment(id, filename) {
     if (section) {
         const left = current.attachments || [];
         const next = left[Math.min(Math.max(index, 0), left.length - 1)];
+        // With none left the strip hides (CHT-2093), so focus goes to the
+        // sidebar's attach button, which is where adding happens now.
         const target = next
             ? section.querySelector(`.attachment-open[data-attachment-id="${next.id}"]`)
-            : section.querySelector('#attachments-heading');
+            : (section.classList.contains('is-empty')
+                ? document.querySelector('.sidebar-actions input[data-action="pick-attachments"]')
+                : null) || section.querySelector('#attachments-heading');
         target?.focus();
         setStatus(issueId, `${filename || 'Attachment'} deleted`);
     }
