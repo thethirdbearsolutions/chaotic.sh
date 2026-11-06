@@ -572,6 +572,12 @@ async def test_epic_overview_covers_the_whole_tree(client, interactive_headers, 
     assert by_title["Leaf"]["closed_in"] == {"id": sprint.id, "name": "Sprint 7"}
     assert by_title["Task"]["closed_in"] is None
     assert by_title["Sub"]["issue_type"] == "epic"
+    # The same issues as full list rows, in the same order, for /issues' rows.
+    assert [i["id"] for i in data["issues"]] == [t["id"] for t in data["tickets"]]
+    full = {i["title"]: i for i in data["issues"]}
+    assert full["Leaf"]["parent_id"] == sub["id"]
+    assert full["Task"]["description"] is None
+    assert "priority" in full["Task"] and "labels" in full["Task"]
     docs = {d["title"]: d["linked_to"] for d in data["documents"]}
     assert docs == {"Plan": [goal["identifier"], leaf["identifier"]], "Spec": [leaf["identifier"]]}
     issues_seen = {a["issue_id"] for a in data["activities"]}

@@ -2,7 +2,7 @@
 from pydantic import BaseModel, field_validator
 
 from app.enums import ApprovalMode, IssuePriority, IssueStatus, SprintStatus
-from app.schemas.issue import IssueActivityResponse, _coerce_enum
+from app.schemas.issue import IssueActivityResponse, IssueResponse, _coerce_enum
 from app.utils import DateTimeUTC
 
 
@@ -195,6 +195,9 @@ class OverviewDocument(BaseModel):
 
 class EpicOverviewResponse(BaseModel):
     tickets: list[OverviewTicket]
+    # The same issues as full list rows (description left out), so the
+    # page can draw /issues' own rows and edit them in place (CHT-2097).
+    issues: list[IssueResponse] = []
     documents: list[OverviewDocument]
     activities: list[IssueActivityResponse]
     # Whether older activity follows the page returned.

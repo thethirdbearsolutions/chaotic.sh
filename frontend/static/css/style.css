@@ -11369,3 +11369,8 @@ body.theme-light {
     #issue-detail-view .comment-form-sticky { padding: var(--space-md) 16px; margin: 0 -16px; }
     #issue-detail-view .issue-detail-title { font-size: var(--font-2xl); }
 }
+
+/* The epic page's sub-issue chips sit above /issues' own rows (CHT-2097). */
+.epic-page-section .epic-filter {
+    margin-bottom: var(--space-sm);
+}

@@ -16,7 +16,8 @@ import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects, formatEstimate } from './projects.js';
 import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { formatStatus, formatPriority, formatTimeAgo, escapeHtml, escapeAttr, sanitizeColor } from './utils.js';
-import { getStatusIcon, getPriorityIcon } from './issue-list.js';
+import { getStatusIcon, getPriorityIcon, renderIssueRow } from './issue-list.js';
+import { setInlineEditHolder } from './inline-dropdown.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
 import { registerActions } from './event-delegation.js';
 import { getCurrentEpics, renderSprintStrip } from './epics.js';
@@ -92,14 +93,73 @@ export async function viewEpic(epicId, pushHistory = true, { focus = null } = {}
         detailView.classList.remove('hidden');
 
         const state = { epic, overview, progress, inbox: inbox || [] };
-        detailView.querySelector('#epic-detail-content').innerHTML = renderEpicPage(state);
         detailView._epicState = state;
-        mountNeedsYou(state);
+        drawEpicPage(detailView);
+        holdSubIssues(detailView, state);
         wireEpicPage(detailView);
         if (focus) document.getElementById(focus)?.scrollIntoView({ block: 'start' });
     } catch (e) {
         showApiError('load epic', e);
     }
+}
+
+function drawEpicPage(detailView) {
+    const state = detailView._epicState;
+    detailView.querySelector('#epic-detail-content').innerHTML = renderEpicPage(state);
+    mountNeedsYou(state);
+}
+
+/**
+ * Let /issues' inline edits (status, priority, assignee, estimate, sprint)
+ * work on this page's rows (CHT-2097): an edit lands in this page's copy
+ * of the issue, and the page draws again so the header and the chips
+ * follow it.
+ */
+function holdSubIssues(detailView, state) {
+    const shown = () => detailView._epicState === state && !detailView.classList.contains('hidden')
+        && detailView.querySelector('#epic-subissues');
+    setInlineEditHolder({
+        get: (id) => (shown() ? (state.overview.issues || []).find(i => i.id === id) : undefined),
+        set: (issue) => {
+            state.overview.issues = (state.overview.issues || []).map(i => (i.id === issue.id ? issue : i));
+            state.overview.tickets = state.overview.tickets.map(t => (t.id === issue.id
+                ? { ...t, status: issue.status, estimate: issue.estimate, updated_at: issue.updated_at || t.updated_at, completed_at: issue.completed_at ?? null }
+                : t));
+            drawEpicPage(detailView);
+        },
+    });
+}
+
+// Which sub-issues the list shows (CHT-2097): the statuses, as chips.
+const SUB_FILTERS = {
+    open: 'Open',
+    in_progress: 'In progress',
+    in_review: 'In review',
+    todo: 'Todo',
+    backlog: 'Backlog',
+    done: 'Done',
+    all: 'All',
+};
+let subFilter = 'open';
+const subMatches = (k) => (k === 'all' ? () => true
+    : k === 'open' ? (i) => !CLOSED.has(i.status)
+        : (i) => i.status === k);
+
+/** Every sub-issue at any depth as /issues draws it, with status chips. */
+function subIssueList(issues) {
+    const chips = Object.entries(SUB_FILTERS).map(([k, label]) => {
+        const count = issues.filter(subMatches(k)).length;
+        return `<button type="button" class="segmented-btn${k === subFilter ? ' active' : ''}" data-epic-sub-filter="${k}" aria-pressed="${k === subFilter}">${label} <span class="segmented-count">${count}</span></button>`;
+    }).join('');
+    const closedFirst = subFilter === 'done';
+    const rows = issues.filter(subMatches(subFilter)).sort((a, b) => (closedFirst
+        ? time(b.completed_at) - time(a.completed_at)
+        : time(b.updated_at) - time(a.updated_at)));
+    return `
+        <div class="segmented epic-filter" role="group" aria-label="Show">${chips}</div>
+        ${rows.length
+            ? `<div class="issues-list epic-page-issues">${rows.map(renderIssueRow).join('')}</div>`
+            : `<p class="epic-page-empty">No sub-issues in ${escapeHtml(SUB_FILTERS[subFilter])}.</p>`}`;
 }
 
 // The Inbox kinds that are a decision on a ticket.
@@ -161,40 +221,6 @@ function section(id, title, count, body, { open = true, collapsible = false } = 
         </section>`;
 }
 
-/** One ticket, as the sub-issue rows have always looked. */
-function ticketRow(t, epicsById, epicId) {
-    const sub = t.epic_id !== epicId ? epicsById.get(t.epic_id) : null;
-    if (t.issue_type === 'epic' && epicsById.has(t.id)) return subEpicRow(epicsById.get(t.id), sub);
-    const when = t.status === 'done' ? t.completed_at : t.updated_at;
-    return `
-        <div class="sub-issue-item" data-issue-id="${escapeAttr(t.id)}" data-identifier="${escapeAttr(t.identifier)}">
-            <span class="sub-issue-status">${getStatusIcon(t.status)}</span>
-            <span class="sub-issue-id">${escapeHtml(t.identifier)}</span>
-            <span class="sub-issue-title">${escapeHtml(t.title)}${sub ? ` <span class="epic-page-under">in ${escapeHtml(sub.title)}</span>` : ''}</span>
-            ${t.assignee ? `<span class="sub-issue-assignee">${escapeHtml(t.assignee.name)}</span>` : ''}
-            ${when ? `<span class="epic-page-when">${escapeHtml(formatTimeAgo(when))}</span>` : ''}
-        </div>`;
-}
-
-function ticketList(tickets, epicsById, epicId) {
-    return `<div class="sub-issues-list">${tickets.map(t => ticketRow(t, epicsById, epicId)).join('')}</div>`;
-}
-
-/** Done tickets, newest first, under the sprint each closed in. */
-function doneBySprint(done, epicsById, epicId) {
-    const groups = new Map();
-    for (const t of [...done].sort((a, b) => time(b.completed_at) - time(a.completed_at))) {
-        const key = t.closed_in?.id || '';
-        if (!groups.has(key)) groups.set(key, { name: t.closed_in?.name || 'No sprint', tickets: [] });
-        groups.get(key).tickets.push(t);
-    }
-    return [...groups.values()].map(g => `
-        <div class="epic-page-sprint-group">
-            <h4>${escapeHtml(g.name)} <span class="section-count">${g.tickets.length}</span></h4>
-            ${ticketList(g.tickets, epicsById, epicId)}
-        </div>`).join('');
-}
-
 function docRows(docs) {
     return `<div class="epic-page-docs">${docs.map(d => `
         <div class="epic-page-doc" data-document-id="${escapeAttr(d.id)}" role="link" tabindex="0">
@@ -203,23 +229,6 @@ function docRows(docs) {
             <span class="epic-page-doc-links">${(d.linked_to || []).map(id => `<span class="epic-page-tag">${escapeHtml(id)}</span>`).join('')}</span>
             ${d.updated_at ? `<span class="epic-page-when">${escapeHtml(formatTimeAgo(d.updated_at))}</span>` : ''}
         </div>`).join('')}</div>`;
-}
-
-/** A sub-epic among the sub-issues, with its own meter (CHT-2097). */
-function subEpicRow(e, under) {
-        const c = e.children || {};
-        const total = (c.total || 0) - (c.canceled || 0);
-        const done = c.done || 0;
-        return `
-        <div class="sub-issue-item epic-page-subepic" data-epic-id="${escapeAttr(e.id)}" data-identifier="${escapeAttr(e.identifier)}">
-            <span class="sub-issue-status">${getStatusIcon(e.status)}</span>
-            <span class="sub-issue-id">${escapeHtml(e.identifier)}</span>
-            <span class="sub-issue-title">${escapeHtml(e.title)}${under ? ` <span class="epic-page-under">in ${escapeHtml(under.title)}</span>` : ''}</span>
-            <span class="epic-page-subepic-meter">${total > 0
-                ? `<div class="meter"><div class="meter-fill" style="width: ${Math.round((done / total) * 100)}%"></div></div><span class="meter-label">${done} of ${total}</span>`
-                : '<span class="meter-label">No sub-issues</span>'}</span>
-            ${e.last_activity_at ? `<span class="epic-page-when">${escapeHtml(formatTimeAgo(e.last_activity_at))}</span>` : ''}
-        </div>`;
 }
 
 function activityRows(activities, identifiers) {
@@ -246,15 +255,7 @@ function renderEpicPage(state) {
     const epicsById = new Map(epicRows.map(e => [e.id, e]));
     const self = epicsById.get(epic.id);
     const tickets = overview.tickets.filter(t => t.issue_type !== 'epic');
-    // Every sub-issue at any depth, sub-epics included, by status.
-    const by = (status) => overview.tickets.filter(t => t.status === status)
-        .sort((a, b) => time(b.updated_at) - time(a.updated_at));
-    const inProgress = by('in_progress');
-    const inReview = by('in_review');
-    const todo = by('todo');
-    const backlog = by('backlog');
     const done = tickets.filter(t => t.status === 'done');
-    const doneRows = by('done');
     const counted = tickets.filter(t => t.status !== 'canceled');
     const points = (list) => list.reduce((n, t) => n + (t.estimate ?? 1), 0);
     const pct = counted.length ? Math.round((done.length / counted.length) * 100) : 0;
@@ -329,15 +330,7 @@ function renderEpicPage(state) {
 
                 ${overview.documents.length ? section('epic-documents', 'Documents', overview.documents.length, docRows(overview.documents)) : ''}
 
-                ${inProgress.length ? section('epic-in-progress', 'In progress', inProgress.length, ticketList(inProgress, epicsById, epic.id)) : ''}
-
-                ${inReview.length ? section('epic-in-review', 'In review', inReview.length, ticketList(inReview, epicsById, epic.id)) : ''}
-
-                ${todo.length ? section('epic-todo', 'Todo', todo.length, ticketList(todo, epicsById, epic.id)) : ''}
-
-                ${doneRows.length ? section('epic-done', 'Done', doneRows.length, doneBySprint(doneRows, epicsById, epic.id)) : ''}
-
-                ${backlog.length ? section('epic-backlog', 'Backlog', backlog.length, ticketList(backlog, epicsById, epic.id), { open: false, collapsible: true }) : ''}
+                ${overview.tickets.length ? section('epic-subissues', 'Sub-issues', overview.tickets.length, subIssueList(overview.issues || [])) : ''}
 
                 ${!overview.tickets.length ? renderEmptyState({
                     icon: EMPTY_ICONS.issues,
@@ -417,6 +410,22 @@ function wireEpicPage(detailView) {
             }
             return;
         }
+        const chip = e.target.closest('[data-epic-sub-filter]');
+        if (chip) {
+            if (chip.dataset.epicSubFilter !== subFilter) {
+                subFilter = chip.dataset.epicSubFilter;
+                drawEpicPage(detailView);
+            }
+            return;
+        }
+        // A sub-epic's title opens its epic page, not the plain issue page.
+        const epicTitle = e.target.closest('.issue-row[data-issue-type="epic"] .issue-title');
+        if (epicTitle && !(e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) {
+            e.preventDefault();
+            e.stopPropagation();
+            viewEpic(epicTitle.dataset.issueId);
+            return;
+        }
         // Inbox rows handle their own clicks.
         if (e.target.closest('#epic-needs-you-rows')) return;
         const doc = e.target.closest('.epic-page-doc');
@@ -424,13 +433,6 @@ function wireEpicPage(detailView) {
             viewDocument(doc.dataset.documentId);
             return;
         }
-        const sub = e.target.closest('.epic-page-subepic');
-        if (sub) {
-            viewEpic(sub.dataset.epicId);
-            return;
-        }
-        const row = e.target.closest('.sub-issue-item');
-        if (row && row.dataset.issueId) viewIssue(row.dataset.issueId);
     };
     detailView.addEventListener('click', detailView._epicPageHandler);
     detailView.addEventListener('keydown', (e) => {

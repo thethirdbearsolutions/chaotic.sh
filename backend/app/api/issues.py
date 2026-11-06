@@ -42,7 +42,7 @@ from app.schemas.document import DocumentResponse
 from app.schemas.epic import EpicOverviewResponse, OverviewDocument
 from app.services.epic_progress import epic_overview_activity_ids, epic_overview_links, epic_overview_rows
 from app.oxyde_models.document import OxydeDocument
-from app.oxyde_models.issue import OxydeIssueActivity
+from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
 from app.schemas.issue_query import IssueQueryFieldsResponse, IssueQueryResponse
 from app.services import issue_query
 from app.services.document_service import DocumentService
@@ -1452,6 +1452,13 @@ async def get_epic_overview(
     Works for any issue with children, not only an epic."""
     issue, project = await visible_issue(current_user, issue_id)
     tickets = await epic_overview_rows(issue.id, project.id)
+    ticket_ids = [t.id for t in tickets]
+    full = []
+    for start in range(0, len(ticket_ids), 500):  # bounded IN lists
+        full += await OxydeIssue.objects.filter(id__in=ticket_ids[start:start + 500]).join("creator").prefetch("labels").all()
+    order = {i: n for n, i in enumerate(ticket_ids)}
+    full.sort(key=lambda i: order[i.id])
+    issues = [r.model_copy(update={"description": None}) for r in await issues_to_responses(full)]
 
     # Each document once, the issues it is linked to in tree order (the
     # epic's own first); a link does not grant access (CHT-1780).
@@ -1479,7 +1486,7 @@ async def get_epic_overview(
     position = {a: n for n, a in enumerate(page)}
     rows.sort(key=lambda a: position[a.id])
     return EpicOverviewResponse(
-        tickets=tickets, documents=documents,
+        tickets=tickets, issues=issues, documents=documents,
         activities=await _activity_responses(current_user, rows),
         more_activity=len(page) > activity_limit,
     )

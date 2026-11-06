@@ -24,6 +24,7 @@
 package sh.chaotic.api.models
 
 import sh.chaotic.api.models.IssueActivityResponse
+import sh.chaotic.api.models.IssueResponse
 import sh.chaotic.api.models.OverviewDocument
 import sh.chaotic.api.models.OverviewTicket
 
@@ -42,6 +43,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param tickets 
  * @param documents 
  * @param activities 
+ * @param issues 
  * @param moreActivity 
  */
 @Serializable
@@ -56,6 +58,9 @@ data class EpicOverviewResponse (
 
     @SerialName(value = "activities")
     val activities: kotlin.collections.List<IssueActivityResponse>,
+
+    @SerialName(value = "issues")
+    val issues: kotlin.collections.List<IssueResponse>? = null,
 
     @SerialName(value = "more_activity")
     val moreActivity: kotlin.Boolean? = false

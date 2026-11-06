@@ -11971,6 +11971,14 @@
             "type": "array",
             "title": "Tickets"
           },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/IssueResponse"
+            },
+            "type": "array",
+            "title": "Issues",
+            "default": []
+          },
           "documents": {
             "items": {
               "$ref": "#/components/schemas/OverviewDocument"
