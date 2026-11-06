@@ -324,8 +324,10 @@ function renderEpicPage(state) {
                     </div>` : ''}
                 </div>
 
-                ${asks.length ? section('epic-approvals', 'Approvals', asks.length,
-                    '<div id="epic-needs-you-rows" class="inbox-list epic-page-inbox"></div>') : ''}
+                ${asks.length ? `
+                <section class="issue-detail-section epic-page-section" id="epic-approvals" aria-label="Approvals">
+                    <div id="epic-needs-you-rows" class="inbox-list epic-page-inbox"></div>
+                </section>` : ''}
 
                 ${overview.documents.length ? section('epic-documents', 'Documents', overview.documents.length, docRows(overview.documents)) : ''}
 
