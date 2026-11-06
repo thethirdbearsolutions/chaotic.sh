@@ -10982,3 +10982,24 @@ body.theme-light {
     box-shadow: inset 3px 0 0 var(--row-cursor-edge), inset 0 0 0 1px var(--row-cursor-edge);
 }
 .inbox-row-archived { font-size: var(--font-xs); }
+
+/* Ticket sidebar stays in view on long tickets (CHT-2087). The aside keeps
+   stretching so its background runs the full height; the inner column
+   sticks. A column taller than the window scrolls on its own, so Status and
+   Priority are always one scroll away, and its actions menu opens upward so
+   that scroll box never hides it. */
+@media (min-width: 901px) {
+    #issue-detail-view .detail-sidebar-inner {
+        position: sticky;
+        top: 24px;
+        max-height: calc(100vh - 48px);
+        overflow-y: auto;
+    }
+
+    #issue-detail-view .detail-sidebar-inner .overflow-menu-dropdown {
+        top: auto;
+        bottom: 100%;
+        margin-top: 0;
+        margin-bottom: 4px;
+    }
+}

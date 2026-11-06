@@ -864,6 +864,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                 </div>
 
                 <aside class="detail-sidebar">
+                    <div class="detail-sidebar-inner">
                     <div class="sidebar-section">
                         <h4>Properties</h4>
 
@@ -970,6 +971,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
                                 </button>
                             </div>
                         </div>
+                    </div>
                     </div>
                 </aside>
             </div>

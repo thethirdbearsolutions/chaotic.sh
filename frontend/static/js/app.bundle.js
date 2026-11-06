@@ -2117,6 +2117,7 @@ Follow the project default anyway?`))return;const s=c=>c==null?"unlimited":`${c}
                 </div>
 
                 <aside class="detail-sidebar">
+                    <div class="detail-sidebar-inner">
                     <div class="sidebar-section">
                         <h4>Properties</h4>
 
@@ -2220,6 +2221,7 @@ Follow the project default anyway?`))return;const s=c=>c==null?"unlimited":`${c}
                                 </button>
                             </div>
                         </div>
+                    </div>
                     </div>
                 </aside>
             </div>
