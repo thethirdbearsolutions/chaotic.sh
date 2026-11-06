@@ -4,11 +4,12 @@
 
 import { api } from './api.js';
 import { escapeHtml, escapeAttr, formatTimeAgo } from './utils.js';
-import { navigateToEpicByIdentifier, navigateToIssueByIdentifier } from './router.js';
+import { navigateToEpicByIdentifier } from './router.js';
 import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setSelectedEpicIndex } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
+import { registerViewFilter } from './view-filter.js';
 import { lastResult, rememberResult, resultKey, sameResult } from './last-result.js';
 
 // Last-loaded epics list, exposed so epic-detail-view.js can build prev/next
@@ -37,13 +38,37 @@ let loadEpicsRequestId = 0;
 
 const CLOSED = new Set(['done', 'canceled']);
 
-// Whether every shipped epic is listed, or the latest few; per page
-// load, like the board's filters.
-let showClosed = false;
+// Which epics the list shows (CHT-2095): the chips above it, as on the
+// Inbox. Per page load, like the board's filters.
+export const EPIC_FILTERS = {
+    open: 'Open',
+    in_progress: 'In progress',
+    all_done: 'All done',
+    needs_you: 'Needs you',
+    shipped: 'Shipped',
+    all: 'All',
+};
+let filter = 'open';
+// What the "Filter epics" box holds (CHT-2096), lower-cased.
+let query = '';
+// Parent epics whose sub-epics are listed under them.
+let expanded = new Set();
 
-/** Test hook: forget the closed-epics toggle. */
+/** Test hook: forget the chip and the expanded parents. */
 export function resetEpicsViewState() {
-    showClosed = false;
+    filter = 'open';
+    query = '';
+    expanded = new Set();
+}
+
+registerViewFilter('epics', 'epics-filter');
+
+/** Whether an epic's title, key, owner or held tickets mention `q`. */
+function mentions(epic, q) {
+    if (!q) return true;
+    const text = [epic.title, epic.identifier, epic.owner?.name, ...(epic.in_flight || []).map(t => t.title)]
+        .filter(Boolean).join('\n').toLowerCase();
+    return text.includes(q);
 }
 
 /**
@@ -62,6 +87,10 @@ export async function loadEpics({ fromMemory = false } = {}) {
     if (!listEl) return;
 
     const requestId = ++loadEpicsRequestId;
+    // Until this load paints, the filter box has nothing current to
+    // repaint: an old project's epics, or none (CHT-2096 review).
+    listEl._epicProgress = null;
+    wireFilterBox(listEl);
 
     // A revisit paints the epics shown last time for this team and
     // project at once, and the request below refreshes them (CHT-1973).
@@ -110,6 +139,7 @@ export async function loadEpics({ fromMemory = false } = {}) {
         paintEpics(progress, listEl);
     } catch (e) {
         if (requestId !== loadEpicsRequestId) return;
+        currentEpics = [];
         listEl.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.epics,
             heading: 'Failed to load epics',
@@ -123,9 +153,7 @@ export async function loadEpics({ fromMemory = false } = {}) {
 
 /** The epics list for `progress`, or its empty state. */
 function paintEpics(progress, listEl) {
-    // Work under no epic can still wait on a person (CHT-2043).
-    const asks = (progress?.untracked || []).some(u => (u.awaiting_human || []).length);
-    if (!progress?.epics?.length && !asks) {
+    if (!progress?.epics?.length) {
         currentEpics = [];
         listEl.innerHTML = renderEmptyState({
             icon: EMPTY_ICONS.epics,
@@ -149,11 +177,6 @@ export function pctLabel(done, total) {
     return `${Math.floor((done / total) * 100)}%`;
 }
 
-function ticketTotal(epic) {
-    const c = epic.children || {};
-    return (c.total || 0) - (c.canceled || 0);
-}
-
 function time(raw) {
     const t = raw ? new Date(raw).getTime() : NaN;
     return Number.isNaN(t) ? 0 : t;
@@ -164,23 +187,6 @@ function when(raw) {
     const s = formatTimeAgo(raw);
     if (!s) return '';
     return /ago$|^just now$|future/.test(s) ? s : `on ${s}`;
-}
-
-/**
- * Done tickets out of every ticket that is not canceled, as a neutral
- * meter with its count (CHT-2043; the shared .meter of CHT-2040).
- */
-function renderMeter(epic) {
-    const c = epic.children || {};
-    const total = ticketTotal(epic);
-    if (total <= 0) return '<span class="meter-label">No tickets</span>';
-    const done = c.done || 0;
-    const title = `${pctLabel(done, total)} done: ${done} done, ${(c.in_progress || 0) + (c.in_review || 0)} in progress, `
-        + `${(c.todo || 0) + (c.backlog || 0)} not started`
-        + (c.canceled ? `, ${c.canceled} canceled` : '');
-    return `
-        <div class="meter" title="${escapeAttr(title)}"><div class="meter-fill" style="width: ${Math.round((done / total) * 100)}%"></div></div>
-        <span class="meter-label">${done} of ${total}</span>`;
 }
 
 /**
@@ -202,63 +208,132 @@ export function renderSprintStrip(sprints) {
     return `<span class="epic-sprint-strip" aria-label="Points closed per sprint, oldest first">${bars}</span>`;
 }
 
-/** "ivy on Inline label picker, ash on Sticky header, +2 more". */
-function renderWho(epic) {
-    const flight = epic.in_flight || [];
-    const shown = flight.slice(0, 2).map(t => {
-        const name = t.assignee ? `<b>${escapeHtml(t.assignee.name)}</b>` : 'Unassigned';
-        return `${name} on ${escapeHtml(t.title)}`;
-    });
-    const more = (epic.in_flight_count || flight.length) - shown.length;
-    if (more > 0) shown.push(`+${more} more`);
-    return shown.join(', ');
+const STATUS_ORDER = [
+    ['in_progress', 'in progress'],
+    ['in_review', 'in review'],
+    ['todo', 'todo'],
+    ['backlog', 'backlog'],
+];
+
+/**
+ * An epic with its sub-epics' tickets added to its own (CHT-2095).
+ * Each sub-epic is itself one of its parent's tickets, so it comes off
+ * the parent's count at its status before its own tickets go on.
+ */
+function rollUp(node) {
+    const own = node.epic.children || {};
+    const children = { ...own };
+    let last = time(node.epic.last_activity_at);
+    let asks = (node.epic.awaiting_human || []).length;
+    for (const sub of node.subs) {
+        const r = rollUp(sub);
+        const st = sub.epic.status;
+        // An open sub-epic with no tickets yet stays one open ticket of
+        // its parent, so the parent never reads "all done" over it.
+        if (rolledTotal(r.children) > 0 && children[st] > 0) {
+            children[st] -= 1;
+            children.total = (children.total || 0) - 1;
+        }
+        for (const k of ['total', 'backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled']) {
+            children[k] = (children[k] || 0) + (r.children[k] || 0);
+        }
+        last = Math.max(last, r.last);
+        asks += r.asks;
+    }
+    node.rolled = { children, last, asks };
+    return node.rolled;
 }
 
-function renderShipped(epic, lead = 'shipped') {
-    const s = epic.last_shipped;
-    if (!s) return '';
-    return `${lead} ${escapeHtml(s.title)} ${escapeHtml(when(s.completed_at))}`;
+function rolledTotal(children) {
+    return (children.total || 0) - (children.canceled || 0);
 }
 
-function renderRow(epic, { sub, right, grouped }) {
-    const pinned = epic.status_pinned && !CLOSED.has(epic.status)
+function rolledOpen(children) {
+    return (children.backlog || 0) + (children.todo || 0) + (children.in_progress || 0) + (children.in_review || 0);
+}
+
+/** Every ticket done, the epic itself still open: close it? (CHT-1901) */
+function allDone(node) {
+    const c = node.rolled.children;
+    return !CLOSED.has(node.epic.status) && rolledTotal(c) > 0 && rolledOpen(c) === 0
+        && node.subs.every(s => CLOSED.has(s.epic.status));
+}
+
+const MATCHES = {
+    open: n => !CLOSED.has(n.epic.status),
+    in_progress: n => !CLOSED.has(n.epic.status)
+        && ((n.rolled.children.in_progress || 0) + (n.rolled.children.in_review || 0)) > 0,
+    all_done: allDone,
+    needs_you: n => n.rolled.asks > 0,
+    shipped: n => CLOSED.has(n.epic.status),
+    all: () => true,
+};
+
+/** "2 in progress · 1 in review · 3 todo", zeros left out. */
+function renderCounts(children) {
+    const parts = STATUS_ORDER.filter(([k]) => children[k] > 0).map(([k, label]) => `${children[k]} ${label}`);
+    return parts.length ? parts.join(' · ') : '';
+}
+
+/** In progress and in review tickets, by who holds them, as a tooltip. */
+function whoTitle(epic) {
+    return (epic.in_flight || []).map(t => `${t.assignee ? t.assignee.name : 'Unassigned'}: ${t.title}`).join('\n');
+}
+
+/** Done out of every ticket that is not canceled (CHT-2043; .meter of CHT-2040). */
+function renderMeter(children) {
+    const total = rolledTotal(children);
+    if (total <= 0) return '<span class="meter-label">No tickets</span>';
+    const done = children.done || 0;
+    const title = `${pctLabel(done, total)} done: ${done} of ${total}`
+        + (children.canceled ? `, ${children.canceled} canceled` : '');
+    return `
+        <div class="meter" title="${escapeAttr(title)}"><div class="meter-fill" style="width: ${Math.round((done / total) * 100)}%"></div></div>
+        <span class="meter-label">${done} of ${total}</span>`;
+}
+
+function renderRow(node, { grouped, depth, shownSubs }) {
+    const e = node.epic;
+    const { children, last, asks } = node.rolled;
+    const closed = CLOSED.has(e.status);
+    const pinned = e.status_pinned && !closed
         ? ' <span class="epic-status-pinned-mark" title="Status set by hand, so it no longer follows its tickets">✎<span class="sr-only"> (status set by hand)</span></span>'
         : '';
-    const canceled = epic.status === 'canceled' ? ' <span class="epic-canceled-tag">Canceled</span>' : '';
-    const key = grouped ? `<span class="epic-project-key">${escapeHtml(epic.project_key)}</span> ` : '';
-    const owner = epic.owner ? ` <span class="epic-owner">· ${escapeHtml(epic.owner.name)}</span>` : '';
-    const empty = ticketTotal(epic) <= 0;
+    const canceled = e.status === 'canceled' ? ' <span class="epic-canceled-tag">Canceled</span>' : '';
+    const key = grouped ? `<span class="epic-project-key">${escapeHtml(e.project_key)}</span> ` : '';
+    const owner = e.owner ? ` <span class="epic-owner">· ${escapeHtml(e.owner.name)}</span>` : '';
+    const empty = rolledTotal(children) <= 0;
+
+    const sub = [];
+    if (closed) sub.push(e.completed_at ? `Closed ${escapeHtml(when(e.completed_at))}` : 'Closed');
+    else if (allDone(node)) sub.push('<span class="epic-all-done">All done · close it?</span>');
+    else {
+        const counts = renderCounts(children);
+        const who = whoTitle(e);
+        if (counts) sub.push(who ? `<span title="${escapeAttr(who)}">${counts}</span>` : counts);
+        else if (empty) sub.push('No tickets yet');
+    }
+    if (asks) sub.push(`<span class="epic-needs-you">${asks} need${asks === 1 ? 's' : ''} you</span>`);
+    if (shownSubs) {
+        const open = expanded.has(e.id);
+        sub.push(`<button type="button" class="epic-subs-toggle" data-epic-toggle-subs="${escapeAttr(e.id)}" aria-expanded="${open}">${open ? '▾' : '▸'} ${plural(shownSubs, 'sub-epic')}</button>`);
+    }
+
+    const touched = last ? `<span class="meter-label epic-touched" title="Last touched">${escapeHtml(formatTimeAgo(new Date(last).toISOString()))}</span>` : '';
     return `
-        <div class="list-row-2line epic-row${CLOSED.has(epic.status) ? ' epic-row-closed' : ''}${empty ? ' epic-row-empty' : ''}" data-identifier="${escapeAttr(epic.identifier)}" title="${escapeAttr(epic.identifier)}">
-            <span class="epic-spark">${renderSprintStrip(epic.sprints)}</span>
-            <span class="list-row-title">${key}${escapeHtml(epic.title)}${owner}${pinned}${canceled}</span>
-            <span class="list-row-sub">${sub}</span>
-            <span class="list-row-right">${right}</span>
+        <div class="list-row-2line epic-row${closed ? ' epic-row-closed' : ''}${empty ? ' epic-row-empty' : ''}${depth ? ' epic-row-sub' : ''}" data-identifier="${escapeAttr(e.identifier)}" title="${escapeAttr(e.identifier)}" style="--epic-depth: ${depth}">
+            <span class="epic-spark">${renderSprintStrip(e.sprints)}</span>
+            <span class="list-row-title">${key}${escapeHtml(e.title)}${owner}${pinned}${canceled}</span>
+            <span class="list-row-sub">${sub.join(' · ')}</span>
+            <span class="list-row-right">${renderMeter(children)}${touched}</span>
         </div>`;
 }
 
-function renderSection(key, label, count, rows, extra = '') {
-    if (!rows) return '';
-    return `
-        <section class="epic-section epic-section-${key}">
-            <div class="section-header"><h3>${label} <span class="section-count">${count}</span></h3></div>
-            <div class="epic-section-rows">${rows}</div>
-            ${extra}
-        </section>`;
-}
-
-/** Every ticket is done, but an epic never closes itself (CHT-1901). */
-function isFinished(epic) {
-    return !CLOSED.has(epic.status) && ticketTotal(epic) > 0 && (epic.open_children || 0) === 0;
-}
-
-// Shipped epics listed before "Show all".
-const SHIPPED_SHOWN = 5;
-
 /**
- * The Epics list (CHT-2043): what is waiting on a person, what is
- * moving now and who holds it, open epics with nothing in flight, and
- * what shipped. Each section is ordered by time.
+ * The Epics list (CHT-2095): every epic in one list, most recently
+ * touched first, sub-epics under the goal they serve. The chips narrow
+ * it and never reorder it. No time buckets and no caps: a project that
+ * starts and stops reads the same as one that never sleeps.
  * Uses data attributes + event delegation instead of inline onclick to avoid XSS.
  * @param {{epics: Array, untracked: Array}} progress - GET .../epics response
  */
@@ -266,100 +341,96 @@ export function renderEpics(progress, container) {
     const all = progress?.epics || [];
     const untracked = progress?.untracked || [];
     const grouped = new Set([...all.map(e => e.project_key), ...untracked.map(u => u.project_key)]).size > 1;
-    const keyed = (key, text) => (grouped ? `${escapeHtml(key)} · ${text}` : text);
 
-    const open = all.filter(e => !CLOSED.has(e.status));
-    const finished = open.filter(isFinished);
-    const moving = open.filter(e => !isFinished(e) && (e.in_flight_count || 0) > 0)
-        .sort((a, b) => time(b.last_activity_at) - time(a.last_activity_at));
-    const quiet = open.filter(e => !isFinished(e) && !(e.in_flight_count || 0))
-        .sort((a, b) => (ticketTotal(a) <= 0) - (ticketTotal(b) <= 0)
-            || time(b.last_shipped?.completed_at) - time(a.last_shipped?.completed_at)
-            || time(b.last_activity_at) - time(a.last_activity_at));
-    const shipped = all.filter(e => CLOSED.has(e.status))
-        .sort((a, b) => time(b.completed_at || b.last_activity_at) - time(a.completed_at || a.last_activity_at));
-    const shippedShown = showClosed ? shipped : shipped.slice(0, SHIPPED_SHOWN);
+    // The tree over every epic, so a parent's rollup counts all of it.
+    const nodes = new Map(all.map(e => [e.id, { epic: e, subs: [], parent: null }]));
+    for (const n of nodes.values()) {
+        const p = n.epic.parent_epic_id && nodes.get(n.epic.parent_epic_id);
+        if (p && p !== n) { n.parent = p; p.subs.push(n); }
+    }
+    // A cycle in old data has no root; treat its members as roots.
+    for (const n of nodes.values()) if (n.parent && !reachesRoot(n)) n.parent = null;
+    for (const n of nodes.values()) n.subs = [];
+    for (const n of nodes.values()) if (n.parent) n.parent.subs.push(n);
+    [...nodes.values()].filter(n => !n.parent).forEach(rollUp);
 
-    // Waiting on you: rituals only a person can clear, oldest first, then
-    // finished epics to close.
-    const asks = [
-        // Every epic: a closed one can still have open tickets (CHT-1884).
-        ...all.flatMap(e => (e.awaiting_human || []).map(a => ({ a, where: keyed(e.project_key, escapeHtml(e.title)) }))),
-        ...untracked.flatMap(u => (u.awaiting_human || []).map(a => ({ a, where: keyed(u.project_key, 'No epic') }))),
-    ].sort((x, y) => time(x.a.since) - time(y.a.since));
-    const askRows = asks.map(({ a, where }) => {
-        const review = a.approval_mode === 'review';
-        const by = a.requested_by_name ? ` by ${escapeHtml(a.requested_by_name)}` : '';
-        return `
-        <div class="list-row-2line epic-ask-row" data-issue-identifier="${escapeAttr(a.identifier)}" title="${escapeAttr(a.identifier)}">
-            <span class="epic-spark" aria-hidden="true"></span>
-            <span class="list-row-title">${review ? 'Approve' : 'Complete'} ${escapeHtml(a.ritual_name)}: ${escapeHtml(a.title)}</span>
-            <span class="list-row-sub">${where} · ${review ? 'attested' : 'requested'}${by} ${escapeHtml(when(a.since))}</span>
-            <span class="list-row-right"><span class="list-row-action">${review ? 'Approve' : 'Complete'}</span></span>
-        </div>`;
+    const chipMatches = MATCHES[filter] || MATCHES.open;
+    const matches = n => chipMatches(n) && mentions(n.epic, query);
+    const order = filter === 'shipped'
+        ? (a, b) => time(b.epic.completed_at || b.epic.last_activity_at) - time(a.epic.completed_at || a.epic.last_activity_at)
+        : (a, b) => b.rolled.last - a.rolled.last;
+
+    // A shown epic sits under its nearest shown ancestor, or at the top.
+    const shownAncestor = (n) => {
+        for (let p = n.parent; p; p = p.parent) if (matches(p)) return p;
+        return null;
+    };
+    const shown = [...nodes.values()].filter(matches);
+    const under = new Map();
+    const top = [];
+    for (const n of shown) {
+        const p = shownAncestor(n);
+        if (p) {
+            if (!under.has(p)) under.set(p, []);
+            under.get(p).push(n);
+        } else top.push(n);
+    }
+
+    const rows = [];
+    const visit = (n, depth) => {
+        const subs = (under.get(n) || []).sort(order);
+        rows.push(renderRow(n, { grouped, depth, shownSubs: subs.length }));
+        currentEpics.push(n.epic);
+        if (subs.length && expanded.has(n.epic.id)) subs.forEach(s => visit(s, depth + 1));
+    };
+    currentEpics = [];
+    top.sort(order).forEach(n => visit(n, 0));
+
+    const chips = Object.entries(EPIC_FILTERS).map(([k, label]) => {
+        const count = [...nodes.values()].filter(n => MATCHES[k](n) && mentions(n.epic, query)).length;
+        return `<button type="button" class="segmented-btn${k === filter ? ' active' : ''}" data-epics-filter="${k}" aria-pressed="${k === filter}">${label} <span class="segmented-count">${count}</span></button>`;
     }).join('');
-    const finishedRows = finished.map(e => renderRow(e, {
-        grouped,
-        sub: `Every ticket is done${e.last_shipped ? ` · last shipped ${escapeHtml(when(e.last_shipped.completed_at))}` : ''}`,
-        right: '<span class="list-row-action">Open epic</span>',
-    })).join('');
-
-    const movingRows = moving.map(e => renderRow(e, {
-        grouped,
-        sub: [renderWho(e), renderShipped(e)].filter(Boolean).join(' · '),
-        right: renderMeter(e),
-    })).join('');
-
-    const quietRows = quiet.map(e => {
-        const c = e.children || {};
-        const next = c.todo ? `${c.todo} ready to start` : (c.backlog ? `${c.backlog} in backlog` : '');
-        const last = e.last_shipped ? renderShipped(e, 'Last shipped') : 'Nothing shipped yet';
-        return renderRow(e, { grouped, sub: [last, next].filter(Boolean).join(' · '), right: renderMeter(e) });
-    }).join('');
-
-    const shippedRows = shippedShown.map(e => renderRow(e, {
-        grouped,
-        sub: e.completed_at ? `Closed ${escapeHtml(when(e.completed_at))}` : 'Closed',
-        right: `<span class="meter-label">${plural(e.children?.done || 0, 'ticket')}</span>`,
-    })).join('');
-    const toggle = shipped.length > SHIPPED_SHOWN
-        ? `<button class="btn btn-secondary btn-small epic-closed-toggle" data-epics-toggle-closed>${showClosed ? `Show the latest ${SHIPPED_SHOWN}` : `Show all ${shipped.length}`}</button>`
-        : '';
 
     const loose = untracked.filter(u => u.open);
-    const gap = loose.length
+    const gap = loose.length && filter !== 'shipped'
         ? `<p class="epic-untracked-note">${loose.map(u => `${grouped ? `${escapeHtml(u.project_key)}: ` : ''}${plural(u.open, 'open ticket')}`).join(', ')} under no epic.</p>`
         : '';
 
-    // The keyboard cursor walks the rows as shown, and prev/next on the
-    // epic page follows them; shipped epics past the latest few come
-    // last, so one opened by URL still finds its own progress here.
-    currentEpics = [...finished, ...moving, ...quiet, ...shipped];
-
     container.innerHTML = `
         <div class="epic-sections">
-            ${renderSection('waiting', 'Waiting on you', asks.length + finished.length, askRows + finishedRows)}
-            ${renderSection('moving', 'Moving now', moving.length, movingRows)}
-            ${renderSection('quiet', 'Nothing in flight', quiet.length, quietRows)}
-            ${renderSection('shipped', 'Shipped', shipped.length, shippedRows, toggle ? `<div class="epic-table-footer">${toggle}</div>` : '')}
+            <div class="segmented epic-filter" role="group" aria-label="Show">${chips}</div>
+            <section class="epic-section epic-section-list">
+                ${rows.length
+                    ? `<div class="epic-section-rows">${rows.join('')}</div>`
+                    : `<p class="epic-filter-empty">${query
+                        ? `No ${filter === 'all' ? '' : `${escapeHtml(EPIC_FILTERS[filter].toLowerCase())} `}epics match “${escapeHtml(query)}”.`
+                        : `No ${escapeHtml(EPIC_FILTERS[filter].toLowerCase())} epics.`}</p>`}
+            </section>
             ${gap}
         </div>
     `;
     container._epicProgress = progress;
 
+    wireFilterBox(container);
+
     // Event delegation for row clicks — attach once per container
     if (!container._epicClickHandler) {
         container._epicClickHandler = (e) => {
-            if (e.target.closest('[data-epics-toggle-closed]')) {
-                showClosed = !showClosed;
+            const chip = e.target.closest('[data-epics-filter]');
+            if (chip) {
+                if (chip.dataset.epicsFilter === filter) return;
+                filter = chip.dataset.epicsFilter;
                 // The rows change under the keyboard cursor, as on reload.
                 setSelectedEpicIndex(-1);
                 renderEpics(container._epicProgress, container);
                 return;
             }
-            const ask = e.target.closest('.epic-ask-row');
-            if (ask && ask.dataset.issueIdentifier) {
-                navigateToIssueByIdentifier(ask.dataset.issueIdentifier);
+            const toggle = e.target.closest('[data-epic-toggle-subs]');
+            if (toggle) {
+                const id = toggle.dataset.epicToggleSubs;
+                if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
+                setSelectedEpicIndex(-1);
+                renderEpics(container._epicProgress, container);
                 return;
             }
             const row = e.target.closest('.epic-row');
@@ -369,6 +440,42 @@ export function renderEpics(progress, container) {
         };
         container.addEventListener('click', container._epicClickHandler);
     }
+}
+
+/**
+ * The filter box sits in the view header, outside the re-rendered list,
+ * so typing keeps its focus (CHT-2096). Wired from the first load, so
+ * what is typed before the epics arrive still counts.
+ */
+function wireFilterBox(container) {
+    const box = document.getElementById('epics-filter');
+    if (box && !box._epicFilterHandler) {
+        box._epicFilterHandler = () => {
+            query = box.value.trim().toLowerCase();
+            // Mid-load or after a failure, the next paint applies it.
+            if (!container._epicProgress) return;
+            setSelectedEpicIndex(-1);
+            renderEpics(container._epicProgress, container);
+        };
+        box.addEventListener('input', box._epicFilterHandler);
+        // Enter hands the keyboard back to the list (j/k, Enter).
+        box.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') {
+                ev.preventDefault();
+                box.blur();
+            }
+        });
+    }
+}
+
+/** Whether walking up from `n` ends at a root rather than looping. */
+function reachesRoot(n) {
+    const seen = new Set();
+    for (let p = n; p; p = p.parent) {
+        if (seen.has(p)) return false;
+        seen.add(p);
+    }
+    return true;
 }
 
 /**

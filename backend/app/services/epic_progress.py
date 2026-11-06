@@ -156,6 +156,17 @@ async def epic_progress(
 
     in_flight, in_flight_count, last_shipped, awaiting = await _epic_now(scope, project_ids)
 
+    # Each epic's nearest epic ancestor, so the list can nest sub-epics
+    # under the goal they serve and roll their counts up (CHT-2095).
+    parent_epic = {
+        r["issue_id"]: r["epic_id"]
+        for r in await execute_raw(
+            _owner_cte(scope, f"project_id IN ({scope}) AND issue_type IN (?, ?)")
+            + "SELECT issue_id, epic_id FROM owners",
+            [*project_ids, *_EPIC, *_EPIC, *project_ids],
+        )
+    }
+
     # Sprint windows: each project's most recent started sprints.
     sprint_rows = await execute_raw(
         "SELECT id, project_id, name, status, activated_at, closed_at, created_at FROM sprints "
@@ -265,7 +276,7 @@ async def epic_progress(
             in_flight=in_flight.get(issue_id, []), in_flight_count=in_flight_count.get(issue_id, 0),
             last_shipped=last_shipped.get(issue_id), last_activity_at=max(activity) if activity else None,
             completed_at=r["completed_at"], awaiting_human=awaiting.get(issue_id, []),
-            owner=_person(r),
+            owner=_person(r), parent_epic_id=parent_epic.get(issue_id),
         )))
     # Newest first within a project, projects in key order.
     epics.sort(key=lambda e: (projects[e[1]], -e[0]))

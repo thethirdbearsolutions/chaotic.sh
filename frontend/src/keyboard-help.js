@@ -31,7 +31,7 @@ const SHORTCUT_GROUPS = [
         title: 'Actions',
         shortcuts: [
             { key: '⌘K', description: 'Command palette' },
-            { key: '/', description: 'Search issues' },
+            { key: '/', description: 'Filter this screen, or search issues' },
             { key: 'c', description: 'Create new item' },
             { key: '?', description: 'Show shortcuts' },
             { key: 'Esc', description: 'Close modal / dropdown' },

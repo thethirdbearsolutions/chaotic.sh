@@ -86,6 +86,19 @@ async def test_nested_epic_owns_its_own_children(client, interactive_headers, te
 
 
 @pytest.mark.asyncio
+async def test_each_epic_names_its_nearest_epic_above(client, interactive_headers, test_project, db):
+    """parent_epic_id skips a non-epic in between and is null at the top (CHT-2095)."""
+    h = interactive_headers
+    outer = await _create(client, h, test_project.id, title="Outer", issue_type="epic")
+    task = await _create(client, h, test_project.id, title="Plain task", parent_id=outer["id"])
+    inner = await _create(client, h, test_project.id, title="Inner", issue_type="epic", parent_id=task["id"])
+    data = (await client.get(f"/api/projects/{test_project.id}/epics", headers=h)).json()
+    by_id = {e["identifier"]: e for e in data["epics"]}
+    assert by_id[outer["identifier"]]["parent_epic_id"] is None
+    assert by_id[inner["identifier"]]["parent_epic_id"] == outer["id"]
+
+
+@pytest.mark.asyncio
 async def test_team_scope_spans_projects(client, interactive_headers, test_project, test_team, db):
     h = interactive_headers
     r = await client.post(f"/api/teams/{test_team.id}/projects", headers=h, json={"name": "Other", "key": "OTH"})

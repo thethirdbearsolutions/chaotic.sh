@@ -6,6 +6,7 @@ import { appendPendingRows } from './issue-list.js';
 import { api } from './api.js';
 import { initEventDelegation, registerActions } from './event-delegation.js';
 import { initAttachmentImages } from './attachments.js';
+import { focusViewFilter } from './view-filter.js';
 import { closeModal, isModalOpen, showToast, closeInlineDropdownsFromEscape, isModalDirty, focusModalFirstField } from './ui.js';
 import { showAuthScreen, logout, initAuth, updateUserInfo } from './auth.js';
 import { initApp, showSignedOut } from './init.js';
@@ -846,6 +847,8 @@ document.addEventListener('keydown', createSimpleListNavigationHandler({
  * callback would leave the box hidden, and so unfocusable, here.
  */
 function focusIssueSearch() {
+    // A screen that filters its own rows takes / for that (CHT-2096).
+    if (focusViewFilter(getCurrentView())) return;
     navigateTo('issues', true, { transition: false });
     document.getElementById('issue-search')?.focus();
 }
