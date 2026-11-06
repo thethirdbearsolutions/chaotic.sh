@@ -9,6 +9,7 @@ import { showModal, closeModal, showToast, showApiError } from './ui.js';
 import { getProjects } from './projects.js';
 import { getCurrentTeam, getCurrentProject, getCurrentView, subscribe, setSelectedEpicIndex } from './state.js';
 import { renderEmptyState, EMPTY_ICONS } from './empty-states.js';
+import { registerViewFilter } from './view-filter.js';
 import { lastResult, rememberResult, resultKey, sameResult } from './last-result.js';
 
 // Last-loaded epics list, exposed so epic-detail-view.js can build prev/next
@@ -48,13 +49,26 @@ export const EPIC_FILTERS = {
     all: 'All',
 };
 let filter = 'open';
+// What the "Filter epics" box holds (CHT-2096), lower-cased.
+let query = '';
 // Parent epics whose sub-epics are listed under them.
 let expanded = new Set();
 
 /** Test hook: forget the chip and the expanded parents. */
 export function resetEpicsViewState() {
     filter = 'open';
+    query = '';
     expanded = new Set();
+}
+
+registerViewFilter('epics', 'epics-filter');
+
+/** Whether an epic's title, key, owner or held tickets mention `q`. */
+function mentions(epic, q) {
+    if (!q) return true;
+    const text = [epic.title, epic.identifier, epic.owner?.name, ...(epic.in_flight || []).map(t => t.title)]
+        .filter(Boolean).join('\n').toLowerCase();
+    return text.includes(q);
 }
 
 /**
@@ -332,7 +346,8 @@ export function renderEpics(progress, container) {
     for (const n of nodes.values()) if (n.parent) n.parent.subs.push(n);
     [...nodes.values()].filter(n => !n.parent).forEach(rollUp);
 
-    const matches = MATCHES[filter] || MATCHES.open;
+    const chipMatches = MATCHES[filter] || MATCHES.open;
+    const matches = n => chipMatches(n) && mentions(n.epic, query);
     const order = filter === 'shipped'
         ? (a, b) => time(b.epic.completed_at || b.epic.last_activity_at) - time(a.epic.completed_at || a.epic.last_activity_at)
         : (a, b) => b.rolled.last - a.rolled.last;
@@ -364,7 +379,7 @@ export function renderEpics(progress, container) {
     top.sort(order).forEach(n => visit(n, 0));
 
     const chips = Object.entries(EPIC_FILTERS).map(([k, label]) => {
-        const count = [...nodes.values()].filter(MATCHES[k]).length;
+        const count = [...nodes.values()].filter(n => MATCHES[k](n) && mentions(n.epic, query)).length;
         return `<button type="button" class="segmented-btn${k === filter ? ' active' : ''}" data-epics-filter="${k}" aria-pressed="${k === filter}">${label} <span class="segmented-count">${count}</span></button>`;
     }).join('');
 
@@ -379,12 +394,34 @@ export function renderEpics(progress, container) {
             <section class="epic-section epic-section-list">
                 ${rows.length
                     ? `<div class="epic-section-rows">${rows.join('')}</div>`
-                    : `<p class="epic-filter-empty">No ${escapeHtml(EPIC_FILTERS[filter].toLowerCase())} epics.</p>`}
+                    : `<p class="epic-filter-empty">${query
+                        ? `No ${filter === 'all' ? '' : `${escapeHtml(EPIC_FILTERS[filter].toLowerCase())} `}epics match “${escapeHtml(query)}”.`
+                        : `No ${escapeHtml(EPIC_FILTERS[filter].toLowerCase())} epics.`}</p>`}
             </section>
             ${gap}
         </div>
     `;
     container._epicProgress = progress;
+
+    // The filter box sits in the view header, outside the re-rendered
+    // list, so typing keeps its focus (CHT-2096).
+    const box = document.getElementById('epics-filter');
+    if (box && !box._epicFilterHandler) {
+        box._epicFilterHandler = () => {
+            query = box.value.trim().toLowerCase();
+            setSelectedEpicIndex(-1);
+            renderEpics(container._epicProgress, container);
+        };
+        box.addEventListener('input', box._epicFilterHandler);
+        // Enter hands the keyboard back to the list (j/k, Enter).
+        box.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') {
+                ev.preventDefault();
+                box.blur();
+            }
+        });
+    }
+    if (box && box.value.trim().toLowerCase() !== query) box.value = query;
 
     // Event delegation for row clicks — attach once per container
     if (!container._epicClickHandler) {

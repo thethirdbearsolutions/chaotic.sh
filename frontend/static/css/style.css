@@ -706,6 +706,20 @@ textarea {
     max-width: 150px;
 }
 
+/* A screen's own "filter this screen" box, focused by / (CHT-2096).
+   Button height, so it lines up with the actions beside it. */
+.view-actions .view-filter-input {
+    width: 220px;
+    height: 32px;
+    padding: 0 var(--space-md);
+    font-size: var(--font-sm);
+}
+@media (max-width: 768px) {
+    .view-actions .view-filter-input {
+        width: 100%;
+    }
+}
+
 .section-header {
     margin-top: 1.5rem;
     margin-bottom: 0.75rem;

@@ -39,7 +39,7 @@ import { forgetResults } from './last-result.js';
 beforeEach(() => forgetResults());
 
 function setupDom() {
-    document.body.innerHTML = '<div id="epics-list"></div>';
+    document.body.innerHTML = '<input id="epics-filter"><div id="epics-list"></div>';
 }
 
 const sprints = (pointsList) => pointsList.map((p, i) => ({
@@ -319,6 +319,33 @@ describe('renderEpics (CHT-2095)', () => {
         // The loop is cut once: one becomes the root, the other its sub-epic.
         container.querySelector('[data-epic-toggle-subs]').click();
         expect(rowIds(container).sort()).toEqual(['CHT-1', 'CHT-2']);
+    });
+
+    it('the filter box narrows by title, key, owner and held tickets, chips counting what matches (CHT-2096)', () => {
+        renderEpics(response([
+            epic({ id: 'a', identifier: 'CHT-1', title: 'Colour tokens', last_activity_at: ago(MIN) }),
+            moving({ id: 'b', identifier: 'CHT-2', title: 'Inbox', last_activity_at: ago(2 * MIN),
+                in_flight: [ticket('Shared colour row')] }),
+            epic({ id: 'c', identifier: 'CHT-3', title: 'Other', owner: person('Ada'), last_activity_at: ago(3 * MIN) }),
+        ]), container);
+        const box = document.getElementById('epics-filter');
+        box.value = '  COLOUR ';
+        box.dispatchEvent(new Event('input'));
+        expect(rowIds(container)).toEqual(['CHT-1', 'CHT-2']);
+        expect(chip(container, 'all').querySelector('.segmented-count').textContent).toBe('2');
+        box.value = 'cht-3';
+        box.dispatchEvent(new Event('input'));
+        expect(rowIds(container)).toEqual(['CHT-3']);
+        box.value = 'ada';
+        box.dispatchEvent(new Event('input'));
+        expect(rowIds(container)).toEqual(['CHT-3']);
+        box.value = 'nothing';
+        box.dispatchEvent(new Event('input'));
+        expect(container.querySelector('.epic-filter-empty').textContent).toBe('No open epics match “nothing”.');
+        // Escaped like every other server or user text.
+        box.value = '<b>x';
+        box.dispatchEvent(new Event('input'));
+        expect(container.querySelector('.epic-filter-empty b')).toBeNull();
     });
 
     it('shows the epic owner after the title, and nothing when unassigned', () => {
