@@ -123,7 +123,7 @@ function needsYouEntries(state) {
     return state.inbox.filter(e => e.issue_id && ids.has(e.issue_id) && e.state !== 'resolved');
 }
 
-const NEEDS_YOU_EMPTY = '<p class="epic-page-empty">Nothing waits on you here any more.</p>';
+const NEEDS_YOU_EMPTY = '<p class="epic-page-empty">No approvals waiting.</p>';
 
 function mountNeedsYou(state) {
     if (!needsYouEntries(state).length) return;
@@ -164,6 +164,7 @@ function section(id, title, count, body, { open = true, collapsible = false } = 
 /** One ticket, as the sub-issue rows have always looked. */
 function ticketRow(t, epicsById, epicId) {
     const sub = t.epic_id !== epicId ? epicsById.get(t.epic_id) : null;
+    if (t.issue_type === 'epic' && epicsById.has(t.id)) return subEpicRow(epicsById.get(t.id), sub);
     const when = t.status === 'done' ? t.completed_at : t.updated_at;
     return `
         <div class="sub-issue-item" data-issue-id="${escapeAttr(t.id)}" data-identifier="${escapeAttr(t.identifier)}">
@@ -204,8 +205,8 @@ function docRows(docs) {
         </div>`).join('')}</div>`;
 }
 
-function subEpicRows(subs) {
-    return `<div class="sub-issues-list">${subs.map(e => {
+/** A sub-epic among the sub-issues, with its own meter (CHT-2097). */
+function subEpicRow(e, under) {
         const c = e.children || {};
         const total = (c.total || 0) - (c.canceled || 0);
         const done = c.done || 0;
@@ -213,13 +214,12 @@ function subEpicRows(subs) {
         <div class="sub-issue-item epic-page-subepic" data-epic-id="${escapeAttr(e.id)}" data-identifier="${escapeAttr(e.identifier)}">
             <span class="sub-issue-status">${getStatusIcon(e.status)}</span>
             <span class="sub-issue-id">${escapeHtml(e.identifier)}</span>
-            <span class="sub-issue-title">${escapeHtml(e.title)}</span>
+            <span class="sub-issue-title">${escapeHtml(e.title)}${under ? ` <span class="epic-page-under">in ${escapeHtml(under.title)}</span>` : ''}</span>
             <span class="epic-page-subepic-meter">${total > 0
                 ? `<div class="meter"><div class="meter-fill" style="width: ${Math.round((done / total) * 100)}%"></div></div><span class="meter-label">${done} of ${total}</span>`
-                : '<span class="meter-label">No tickets</span>'}</span>
+                : '<span class="meter-label">No sub-issues</span>'}</span>
             ${e.last_activity_at ? `<span class="epic-page-when">${escapeHtml(formatTimeAgo(e.last_activity_at))}</span>` : ''}
         </div>`;
-    }).join('')}</div>`;
 }
 
 function activityRows(activities, identifiers) {
@@ -246,17 +246,18 @@ function renderEpicPage(state) {
     const epicsById = new Map(epicRows.map(e => [e.id, e]));
     const self = epicsById.get(epic.id);
     const tickets = overview.tickets.filter(t => t.issue_type !== 'epic');
-    const by = (status) => tickets.filter(t => t.status === status)
+    // Every sub-issue at any depth, sub-epics included, by status.
+    const by = (status) => overview.tickets.filter(t => t.status === status)
         .sort((a, b) => time(b.updated_at) - time(a.updated_at));
-    const inProgress = [...by('in_progress'), ...by('in_review')];
+    const inProgress = by('in_progress');
+    const inReview = by('in_review');
     const todo = by('todo');
     const backlog = by('backlog');
     const done = tickets.filter(t => t.status === 'done');
+    const doneRows = by('done');
     const counted = tickets.filter(t => t.status !== 'canceled');
     const points = (list) => list.reduce((n, t) => n + (t.estimate ?? 1), 0);
     const pct = counted.length ? Math.round((done.length / counted.length) * 100) : 0;
-    const subs = epicRows.filter(e => e.parent_epic_id === epic.id)
-        .sort((a, b) => time(b.last_activity_at) - time(a.last_activity_at));
     const lastTouched = Math.max(time(epic.updated_at), ...overview.tickets.map(t => time(t.updated_at)));
 
     // Prev/next navigation from the Epics list's last-loaded contents,
@@ -272,8 +273,8 @@ function renderEpicPage(state) {
 
     const facts = [
         `${getStatusIcon(epic.status)} ${escapeHtml(formatStatus(epic.status))}`,
-        ownerName ? escapeHtml(ownerName) : '<span class="text-muted">No owner</span>',
-        lastTouched ? `Last touched ${escapeHtml(formatTimeAgo(new Date(lastTouched).toISOString()))}` : '',
+        ownerName ? escapeHtml(ownerName) : '<span class="text-muted">Unassigned</span>',
+        lastTouched ? `Updated ${escapeHtml(formatTimeAgo(new Date(lastTouched).toISOString()))}` : '',
     ].filter(Boolean).join(' <span class="epic-page-dot">·</span> ');
 
     return `
@@ -296,14 +297,14 @@ function renderEpicPage(state) {
                     </div>
                     ` : ''}
                     <span class="issue-detail-breadcrumb">${project ? escapeHtml(project.name) : 'Project'} › ${escapeHtml(epic.identifier)}</span>
-                    <button class="btn btn-secondary btn-small epic-page-open-ticket" data-action="epic-open-as-ticket" data-epic-id="${escapeAttr(epic.id)}">Open as ticket</button>
+                    <button class="btn btn-secondary btn-small epic-page-open-ticket" data-action="epic-open-as-ticket" data-epic-id="${escapeAttr(epic.id)}">Edit issue</button>
                 </div>
 
                 <h1 class="issue-detail-title">${escapeHtml(epic.title)}</h1>
                 <div class="epic-page-facts">${facts}</div>
                 ${epic.status_pinned && !CLOSED.has(epic.status) ? `
-                <div class="epic-page-pinned text-muted">Status set by hand, so it no longer follows its tickets.
-                    <button class="btn btn-secondary btn-small" data-action="epic-follow-children" data-epic-id="${escapeAttr(epic.id)}">Follow tickets</button>
+                <div class="epic-page-pinned text-muted">Status set by hand, so it no longer follows its sub-issues.
+                    <button class="btn btn-secondary btn-small" data-action="epic-follow-children" data-epic-id="${escapeAttr(epic.id)}">Follow sub-issues</button>
                 </div>` : ''}
 
                 <div class="epic-page-progress">
@@ -312,8 +313,8 @@ function renderEpicPage(state) {
                             <div class="epic-detail-progress-fill${pct === 100 ? ' epic-progress-complete' : ''}" style="width: ${pct}%"></div>
                         </div>
                         <div class="epic-detail-progress-label">
-                            <span>${done.length} of ${counted.length} tickets done · ${points(done)} of ${points(counted)} points</span>
-                            <span>${counted.length ? `${pct}%` : 'No tickets yet'}</span>
+                            <span>${done.length} of ${counted.length} sub-issues done · ${points(done)} of ${points(counted)} points</span>
+                            <span>${counted.length ? `${pct}%` : 'No sub-issues yet'}</span>
                         </div>
                     </div>
                     ${self?.sprints?.length ? `
@@ -323,28 +324,28 @@ function renderEpicPage(state) {
                     </div>` : ''}
                 </div>
 
-                ${asks.length ? section('epic-needs-you', 'Needs you', asks.length,
+                ${asks.length ? section('epic-approvals', 'Approvals', asks.length,
                     '<div id="epic-needs-you-rows" class="inbox-list epic-page-inbox"></div>') : ''}
 
-                ${overview.documents.length ? section('epic-docs', 'Docs', overview.documents.length, docRows(overview.documents)) : ''}
+                ${overview.documents.length ? section('epic-documents', 'Documents', overview.documents.length, docRows(overview.documents)) : ''}
 
-                ${inProgress.length ? section('epic-in-progress', 'In progress and in review', inProgress.length, ticketList(inProgress, epicsById, epic.id)) : ''}
+                ${inProgress.length ? section('epic-in-progress', 'In progress', inProgress.length, ticketList(inProgress, epicsById, epic.id)) : ''}
 
-                ${todo.length ? section('epic-up-next', 'Up next', todo.length, ticketList(todo, epicsById, epic.id)) : ''}
+                ${inReview.length ? section('epic-in-review', 'In review', inReview.length, ticketList(inReview, epicsById, epic.id)) : ''}
 
-                ${subs.length ? section('epic-sub-epics', 'Sub-epics', subs.length, subEpicRows(subs)) : ''}
+                ${todo.length ? section('epic-todo', 'Todo', todo.length, ticketList(todo, epicsById, epic.id)) : ''}
 
-                ${done.length ? section('epic-done', 'Done', done.length, doneBySprint(done, epicsById, epic.id)) : ''}
+                ${doneRows.length ? section('epic-done', 'Done', doneRows.length, doneBySprint(doneRows, epicsById, epic.id)) : ''}
 
                 ${backlog.length ? section('epic-backlog', 'Backlog', backlog.length, ticketList(backlog, epicsById, epic.id), { open: false, collapsible: true }) : ''}
 
-                ${!tickets.length ? renderEmptyState({
+                ${!overview.tickets.length ? renderEmptyState({
                     icon: EMPTY_ICONS.issues,
-                    heading: 'No tickets yet',
+                    heading: 'No sub-issues yet',
                     description: 'Break this epic down by creating sub-issues',
                 }) : ''}
 
-                ${section('epic-activity', 'Activity across the epic', null, `
+                ${section('epic-activity', 'Activity', null, `
                     <div class="activity-list" id="epic-activity-rows">
                         ${overview.activities.length ? activityRows(overview.activities, identifiers) : '<p class="epic-page-empty">No activity yet.</p>'}
                     </div>
@@ -354,7 +355,7 @@ function renderEpicPage(state) {
             <aside class="detail-sidebar">
                 <div class="sidebar-section epic-page-goal">
                     <details open>
-                        <summary><h4>Goal</h4></summary>
+                        <summary><h4>Description</h4></summary>
                         ${epic.description
                             ? `<div class="description-content markdown-body">${renderDescriptionContent(epic.description)}</div>`
                             : '<p class="text-muted">No description.</p>'}
@@ -456,7 +457,7 @@ registerActions({
     'epic-follow-children': async (_event, data) => {
         try {
             await api.updateIssue(data.epicId, { status_follows_children: true });
-            showToast('Status now follows its tickets');
+            showToast('Status now follows its sub-issues');
             await viewEpic(data.epicId, false);
         } catch (e) {
             showApiError('update epic', e);

@@ -43,9 +43,9 @@ const CLOSED = new Set(['done', 'canceled']);
 export const EPIC_FILTERS = {
     open: 'Open',
     in_progress: 'In progress',
-    all_done: 'All done',
-    needs_you: 'Needs you',
-    shipped: 'Shipped',
+    all_done: 'All sub-issues done',
+    needs_you: 'Approvals',
+    shipped: 'Closed',
     all: 'All',
 };
 let filter = 'open';
@@ -202,7 +202,7 @@ export function renderSprintStrip(sprints) {
     const bars = sprints.map(s => {
         const h = s.points ? Math.max(15, Math.round((s.points / max) * 100)) : 0;
         const label = `${s.name}${s.status === 'active' ? ' (current)' : ''}: `
-            + `${plural(s.closed || 0, 'ticket')} closed, ${s.points || 0} pts`;
+            + `${plural(s.closed || 0, 'issue')} closed, ${s.points || 0} pts`;
         return `<span class="epic-sprint-tick${s.status === 'active' ? ' epic-sprint-current' : ''}" title="${escapeAttr(label)}"><span class="epic-sprint-fill" style="height: ${h}%"></span></span>`;
     }).join('');
     return `<span class="epic-sprint-strip" aria-label="Points closed per sprint, oldest first">${bars}</span>`;
@@ -283,7 +283,7 @@ function whoTitle(epic) {
 /** Done out of every ticket that is not canceled (CHT-2043; .meter of CHT-2040). */
 function renderMeter(children) {
     const total = rolledTotal(children);
-    if (total <= 0) return '<span class="meter-label">No tickets</span>';
+    if (total <= 0) return '<span class="meter-label">No sub-issues</span>';
     const done = children.done || 0;
     const title = `${pctLabel(done, total)} done: ${done} of ${total}`
         + (children.canceled ? `, ${children.canceled} canceled` : '');
@@ -297,7 +297,7 @@ function renderRow(node, { grouped, depth, shownSubs }) {
     const { children, last, asks } = node.rolled;
     const closed = CLOSED.has(e.status);
     const pinned = e.status_pinned && !closed
-        ? ' <span class="epic-status-pinned-mark" title="Status set by hand, so it no longer follows its tickets">✎<span class="sr-only"> (status set by hand)</span></span>'
+        ? ' <span class="epic-status-pinned-mark" title="Status set by hand, so it no longer follows its sub-issues">✎<span class="sr-only"> (status set by hand)</span></span>'
         : '';
     const canceled = e.status === 'canceled' ? ' <span class="epic-canceled-tag">Canceled</span>' : '';
     const key = grouped ? `<span class="epic-project-key">${escapeHtml(e.project_key)}</span> ` : '';
@@ -306,20 +306,20 @@ function renderRow(node, { grouped, depth, shownSubs }) {
 
     const sub = [];
     if (closed) sub.push(e.completed_at ? `Closed ${escapeHtml(when(e.completed_at))}` : 'Closed');
-    else if (allDone(node)) sub.push('<span class="epic-all-done">All done · close it?</span>');
+    else if (allDone(node)) sub.push('<span class="epic-all-done">All sub-issues done</span>');
     else {
         const counts = renderCounts(children);
         const who = whoTitle(e);
         if (counts) sub.push(who ? `<span title="${escapeAttr(who)}">${counts}</span>` : counts);
-        else if (empty) sub.push('No tickets yet');
+        else if (empty) sub.push('No sub-issues yet');
     }
-    if (asks) sub.push(`<span class="epic-needs-you">${asks} need${asks === 1 ? 's' : ''} you</span>`);
+    if (asks) sub.push(`<span class="epic-needs-you">${plural(asks, 'approval')}</span>`);
     if (shownSubs) {
         const open = expanded.has(e.id);
         sub.push(`<button type="button" class="epic-subs-toggle" data-epic-toggle-subs="${escapeAttr(e.id)}" aria-expanded="${open}">${open ? '▾' : '▸'} ${plural(shownSubs, 'sub-epic')}</button>`);
     }
 
-    const touched = last ? `<span class="meter-label epic-touched" title="Last touched">${escapeHtml(formatTimeAgo(new Date(last).toISOString()))}</span>` : '';
+    const touched = last ? `<span class="meter-label epic-touched" title="Updated">${escapeHtml(formatTimeAgo(new Date(last).toISOString()))}</span>` : '';
     return `
         <div class="list-row-2line epic-row${closed ? ' epic-row-closed' : ''}${empty ? ' epic-row-empty' : ''}${depth ? ' epic-row-sub' : ''}" data-identifier="${escapeAttr(e.identifier)}" title="${escapeAttr(e.identifier)}" style="--epic-depth: ${depth}">
             <span class="epic-spark">${renderSprintStrip(e.sprints)}</span>
@@ -393,7 +393,7 @@ export function renderEpics(progress, container) {
 
     const loose = untracked.filter(u => u.open);
     const gap = loose.length && filter !== 'shipped'
-        ? `<p class="epic-untracked-note">${loose.map(u => `${grouped ? `${escapeHtml(u.project_key)}: ` : ''}${plural(u.open, 'open ticket')}`).join(', ')} under no epic.</p>`
+        ? `<p class="epic-untracked-note">${loose.map(u => `${grouped ? `${escapeHtml(u.project_key)}: ` : ''}${plural(u.open, 'open issue')}`).join(', ')} in no epic.</p>`
         : '';
 
     container.innerHTML = `
@@ -403,8 +403,8 @@ export function renderEpics(progress, container) {
                 ${rows.length
                     ? `<div class="epic-section-rows">${rows.join('')}</div>`
                     : `<p class="epic-filter-empty">${query
-                        ? `No ${filter === 'all' ? '' : `${escapeHtml(EPIC_FILTERS[filter].toLowerCase())} `}epics match “${escapeHtml(query)}”.`
-                        : `No ${escapeHtml(EPIC_FILTERS[filter].toLowerCase())} epics.`}</p>`}
+                        ? `No epics in ${escapeHtml(EPIC_FILTERS[filter])} match “${escapeHtml(query)}”.`
+                        : `No epics in ${escapeHtml(EPIC_FILTERS[filter])}.`}</p>`}
             </section>
             ${gap}
         </div>

@@ -139,7 +139,7 @@ describe('epic-detail-view (CHT-2097)', () => {
         await viewEpic('epic-1');
         expect(content().querySelector('.issue-detail-title').textContent).toBe('Test Epic');
         expect(content().querySelector('.epic-page-goal').textContent).toContain('Epic description');
-        expect(content().querySelector('.epic-page-facts').textContent).toContain('No owner');
+        expect(content().querySelector('.epic-page-facts').textContent).toContain('Unassigned');
         expect(document.getElementById('epics-view').classList.contains('hidden')).toBe(true);
         expect(document.getElementById('epic-detail-view').classList.contains('hidden')).toBe(false);
         expect(saveScrollPosition).toHaveBeenCalled();
@@ -155,20 +155,21 @@ describe('epic-detail-view (CHT-2097)', () => {
             t('2', 'in_review', { updated_at: '2025-01-04T00:00:00Z' }),
             t('3', 'in_progress', { updated_at: '2025-01-05T00:00:00Z', epic_id: 'sub-1' }),
             t('4', 'todo'), t('5', 'backlog'), t('6', 'canceled'),
-            { ...t('200', 'in_progress'), issue_type: 'epic' },
+            { ...t('200', 'in_progress'), id: 'sub-1', issue_type: 'epic' },
         ] }));
         await viewEpic('epic-1');
-        expect(rowIds('epic-in-progress')).toEqual(['CHT-3', 'CHT-1', 'CHT-2']);
+        // Sections are the statuses; a sub-epic sits in its own status with its meter.
+        expect(rowIds('epic-in-progress')).toEqual(['CHT-3', 'CHT-200', 'CHT-1']);
+        expect(rowIds('epic-in-review')).toEqual(['CHT-2']);
+        expect(content().querySelector('#epic-in-progress .epic-page-subepic .meter-label').textContent).toBe('1 of 2');
         expect(content().querySelector('[data-identifier="CHT-3"] .epic-page-under').textContent).toBe('in Colours');
-        expect(rowIds('epic-up-next')).toEqual(['CHT-4']);
+        expect(rowIds('epic-todo')).toEqual(['CHT-4']);
         expect(rowIds('epic-backlog')).toEqual(['CHT-5']);
         expect(content().querySelector('#epic-backlog').tagName).toBe('DETAILS');
         expect(content().querySelector('#epic-backlog').open).toBe(false);
-        // The sub-epic is listed as a sub-epic, not a ticket.
-        expect(rowIds('epic-sub-epics')).toEqual(['CHT-200']);
-        expect(content().querySelector('#epic-sub-epics .meter-label').textContent).toBe('1 of 2');
+        expect(content().querySelector('#epic-sub-epics')).toBeNull();
         // Canceled tickets count toward nothing.
-        expect(content().querySelector('.epic-detail-progress-label').textContent).toContain('0 of 5 tickets done');
+        expect(content().querySelector('.epic-detail-progress-label').textContent).toContain('0 of 5 sub-issues done');
     });
 
     it('lists every done ticket under the sprint it closed in, no cap', async () => {
@@ -184,7 +185,7 @@ describe('epic-detail-view (CHT-2097)', () => {
         expect(groups.map(g => g.querySelector('h4').firstChild.textContent.trim())).toEqual(['Sprint 2', 'Sprint 1', 'No sprint']);
         expect(groups[0].querySelectorAll('.sub-issue-item').length).toBe(12);
         expect(groups[0].querySelector('.sub-issue-item').dataset.identifier).toBe('CHT-a11');
-        expect(content().querySelector('.epic-detail-progress-label').textContent).toContain('14 of 14 tickets done · 14 of 14 points');
+        expect(content().querySelector('.epic-detail-progress-label').textContent).toContain('14 of 14 sub-issues done · 14 of 14 points');
     });
 
     it('shows what waits on you in this tree as Inbox rows, and nothing else', async () => {
@@ -200,8 +201,8 @@ describe('epic-detail-view (CHT-2097)', () => {
         expect(mountInboxSurface).toHaveBeenCalledWith('epic-needs-you-rows', [
             expect.objectContaining({ id: 'in-1' }), expect.objectContaining({ id: 'in-2' }),
         ], expect.any(Object));
-        expect(sectionIds()[0]).toBe('epic-needs-you');
-        expect(content().querySelectorAll('#epic-needs-you .inbox-row').length).toBe(2);
+        expect(sectionIds()[0]).toBe('epic-approvals');
+        expect(content().querySelectorAll('#epic-approvals .inbox-row').length).toBe(2);
     });
 
     it('keeps its live refresh across refreshes', async () => {
@@ -217,7 +218,7 @@ describe('epic-detail-view (CHT-2097)', () => {
     it('leaves Needs you out when nothing waits, and scrolls to a section on request', async () => {
         Element.prototype.scrollIntoView = vi.fn();
         await viewEpic('epic-1', true, { focus: 'epic-activity' });
-        expect(sectionIds()).not.toContain('epic-needs-you');
+        expect(sectionIds()).not.toContain('epic-approvals');
         expect(mountInboxSurface).not.toHaveBeenCalled();
         expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
     });
@@ -257,9 +258,11 @@ describe('epic-detail-view (CHT-2097)', () => {
         api.getProjectEpicProgress.mockResolvedValue({ untracked: [], epics: [
             { id: 'sub-1', identifier: 'CHT-200', title: 'Sub', status: 'todo', parent_epic_id: 'epic-1', children: {} },
         ] });
-        api.getEpicOverview.mockResolvedValue(overview({ tickets: [t('1', 'todo')] }));
+        api.getEpicOverview.mockResolvedValue(overview({ tickets: [
+            t('1', 'todo'), { ...t('200', 'todo'), id: 'sub-1', issue_type: 'epic' },
+        ] }));
         await viewEpic('epic-1');
-        content().querySelector('#epic-up-next .sub-issue-item').click();
+        content().querySelector('#epic-todo [data-identifier="CHT-1"]').click();
         expect(mockViewIssue).toHaveBeenCalledWith('1');
         content().querySelector('.epic-page-subepic').click();
         await vi.waitFor(() => expect(api.getIssue).toHaveBeenCalledWith('sub-1'));
@@ -267,14 +270,14 @@ describe('epic-detail-view (CHT-2097)', () => {
 
     it('says there are no tickets yet', async () => {
         await viewEpic('epic-1');
-        expect(content().textContent).toContain('No tickets yet');
+        expect(content().textContent).toContain('No sub-issues yet');
     });
 
     it('still renders when the progress read fails', async () => {
         api.getProjectEpicProgress.mockRejectedValue(new Error('down'));
         api.getEpicOverview.mockResolvedValue(overview({ tickets: [t('1', 'todo')] }));
         await viewEpic('epic-1');
-        expect(rowIds('epic-up-next')).toEqual(['CHT-1']);
+        expect(rowIds('epic-todo')).toEqual(['CHT-1']);
         expect(showApiError).not.toHaveBeenCalled();
     });
 
@@ -323,7 +326,7 @@ describe('epic-detail-view (CHT-2097)', () => {
         api.updateIssue.mockResolvedValue({});
         await epicDetailActions['epic-follow-children']({}, { epicId: 'epic-1' });
         expect(api.updateIssue).toHaveBeenCalledWith('epic-1', { status_follows_children: true });
-        expect(showToast).toHaveBeenCalledWith('Status now follows its tickets');
+        expect(showToast).toHaveBeenCalledWith('Status now follows its sub-issues');
     });
 
     describe('viewEpicByPath', () => {
