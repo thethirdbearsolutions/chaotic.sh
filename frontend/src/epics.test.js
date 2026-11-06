@@ -222,14 +222,15 @@ describe('renderEpics (CHT-2095)', () => {
         expect(container.querySelector('[data-identifier="CHT-3"] .list-row-sub').textContent).toBe('All sub-issues done');
     });
 
-    it('says each epic\'s tickets by status, zeros left out, who holds them on hover', () => {
+    it('says what is moving, who holds it on hover, and every status on the meter', () => {
         renderEpics(response([moving({
             children: { total: 9, backlog: 4, todo: 2, in_progress: 2, in_review: 1, done: 0, canceled: 0 },
             in_flight: [ticket('Picker', { assignee: person('ivy') }), ticket('Header')],
         })]), container);
         const sub = container.querySelector('.list-row-sub');
-        expect(sub.textContent).toBe('2 in progress · 1 in review · 2 todo · 4 backlog');
+        expect(sub.textContent).toBe('2 in progress · 1 in review');
         expect(sub.querySelector('[title]').getAttribute('title')).toBe('ivy: Picker\nUnassigned: Header');
+        expect(container.querySelector('.meter').getAttribute('title')).toContain('2 in progress · 1 in review · 2 todo · 4 backlog');
     });
 
     it('chips narrow the list without reordering it, and count what each would show', () => {
@@ -288,7 +289,8 @@ describe('renderEpics (CHT-2095)', () => {
         expect(rowIds(container)).toEqual(['CHT-1', 'CHT-3']);
         const parent = container.querySelector('[data-identifier="CHT-1"]');
         expect(parent.querySelector('.meter-label').textContent).toBe('3 of 6');
-        expect(parent.querySelector('.list-row-sub').textContent).toBe('1 in progress · 1 todo · 1 backlog · 1 approval · ▸ 1 sub-epic');
+        expect(parent.querySelector('.list-row-sub').textContent).toBe('1 in progress · 1 approval');
+        expect(parent.querySelector('.list-row-title .epic-subs-toggle').getAttribute('aria-label')).toBe('Show 1 sub-epic');
 
         parent.querySelector('[data-epic-toggle-subs]').click();
         expect(rowIds(container)).toEqual(['CHT-1', 'CHT-2', 'CHT-3']);
@@ -387,7 +389,7 @@ describe('renderEpics (CHT-2095)', () => {
         expect(owners).toEqual(['· Rowan', null]);
     });
 
-    it('leads each epic row with its sprint strip and ends it with the meter and when it was touched', () => {
+    it('leads each epic row with its sprint strip, ends it with the meter, and says when it was touched on hover', () => {
         renderEpics(response([moving({ children: kids(2, 4), last_activity_at: ago(40 * MIN) })]), container);
         const row = container.querySelector('.epic-row');
         expect(row.firstElementChild.classList.contains('epic-spark')).toBe(true);
@@ -395,7 +397,7 @@ describe('renderEpics (CHT-2095)', () => {
         expect(row.querySelector('.meter-fill').style.width).toBe('50%');
         expect(row.querySelector('.meter-label').textContent).toBe('2 of 4');
         expect(row.querySelector('.meter').getAttribute('title')).toContain('50% done');
-        expect(row.querySelector('.epic-touched').textContent).toBe('40m ago');
+        expect(row.getAttribute('title')).toBe('CHT-10 · updated 40m ago');
     });
 
     it('leaves canceled tickets out of the meter, and says when there are none', () => {

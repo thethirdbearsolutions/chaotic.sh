@@ -269,9 +269,12 @@ const MATCHES = {
     all: () => true,
 };
 
-/** "2 in progress · 1 in review · 3 todo", zeros left out. */
-function renderCounts(children) {
-    const parts = STATUS_ORDER.filter(([k]) => children[k] > 0).map(([k, label]) => `${children[k]} ${label}`);
+/**
+ * "2 in progress · 1 in review", zeros left out. The row says only what
+ * is moving; the meter's tooltip has every status (CHT-2097 review).
+ */
+function renderCounts(children, statuses = STATUS_ORDER.slice(0, 2)) {
+    const parts = statuses.filter(([k]) => children[k] > 0).map(([k, label]) => `${children[k]} ${label}`);
     return parts.length ? parts.join(' · ') : '';
 }
 
@@ -286,7 +289,8 @@ function renderMeter(children) {
     if (total <= 0) return '<span class="meter-label">No sub-issues</span>';
     const done = children.done || 0;
     const title = `${pctLabel(done, total)} done: ${done} of ${total}`
-        + (children.canceled ? `, ${children.canceled} canceled` : '');
+        + (children.canceled ? `, ${children.canceled} canceled` : '')
+        + (rolledOpen(children) ? `\n${renderCounts(children, STATUS_ORDER)}` : '');
     return `
         <div class="meter" title="${escapeAttr(title)}"><div class="meter-fill" style="width: ${Math.round((done / total) * 100)}%"></div></div>
         <span class="meter-label">${done} of ${total}</span>`;
@@ -314,18 +318,21 @@ function renderRow(node, { grouped, depth, shownSubs }) {
         else if (empty) sub.push('No sub-issues yet');
     }
     if (asks) sub.push(`<span class="epic-needs-you">${plural(asks, 'approval')}</span>`);
-    if (shownSubs) {
-        const open = expanded.has(e.id);
-        sub.push(`<button type="button" class="epic-subs-toggle" data-epic-toggle-subs="${escapeAttr(e.id)}" aria-expanded="${open}">${open ? '▾' : '▸'} ${plural(shownSubs, 'sub-epic')}</button>`);
-    }
-
-    const touched = last ? `<span class="meter-label epic-touched" title="Updated">${escapeHtml(formatTimeAgo(new Date(last).toISOString()))}</span>` : '';
+    // Sub-epics open from a caret before the title (CHT-2097 review: the
+    // sub-line said too much).
+    const open = expanded.has(e.id);
+    const toggle = shownSubs
+        ? `<button type="button" class="epic-subs-toggle" data-epic-toggle-subs="${escapeAttr(e.id)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} ${escapeAttr(plural(shownSubs, 'sub-epic'))}" title="${escapeAttr(plural(shownSubs, 'sub-epic'))}">${open ? '▾' : '▸'}</button> `
+        : '';
+    // The list's order is when anything under an epic was last updated; the
+    // row says it in its tooltip, not in its text.
+    const tip = last ? `${e.identifier} · updated ${formatTimeAgo(new Date(last).toISOString())}` : e.identifier;
     return `
-        <div class="list-row-2line epic-row${closed ? ' epic-row-closed' : ''}${empty ? ' epic-row-empty' : ''}${depth ? ' epic-row-sub' : ''}" data-identifier="${escapeAttr(e.identifier)}" title="${escapeAttr(e.identifier)}" style="--epic-depth: ${depth}">
+        <div class="list-row-2line epic-row${closed ? ' epic-row-closed' : ''}${empty ? ' epic-row-empty' : ''}${depth ? ' epic-row-sub' : ''}" data-identifier="${escapeAttr(e.identifier)}" title="${escapeAttr(tip)}" style="--epic-depth: ${depth}">
             <span class="epic-spark">${renderSprintStrip(e.sprints)}</span>
-            <span class="list-row-title">${key}${escapeHtml(e.title)}${owner}${pinned}${canceled}</span>
+            <span class="list-row-title">${toggle}${key}${escapeHtml(e.title)}${owner}${pinned}${canceled}</span>
             <span class="list-row-sub">${sub.join(' · ')}</span>
-            <span class="list-row-right">${renderMeter(children)}${touched}</span>
+            <span class="list-row-right">${renderMeter(children)}</span>
         </div>`;
 }
 
