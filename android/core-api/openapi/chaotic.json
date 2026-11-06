@@ -12053,6 +12053,17 @@
             "type": "array",
             "title": "Awaiting Human",
             "default": []
+          },
+          "parent_epic_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Epic Id"
           }
         },
         "type": "object",

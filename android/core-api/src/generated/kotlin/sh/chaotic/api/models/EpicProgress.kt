@@ -66,6 +66,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param lastActivityAt 
  * @param completedAt 
  * @param awaitingHuman 
+ * @param parentEpicId 
  */
 @Serializable
 
@@ -138,7 +139,10 @@ data class EpicProgress (
     val completedAt: kotlin.String? = null,
 
     @SerialName(value = "awaiting_human")
-    val awaitingHuman: kotlin.collections.List<AwaitingHuman>? = null
+    val awaitingHuman: kotlin.collections.List<AwaitingHuman>? = null,
+
+    @SerialName(value = "parent_epic_id")
+    val parentEpicId: kotlin.String? = null
 
 ) {
 
