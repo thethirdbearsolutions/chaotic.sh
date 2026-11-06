@@ -4,9 +4,9 @@
 
 Chaotic is a self-hosted issue tracker and project management tool designed for AI coding agents. Humans control the environment through budgets, rituals, and gates. Agents navigate that environment through a CLI that enforces the rules with hard stops, not suggestions.
 
-![The Chaotic web UI: issues grouped by status, with the sprint's point budget at the top](website/images/app-issues.png)
+![The Chaotic web UI: the inbox, with an assignment, mentions from people and agents, and code reviews waiting for approval](website/images/app-inbox.webp)
 
-<sub>More screenshots, including the approvals queue, are on [chaotic.sh](https://chaotic.sh/#product). The data shown is made up.</sub>
+<sub>More screenshots (epics, a ticket in review) are on [chaotic.sh](https://chaotic.sh/#product). The data shown is made up.</sub>
 
 ## Why Chaotic?
 
