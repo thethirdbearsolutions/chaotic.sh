@@ -103,6 +103,7 @@ import {
     isInlineDropdownOpen,
     showDetailDropdown,
     updateIssueField,
+    setInlineEditHolder,
     withEditsInFlight,
     updateDetailViewField,
     toggleIssueLabel,
@@ -465,6 +466,22 @@ describe('inline-dropdown', () => {
             resolve({ id: 'issue-1', status: 'done' });
             await pending;
             expect(withEditsInFlight(row)).toBe(row);
+        });
+
+        it('edits a row another page holds, and rolls it back on failure (CHT-2097)', async () => {
+            let copy = { id: 'issue-9', status: 'todo', priority: 'low' };
+            const seen = [];
+            setInlineEditHolder({ get: (id) => (id === copy.id ? copy : undefined), set: (i) => { copy = i; seen.push(i.status); } });
+            try {
+                api.updateIssue.mockResolvedValue({ id: 'issue-9', status: 'done', priority: 'low' });
+                await updateIssueField('issue-9', 'status', 'done');
+                expect(seen).toEqual(['done', 'done']);
+                api.updateIssue.mockRejectedValue(new Error('nope'));
+                await updateIssueField('issue-9', 'priority', 'high');
+                expect(copy.priority).toBe('low');
+            } finally {
+                setInlineEditHolder(null);
+            }
         });
 
         it('calls API to update issue', async () => {

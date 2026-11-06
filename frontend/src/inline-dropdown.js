@@ -46,6 +46,21 @@ const GROUP_FIELD = {
  * My Issues comes before the Issues list in the page, so the first match
  * in document order can be a row nobody sees (CHT-1915 review I1).
  */
+// One more place that holds issue rows and edits them in place, besides
+// the Issues list, My Issues and the open detail: the epic page's
+// sub-issue list (CHT-2097). `get(id)` answers undefined once that page
+// is gone, so a stale holder is inert.
+let extraHolder = null;
+
+/** @param {{get: (id: string) => Object|undefined, set: (issue: Object) => void}|null} holder */
+export function setInlineEditHolder(holder) {
+    extraHolder = holder;
+}
+
+function extraIssue(issueId) {
+    return extraHolder?.get(issueId);
+}
+
 function visibleIssueRow(issueId) {
     const rows = document.querySelectorAll(`.issue-row[data-issue-id="${issueId}"]`);
     for (const row of rows) {
@@ -162,7 +177,7 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
         // Keep the current assignee listed even when idle (CHT-1501).
         const detail = getCurrentDetailIssue();
         const issue = getIssues().find(i => i.id === issueId) || getMyIssues().find(i => i.id === issueId)
-            || (detail?.id === issueId ? detail : null);
+            || (detail?.id === issueId ? detail : null) || extraIssue(issueId);
         const assigneeOptions = getAssigneeOptionList({ keepId: issue?.assignee_id || null });
         dropdown.innerHTML = `
             <div class="dropdown-header">Assign to...</div>
@@ -201,7 +216,7 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
         const issues = getIssues();
         const myIssues = getMyIssues();
         const currentDetailIssue = getCurrentDetailIssue();
-        const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || currentDetailIssue;
+        const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || extraIssue(issueId) || currentDetailIssue;
         const currentLabelIds = new Set((issue?.labels || []).map(l => l.id));
 
         dropdown.innerHTML = `<div class="dropdown-header">Loading labels...</div>`;
@@ -249,7 +264,7 @@ export async function showInlineDropdown(event, type, issueId, anchorEl) {
         const issues = getIssues();
         const myIssues = getMyIssues();
         const currentDetailIssue = getCurrentDetailIssue();
-        const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || currentDetailIssue;
+        const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || extraIssue(issueId) || currentDetailIssue;
         const projectId = issue?.project_id || document.querySelector(`.issue-row[data-issue-id="${issueId}"]`)?.dataset.projectId;
 
         // Show loading state, then fetch sprints
@@ -444,7 +459,7 @@ async function _doToggleIssueLabel(issueId, labelId, buttonEl) {
     const issues = getIssues();
     const myIssues = getMyIssues();
     const currentDetailIssue = getCurrentDetailIssue();
-    const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || currentDetailIssue;
+    const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || extraIssue(issueId) || currentDetailIssue;
     if (!issue) return;
 
     const currentLabelIds = (issue.labels || []).map(l => l.id);
@@ -578,7 +593,7 @@ export async function createLabelFromDropdown(issueId) {
         const issues = getIssues();
         const myIssues = getMyIssues();
         const currentDetailIssue = getCurrentDetailIssue();
-        const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || currentDetailIssue;
+        const issue = issues.find(i => i.id === issueId) || myIssues.find(i => i.id === issueId) || extraIssue(issueId) || currentDetailIssue;
         const currentLabelIds = new Set((issue?.labels || []).map(l => l.id));
         if (dropdown) {
             renderLabelDropdownContent(dropdown, issueId, labels, currentLabelIds);
@@ -835,6 +850,7 @@ function fieldValues(issueId, field) {
         issue: getIssues().find(i => i.id === issueId)?.[field],
         myIssue: getMyIssues().find(i => i.id === issueId)?.[field],
         detail: detail?.id === issueId ? detail[field] : undefined,
+        extra: extraIssue(issueId)?.[field],
     };
 }
 
@@ -860,6 +876,11 @@ function patchFieldEverywhere(issueId, field, next) {
         found = true;
         setCurrentDetailIssue(patch(detail, 'detail'));
     }
+    const extra = extraIssue(issueId);
+    if (extra) {
+        found = true;
+        extraHolder.set(patch(extra, 'extra'));
+    }
     return found;
 }
 
@@ -881,6 +902,7 @@ function replaceIssueEverywhere(issueId, versions) {
     if (versions.detail && getCurrentDetailIssue()?.id === issueId) {
         setCurrentDetailIssue(versions.detail);
     }
+    if (versions.issue && extraIssue(issueId)) extraHolder.set(versions.issue);
 }
 
 /**
@@ -929,7 +951,7 @@ function rerenderIssueRow(issueId, field, issue, { focus }) {
 
 // Re-render the row and the detail sidebar from the state as it now is.
 function showIssueLocally(issueId, field, { focus }) {
-    const row = getIssues().find(i => i.id === issueId) || getMyIssues().find(i => i.id === issueId);
+    const row = getIssues().find(i => i.id === issueId) || getMyIssues().find(i => i.id === issueId) || extraIssue(issueId);
     // The store saves the Issues list only while that view is up; a guess
     // or a rollback made from elsewhere must reach it too, or the next
     // visit paints a value the server never had (CHT-1915).

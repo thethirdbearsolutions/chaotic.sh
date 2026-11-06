@@ -8335,11 +8335,23 @@ button.stat-card-link:hover .stat-note {
     grid-row: 1 / span 2;
 }
 .epic-row .list-row-right {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-xs);
-    width: 140px;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-sm);
+    width: 196px;
     text-align: right;
+}
+.epic-row .list-row-right .meter {
+    flex: 1;
+}
+.epic-row .list-row-right .meter-label {
+    order: -1;
+    min-width: 4.5em;
+}
+.epic-assignee {
+    display: inline-flex;
+    flex: none;
+    color: var(--text-muted);
 }
 /* The keyboard cursor (CHT-1964). */
 .epic-row.keyboard-selected {
@@ -8448,9 +8460,12 @@ button.stat-card-link:hover .stat-note {
     color: var(--text-secondary);
     cursor: pointer;
 }
+.epic-subs-toggle {
+    width: 1.25em;
+    text-align: left;
+}
 .epic-subs-toggle:hover {
     color: var(--text-primary);
-    text-decoration: underline;
 }
 .epic-touched {
     color: var(--text-muted);
@@ -8475,12 +8490,156 @@ button.stat-card-link:hover .stat-note {
     }
     .epic-row .list-row-right {
         width: 64px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--space-xs);
+    }
+    .epic-row .list-row-right .meter-label {
+        min-width: 0;
     }
     .epic-section .epic-sprint-strip {
         gap: 1px;
     }
     .epic-section .epic-sprint-tick {
         width: 3px;
+    }
+}
+
+/* The epic page (CHT-2097): the epic-wide picture. Sections reuse the
+   ticket page's section and sub-issue row; these are the extras. */
+.epic-page .issue-detail-nav {
+    flex-wrap: wrap;
+}
+.epic-page-open-ticket {
+    margin-left: auto;
+}
+.epic-page-facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-xs);
+    margin: calc(var(--space-sm) * -1) 0 var(--space-lg);
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+}
+.epic-page-dot {
+    color: var(--text-muted);
+}
+.epic-page-pinned {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    margin-bottom: var(--space-lg);
+    font-size: var(--font-sm);
+}
+.epic-page-progress {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    margin-bottom: var(--space-xl);
+}
+.epic-page-sprints {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+}
+.epic-page-section > summary {
+    cursor: pointer;
+    list-style: none;
+}
+.epic-page-section > summary::-webkit-details-marker {
+    display: none;
+}
+.epic-page-section > summary h3::before {
+    content: "▸ ";
+    color: var(--text-muted);
+}
+.epic-page-section[open] > summary h3::before {
+    content: "▾ ";
+}
+.epic-page-under,
+.epic-page-when {
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+    font-weight: 400;
+}
+.epic-page-when {
+    margin-left: auto;
+    white-space: nowrap;
+}
+.epic-page-sprint-group + .epic-page-sprint-group {
+    margin-top: var(--space-lg);
+}
+.epic-page-sprint-group h4 {
+    margin: 0 0 var(--space-sm);
+    font-size: var(--font-sm);
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+.epic-page-docs {
+    display: flex;
+    flex-direction: column;
+}
+.epic-page-doc {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-sm);
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+}
+.epic-page-doc:hover {
+    background: var(--row-hover);
+}
+.epic-page-doc-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.epic-page-doc-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+}
+.epic-page-tag {
+    padding: 0 var(--space-sm);
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-pill);
+}
+.activity-content .epic-page-tag {
+    margin-right: var(--space-xs);
+}
+.epic-page-subepic-meter {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    width: 140px;
+}
+.epic-page-subepic-meter .meter {
+    flex: 1;
+}
+.epic-page-empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+}
+.epic-page-goal summary {
+    cursor: pointer;
+    list-style: none;
+}
+.epic-page-goal summary h4 {
+    display: inline;
+}
+@media (max-width: 768px) {
+    .epic-page-subepic-meter {
+        width: 72px;
+    }
+    .epic-page-doc-links {
+        display: none;
     }
 }
 
@@ -11205,4 +11364,9 @@ body.theme-light {
     #issue-detail-view .detail-main { padding: 20px 16px 0; }
     #issue-detail-view .comment-form-sticky { padding: var(--space-md) 16px; margin: 0 -16px; }
     #issue-detail-view .issue-detail-title { font-size: var(--font-2xl); }
+}
+
+/* The epic page's sub-issue chips sit above /issues' own rows (CHT-2097). */
+.epic-page-section .epic-filter {
+    margin-bottom: var(--space-sm);
 }

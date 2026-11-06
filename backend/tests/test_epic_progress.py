@@ -536,3 +536,98 @@ async def test_team_wide_keys_new_fields_by_project(client, interactive_headers,
     rows = {e["title"]: e for e in r.json()["epics"]}
     assert [t["title"] for t in rows["A goal"]["in_flight"]] == ["A work"]
     assert [t["title"] for t in rows["B goal"]["in_flight"]] == ["B work"]
+
+
+@pytest.mark.asyncio
+async def test_epic_overview_covers_the_whole_tree(client, interactive_headers, test_project, test_team, db):
+    """CHT-2097: tickets at any depth with their nearest epic and the
+    sprint they closed in, documents linked anywhere in the tree once
+    each, and activity across it a page at a time."""
+    h = interactive_headers
+    sprint = await _active_sprint(test_project.id, name="Sprint 7")
+    goal = await _create(client, h, test_project.id, title="Goal", issue_type="epic")
+    task = await _create(client, h, test_project.id, title="Task", parent_id=goal["id"])
+    sub = await _create(client, h, test_project.id, title="Sub", issue_type="epic", parent_id=task["id"])
+    leaf = await _create(client, h, test_project.id, title="Leaf", parent_id=sub["id"])
+    await _create(client, h, test_project.id, title="Elsewhere")
+    await _patch(client, h, leaf["id"], status="done")
+
+    async def doc(title):
+        r = await client.post(f"/api/teams/{test_team.id}/documents", headers=h, json={"title": title, "content": "x"})
+        assert r.status_code == 201, r.text
+        return r.json()
+    plan, spec = await doc("Plan"), await doc("Spec")
+    for d, issue in ((plan, goal), (spec, leaf), (plan, leaf)):
+        r = await client.post(f"/api/documents/{d['id']}/issues/{issue['id']}", headers=h)
+        assert r.status_code == 201, r.text
+
+    r = await client.get(f"/api/issues/{goal['id']}/epic-overview", headers=h)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    by_title = {t["title"]: t for t in data["tickets"]}
+    assert set(by_title) == {"Task", "Sub", "Leaf"}
+    assert by_title["Task"]["epic_id"] == goal["id"]
+    assert by_title["Sub"]["epic_id"] == goal["id"]
+    assert by_title["Leaf"]["epic_id"] == sub["id"]
+    assert by_title["Leaf"]["closed_in"] == {"id": sprint.id, "name": "Sprint 7"}
+    assert by_title["Task"]["closed_in"] is None
+    assert by_title["Sub"]["issue_type"] == "epic"
+    # The same issues as full list rows, in the same order, for /issues' rows.
+    assert [i["id"] for i in data["issues"]] == [t["id"] for t in data["tickets"]]
+    full = {i["title"]: i for i in data["issues"]}
+    assert full["Leaf"]["parent_id"] == sub["id"]
+    assert full["Task"]["description"] is None
+    assert "priority" in full["Task"] and "labels" in full["Task"]
+    docs = {d["title"]: d["linked_to"] for d in data["documents"]}
+    assert docs == {"Plan": [goal["identifier"], leaf["identifier"]], "Spec": [leaf["identifier"]]}
+    issues_seen = {a["issue_id"] for a in data["activities"]}
+    assert leaf["id"] in issues_seen and goal["id"] in issues_seen
+
+    page = (await client.get(f"/api/issues/{goal['id']}/epic-overview?activity_limit=1", headers=h)).json()
+    assert len(page["activities"]) == 1 and page["more_activity"] is True
+
+
+@pytest.mark.asyncio
+async def test_epic_overview_pages_activity_without_repeats(client, interactive_headers, test_project, db):
+    """Review of CHT-2097: pages of activity across the tree, newest first,
+    neither repeat nor skip a row."""
+    h = interactive_headers
+    goal = await _create(client, h, test_project.id, title="Goal", issue_type="epic")
+    for n in range(4):
+        await _create(client, h, test_project.id, title=f"T{n}", parent_id=goal["id"])
+    full = (await client.get(f"/api/issues/{goal['id']}/epic-overview?activity_limit=200", headers=h)).json()
+    seen = []
+    skip = 0
+    while True:
+        page = (await client.get(
+            f"/api/issues/{goal['id']}/epic-overview?activity_limit=2&activity_skip={skip}", headers=h)).json()
+        seen += [a["id"] for a in page["activities"]]
+        skip += len(page["activities"])
+        if not page["more_activity"]:
+            break
+    assert seen == [a["id"] for a in full["activities"]]
+    assert len(seen) == len(set(seen)) >= 5
+
+
+@pytest.mark.asyncio
+async def test_epic_overview_leaves_out_documents_the_caller_cannot_open(
+    client, interactive_headers, test_project, test_team, db, monkeypatch,
+):
+    """A link does not grant access (CHT-1780): a document the caller could
+    not open by id is not listed, though it is linked into the tree."""
+    import app.api.issues as issues_api
+    h = interactive_headers
+    goal = await _create(client, h, test_project.id, title="Goal", issue_type="epic")
+    ids = []
+    for title in ("Open", "Hidden"):
+        d = (await client.post(f"/api/teams/{test_team.id}/documents", headers=h,
+                               json={"title": title, "content": "x"})).json()
+        await client.post(f"/api/documents/{d['id']}/issues/{goal['id']}", headers=h)
+        ids.append(d["id"])
+    real = issues_api.can_access_document
+
+    async def deny_hidden(user, doc):
+        return doc.id != ids[1] and await real(user, doc)
+    monkeypatch.setattr(issues_api, "can_access_document", deny_hidden)
+    data = (await client.get(f"/api/issues/{goal['id']}/epic-overview", headers=h)).json()
+    assert [d["title"] for d in data["documents"]] == ["Open"]

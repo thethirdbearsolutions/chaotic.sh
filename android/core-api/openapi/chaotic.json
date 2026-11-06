@@ -2629,6 +2629,77 @@
         }
       }
     },
+    "/api/issues/{issue_id}/epic-overview": {
+      "get": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Get Epic Overview",
+        "description": "The epic-wide picture for its page (CHT-2097): every ticket under\nthe issue, at any depth, with its nearest epic and the sprint it\nclosed in; the documents linked to the issue or anything under it;\nand the activity across all of it, newest first, a page at a time.\nWorks for any issue with children, not only an epic.",
+        "operationId": "get_epic_overview_api_issues__issue_id__epic_overview_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "issue_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue Id"
+            }
+          },
+          {
+            "name": "activity_skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Activity Skip"
+            }
+          },
+          {
+            "name": "activity_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Activity Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpicOverviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/issues/{issue_id}/activities": {
       "get": {
         "tags": [
@@ -11891,6 +11962,51 @@
         "title": "EmailVerificationSent",
         "description": "A verification code was mailed (CHT-1790)."
       },
+      "EpicOverviewResponse": {
+        "properties": {
+          "tickets": {
+            "items": {
+              "$ref": "#/components/schemas/OverviewTicket"
+            },
+            "type": "array",
+            "title": "Tickets"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/IssueResponse"
+            },
+            "type": "array",
+            "title": "Issues",
+            "default": []
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/OverviewDocument"
+            },
+            "type": "array",
+            "title": "Documents"
+          },
+          "activities": {
+            "items": {
+              "$ref": "#/components/schemas/IssueActivityResponse"
+            },
+            "type": "array",
+            "title": "Activities"
+          },
+          "more_activity": {
+            "type": "boolean",
+            "title": "More Activity",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "tickets",
+          "documents",
+          "activities"
+        ],
+        "title": "EpicOverviewResponse"
+      },
       "EpicPerson": {
         "properties": {
           "id": {
@@ -14691,6 +14807,178 @@
         ],
         "title": "OrderField",
         "description": "A field a query can be ordered by."
+      },
+      "OverviewDocument": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon"
+          },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "linked_to": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Linked To"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "linked_to"
+        ],
+        "title": "OverviewDocument",
+        "description": "A document linked to the epic or a ticket under it (CHT-2097)."
+      },
+      "OverviewSprint": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "OverviewSprint"
+      },
+      "OverviewTicket": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IssueStatus"
+          },
+          "issue_type": {
+            "type": "string",
+            "title": "Issue Type"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EpicPerson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "epic_id": {
+            "type": "string",
+            "title": "Epic Id"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "closed_in": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OverviewSprint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "identifier",
+          "title",
+          "status",
+          "issue_type",
+          "epic_id"
+        ],
+        "title": "OverviewTicket",
+        "description": "One ticket anywhere under an epic, as its page lists it (CHT-2097)."
       },
       "ParentPrompt": {
         "properties": {

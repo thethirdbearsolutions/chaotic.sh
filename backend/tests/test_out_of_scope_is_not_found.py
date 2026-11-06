@@ -231,6 +231,7 @@ ROUTES = [
     ("GET", "/api/issues/{issue}/activities", None, "issue"),
     ("GET", "/api/issues/{issue}/sub-issues", None, "issue"),
     ("GET", "/api/issues/{issue}/documents", None, "issue"),
+    ("GET", "/api/issues/{issue}/epic-overview", None, "issue"),
     ("GET", "/api/issues/{issue}/description-revisions", None, "issue"),
     ("GET", "/api/issues/{issue}/description-revisions/1", None, "issue"),
     ("POST", "/api/issues/{issue}/labels", {"label_id": "{label}"}, "issue"),

@@ -39,6 +39,10 @@ from app.schemas.issue import (
     LabelResponse,
 )
 from app.schemas.document import DocumentResponse
+from app.schemas.epic import EpicOverviewResponse, OverviewDocument
+from app.services.epic_progress import epic_overview_activity_ids, epic_overview_links, epic_overview_rows
+from app.oxyde_models.document import OxydeDocument
+from app.oxyde_models.issue import OxydeIssue, OxydeIssueActivity
 from app.schemas.issue_query import IssueQueryFieldsResponse, IssueQueryResponse
 from app.services import issue_query
 from app.services.document_service import DocumentService
@@ -1433,6 +1437,61 @@ async def remove_label_from_issue(
     return response
 
 
+@router.get("/{issue_id}/epic-overview", response_model=EpicOverviewResponse)
+@reads
+async def get_epic_overview(
+    issue_id: str,
+    current_user: CurrentUser,
+    activity_skip: Annotated[int, Query(ge=0)] = 0,
+    activity_limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> EpicOverviewResponse:
+    """The epic-wide picture for its page (CHT-2097): every ticket under
+    the issue, at any depth, with its nearest epic and the sprint it
+    closed in; the documents linked to the issue or anything under it;
+    and the activity across all of it, newest first, a page at a time.
+    Works for any issue with children, not only an epic."""
+    issue, project = await visible_issue(current_user, issue_id)
+    tickets = await epic_overview_rows(issue.id, project.id)
+    ticket_ids = [t.id for t in tickets]
+    full = []
+    for start in range(0, len(ticket_ids), 500):  # bounded IN lists
+        full += await OxydeIssue.objects.filter(id__in=ticket_ids[start:start + 500]).join("creator").prefetch("labels").all()
+    order = {i: n for n, i in enumerate(ticket_ids)}
+    full.sort(key=lambda i: order[i.id])
+    issues = [r.model_copy(update={"description": None}) for r in await issues_to_responses(full)]
+
+    # Each document once, the issues it is linked to in tree order (the
+    # epic's own first); a link does not grant access (CHT-1780).
+    linked: dict[str, list[str]] = {}
+    for link in await epic_overview_links(issue.id, project.id):
+        linked.setdefault(link["document_id"], []).append(link["issue_id"])
+    identifiers = {issue.id: issue.identifier, **{t.id: t.identifier for t in tickets}}
+    docs = []
+    doc_ids = list(linked)
+    for start in range(0, len(doc_ids), 500):  # bounded IN lists
+        docs += await OxydeDocument.objects.filter(id__in=doc_ids[start:start + 500]).join("author").all()
+    docs.sort(key=lambda d: ensure_utc(d.updated_at), reverse=True)
+    documents = [
+        OverviewDocument(
+            id=doc.id, title=doc.title, icon=doc.icon,
+            author_name=doc.author and doc.author.name, updated_at=ensure_utc(doc.updated_at),
+            linked_to=[identifiers[i] for i in linked[doc.id] if i in identifiers],
+        )
+        for doc in docs
+        if await can_access_document(current_user, doc)
+    ]
+
+    page = await epic_overview_activity_ids(issue.id, project.id, activity_skip, activity_limit + 1)
+    rows = await OxydeIssueActivity.objects.filter(id__in=page[:activity_limit]).join("user").all() if page else []
+    position = {a: n for n, a in enumerate(page)}
+    rows.sort(key=lambda a: position[a.id])
+    return EpicOverviewResponse(
+        tickets=tickets, issues=issues, documents=documents,
+        activities=await _activity_responses(current_user, rows),
+        more_activity=len(page) > activity_limit,
+    )
+
+
 @router.get("/{issue_id}/activities", response_model=list[IssueActivityResponse])
 @reads
 async def list_activities(
@@ -1443,11 +1502,17 @@ async def list_activities(
 ):
     """List activities for an issue."""
     issue_service = IssueService()
-    sprint_service = SprintService()
 
     issue, project = await visible_issue(current_user, issue_id)
 
     activities = await issue_service.list_activities(issue_id, skip, limit)
+    return await _activity_responses(current_user, activities)
+
+
+async def _activity_responses(current_user, activities) -> list[IssueActivityResponse]:
+    """Activity rows as the API answers them: sprint names filled in,
+    addresses hidden as the caller may see them."""
+    sprint_service = SprintService()
 
     # Batch lookup sprint names for sprint-related activities
     sprint_ids = set()

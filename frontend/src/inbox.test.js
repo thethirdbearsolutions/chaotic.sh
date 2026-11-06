@@ -58,6 +58,7 @@ vi.mock('./state.js', () => ({
     getSelectedInboxIndex: vi.fn(),
     setSelectedInboxIndex: vi.fn(),
     getCurrentProject: vi.fn(() => null),
+    getCurrentView: vi.fn(() => 'inbox'),
 }));
 
 import { api } from './api.js';
@@ -65,7 +66,7 @@ import { showApiError, isModalOpen, showModal, closeModal, showMentionWarnings, 
 import { viewIssue } from './issue-detail-view.js';
 import { viewDocument } from './documents.js';
 import {
-    getCurrentTeam, getInboxEntries, setInboxEntries,
+    getCurrentTeam, getInboxEntries, setInboxEntries, getCurrentView,
     getInboxUnreadCount, setInboxUnreadCount, setSelectedInboxIndex,
 } from './state.js';
 import {
@@ -75,6 +76,7 @@ import {
     toggleInboxEntryExpand, collapseInboxExpand, reassignInboxEntry, openReassignInboxDialog,
     resetInboxLocalState,
     inboxDayGroup,
+    mountInboxSurface,
 } from './inbox.js';
 import { registerActions } from './event-delegation.js';
 
@@ -194,6 +196,53 @@ describe('renderInbox', () => {
         getInboxEntries.mockReturnValue([{ ...ENTRY, read_at: '2026-07-06T13:00:00Z' }]);
         renderInbox();
         expect(document.getElementById('inbox-list').innerHTML).not.toContain('inbox-row-unread');
+    });
+});
+
+describe('mountInboxSurface (CHT-2097)', () => {
+    beforeEach(() => {
+        document.body.innerHTML += '<div id="other-rows"></div>';
+        setInboxEntries.mockImplementation(e => getInboxEntries.mockReturnValue(e));
+    });
+
+    it('draws the same rows elsewhere, flat, then its own empty text', () => {
+        mountInboxSurface('other-rows', [ENTRY], { empty: '<p class="gone">Nothing here.</p>' });
+        const el = document.getElementById('other-rows');
+        expect(el.querySelectorAll('.inbox-row').length).toBe(1);
+        expect(el.innerHTML).toContain('badge-inbox-gate_pending');
+        expect(el.querySelector('.inbox-group')).toBeNull();
+        expect(document.getElementById('inbox-list').innerHTML).toBe('');
+        getInboxEntries.mockReturnValue([]);
+        renderInbox();
+        expect(el.querySelector('.gone')).toBeTruthy();
+    });
+
+    it('hands a live refresh to the other page, until the Inbox view loads', async () => {
+        const reload = vi.fn();
+        getCurrentView.mockReturnValue('epics');
+        mountInboxSurface('other-rows', [ENTRY], { reload });
+        await loadInbox({ background: true });
+        expect(reload).toHaveBeenCalled();
+        expect(api.getInbox).not.toHaveBeenCalled();
+        getCurrentView.mockReturnValue('inbox');
+        api.getInbox.mockResolvedValue([]);
+        await loadInbox();
+        expect(api.getInbox).toHaveBeenCalled();
+        expect(document.getElementById('inbox-list').innerHTML).toContain('Inbox zero');
+    });
+
+    it('lets the Inbox rows go once the other page is hidden', async () => {
+        document.body.innerHTML += '<div class="view hidden"><div id="hidden-rows"></div></div>';
+        const reload = vi.fn();
+        getCurrentView.mockReturnValue('issues');
+        mountInboxSurface('hidden-rows', [ENTRY], { reload });
+        api.getInbox.mockResolvedValue([ASSIGN]);
+        await loadInbox({ background: true });
+        expect(reload).not.toHaveBeenCalled();
+        expect(api.getInbox).toHaveBeenCalled();
+        renderInbox();
+        expect(document.getElementById('hidden-rows').querySelectorAll('.inbox-row').length).toBe(1);
+        expect(document.getElementById('inbox-list').querySelectorAll('.inbox-row').length).toBeGreaterThan(0);
     });
 });
 

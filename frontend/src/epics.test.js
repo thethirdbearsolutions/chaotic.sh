@@ -219,17 +219,18 @@ describe('renderEpics (CHT-2095)', () => {
         expect(getCurrentEpics().map(e => e.identifier)).toEqual(rowIds(container));
         expect(container.querySelectorAll('.epic-section').length).toBe(1);
         // All done stays in its place and asks the question on its row.
-        expect(container.querySelector('[data-identifier="CHT-3"] .list-row-sub').textContent).toBe('All done · close it?');
+        expect(container.querySelector('[data-identifier="CHT-3"] .list-row-sub').textContent).toBe('');
     });
 
-    it('says each epic\'s tickets by status, zeros left out, who holds them on hover', () => {
+    it('says what is moving, who holds it on hover, and every status on the meter', () => {
         renderEpics(response([moving({
             children: { total: 9, backlog: 4, todo: 2, in_progress: 2, in_review: 1, done: 0, canceled: 0 },
             in_flight: [ticket('Picker', { assignee: person('ivy') }), ticket('Header')],
         })]), container);
         const sub = container.querySelector('.list-row-sub');
-        expect(sub.textContent).toBe('2 in progress · 1 in review · 2 todo · 4 backlog');
+        expect(sub.textContent).toBe('2 in progress · 1 in review');
         expect(sub.querySelector('[title]').getAttribute('title')).toBe('ivy: Picker\nUnassigned: Header');
+        expect(container.querySelector('.meter').getAttribute('title')).toContain('2 in progress · 1 in review · 2 todo · 4 backlog');
     });
 
     it('chips narrow the list without reordering it, and count what each would show', () => {
@@ -253,7 +254,7 @@ describe('renderEpics (CHT-2095)', () => {
         expect(rowIds(container)).toEqual(['CHT-2']);
         chip(container, 'needs_you').click();
         expect(rowIds(container)).toEqual(['CHT-3']);
-        expect(container.querySelector('.epic-needs-you').textContent).toBe('1 needs you');
+        expect(container.querySelector('.epic-needs-you').textContent).toBe('1 approval');
         chip(container, 'shipped').click();
         expect(rowIds(container)).toEqual(['CHT-5', 'CHT-4']);
         expect(navigateToEpicByIdentifier).not.toHaveBeenCalled();
@@ -271,7 +272,7 @@ describe('renderEpics (CHT-2095)', () => {
     it('says when a chip matches nothing', () => {
         renderEpics(response([epic()]), container);
         chip(container, 'needs_you').click();
-        expect(container.querySelector('.epic-filter-empty').textContent).toBe('No needs you epics.');
+        expect(container.querySelector('.epic-filter-empty').textContent).toBe('No epics in Approvals.');
     });
 
     it('nests sub-epics under their parent, collapsed, with the parent rolled up', () => {
@@ -288,7 +289,8 @@ describe('renderEpics (CHT-2095)', () => {
         expect(rowIds(container)).toEqual(['CHT-1', 'CHT-3']);
         const parent = container.querySelector('[data-identifier="CHT-1"]');
         expect(parent.querySelector('.meter-label').textContent).toBe('3 of 6');
-        expect(parent.querySelector('.list-row-sub').textContent).toBe('1 in progress · 1 todo · 1 backlog · 1 needs you · ▸ 1 sub-epic');
+        expect(parent.querySelector('.list-row-sub').textContent).toBe('1 in progress · 1 approval');
+        expect(parent.querySelector('.list-row-title .epic-subs-toggle').getAttribute('aria-label')).toBe('Show 1 sub-epic');
 
         parent.querySelector('[data-epic-toggle-subs]').click();
         expect(rowIds(container)).toEqual(['CHT-1', 'CHT-2', 'CHT-3']);
@@ -371,23 +373,26 @@ describe('renderEpics (CHT-2095)', () => {
         expect(rowIds(container)).toEqual(['CHT-3']);
         box.value = 'nothing';
         box.dispatchEvent(new Event('input'));
-        expect(container.querySelector('.epic-filter-empty').textContent).toBe('No open epics match “nothing”.');
+        expect(container.querySelector('.epic-filter-empty').textContent).toBe('No epics in Open match “nothing”.');
         // Escaped like every other server or user text.
         box.value = '<b>x';
         box.dispatchEvent(new Event('input'));
         expect(container.querySelector('.epic-filter-empty b')).toBeNull();
     });
 
-    it('shows the epic owner after the title, and nothing when unassigned', () => {
+    it('shows the epic\'s assignee as an avatar beside the meter, as /issues does', () => {
         renderEpics(response([
             moving({ identifier: 'CHT-1', owner: person('Rowan'), last_activity_at: ago(MIN) }),
             moving({ id: 'e2', identifier: 'CHT-2', last_activity_at: ago(5 * MIN) }),
         ]), container);
-        const owners = [...container.querySelectorAll('.epic-row')].map(r => r.querySelector('.epic-owner')?.textContent || null);
-        expect(owners).toEqual(['· Rowan', null]);
+        const owners = [...container.querySelectorAll('.epic-row .list-row-right .epic-assignee')];
+        expect(owners.map(o => o.getAttribute('title'))).toEqual(['Rowan', 'Unassigned']);
+        expect(owners[0].querySelector('.avatar-small').textContent).toBe('R');
+        expect(owners[1].querySelector('svg')).not.toBeNull();
+        expect(container.querySelector('.list-row-title').textContent).not.toContain('Rowan');
     });
 
-    it('leads each epic row with its sprint strip and ends it with the meter and when it was touched', () => {
+    it('leads each epic row with its sprint strip, ends it with the meter, and says when it was touched on hover', () => {
         renderEpics(response([moving({ children: kids(2, 4), last_activity_at: ago(40 * MIN) })]), container);
         const row = container.querySelector('.epic-row');
         expect(row.firstElementChild.classList.contains('epic-spark')).toBe(true);
@@ -395,7 +400,7 @@ describe('renderEpics (CHT-2095)', () => {
         expect(row.querySelector('.meter-fill').style.width).toBe('50%');
         expect(row.querySelector('.meter-label').textContent).toBe('2 of 4');
         expect(row.querySelector('.meter').getAttribute('title')).toContain('50% done');
-        expect(row.querySelector('.epic-touched').textContent).toBe('40m ago');
+        expect(row.getAttribute('title')).toBe('CHT-10 · updated 40m ago');
     });
 
     it('leaves canceled tickets out of the meter, and says when there are none', () => {
@@ -404,8 +409,8 @@ describe('renderEpics (CHT-2095)', () => {
             epic({ id: 'e2', identifier: 'CHT-2', children: kids(0, 0), open_children: 0 }),
         ]), container);
         const labels = [...container.querySelectorAll('.meter-label:not(.epic-touched)')].map(l => l.textContent);
-        expect(labels).toEqual(['2 of 3', 'No tickets']);
-        expect(container.querySelector('[data-identifier="CHT-2"] .list-row-sub').textContent).toBe('No tickets yet');
+        expect(labels).toEqual(['2 of 3', 'No sub-issues']);
+        expect(container.querySelector('[data-identifier="CHT-2"] .list-row-sub').textContent).toBe('No sub-issues yet');
     });
 
     it('lists no approvals: they are facts about an epic, on its row', () => {
@@ -413,7 +418,7 @@ describe('renderEpics (CHT-2095)', () => {
             [untracked({ awaiting_human: [ask('CHT-39')] })]), container);
         expect(container.querySelector('.epic-ask-row')).toBeNull();
         expect(container.textContent).not.toContain('CHT-39');
-        expect(container.querySelector('.epic-needs-you').textContent).toBe('2 need you');
+        expect(container.querySelector('.epic-needs-you').textContent).toBe('2 approvals');
     });
 
     it('marks a hand-set status on an open epic', () => {
@@ -426,14 +431,14 @@ describe('renderEpics (CHT-2095)', () => {
             [moving(), moving({ id: 'e2', identifier: 'WEB-3', project_id: 'p2', project_key: 'WEB', last_activity_at: ago(5 * MIN) })],
             [untracked(), untracked({ project_id: 'p2', project_key: 'WEB', open: 0 })],
         ), container);
-        expect(container.querySelector('.epic-untracked-note').textContent).toBe('CHT: 7 open tickets under no epic.');
+        expect(container.querySelector('.epic-untracked-note').textContent).toBe('CHT: 7 open issues in no epic.');
         expect([...container.querySelectorAll('.epic-project-key')].map(k => k.textContent)).toEqual(['CHT', 'WEB']);
     });
 
     it('leaves project keys off in one project', () => {
         renderEpics(response([moving()], [untracked({ open: 1 })]), container);
         expect(container.querySelector('.epic-project-key')).toBeNull();
-        expect(container.querySelector('.epic-untracked-note').textContent).toBe('1 open ticket under no epic.');
+        expect(container.querySelector('.epic-untracked-note').textContent).toBe('1 open issue in no epic.');
     });
 
     it('escapes server text', () => {
@@ -474,7 +479,7 @@ describe('renderSprintStrip', () => {
         const heights = [...document.querySelectorAll('.epic-sprint-fill')].map(f => f.style.height);
         expect(heights).toEqual(['0%', '50%', '100%']);
         expect(ticks[2].classList.contains('epic-sprint-current')).toBe(true);
-        expect(ticks[2].getAttribute('title')).toBe('Sprint 3 (current): 1 ticket closed, 4 pts');
+        expect(ticks[2].getAttribute('title')).toBe('Sprint 3 (current): 1 issue closed, 4 pts');
     });
 
     it('draws an empty strip with no sprints', () => {
