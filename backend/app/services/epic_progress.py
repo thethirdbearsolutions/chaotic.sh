@@ -22,6 +22,8 @@ from app.schemas.epic import (
     EpicTicket,
     EpicProgress,
     EpicProgressResponse,
+    OverviewSprint,
+    OverviewTicket,
     SprintTick,
     UntrackedProgress,
 )
@@ -402,3 +404,100 @@ async def _epic_now(scope: str, project_ids: list[str]):
             title=r["title"], since=r["since"], requested_by_name=r["by_name"],
         ))
     return in_flight, in_flight_count, last_shipped, awaiting
+
+
+def _subtree_cte() -> str:
+    """``WITH RECURSIVE sub(id)``: every issue under one root in its
+    project, the root itself left out even on a corrupt cycle back to it.
+    ``UNION`` ends such a cycle after one lap. Parameters: root, project,
+    project, root."""
+    return (
+        "WITH RECURSIVE sub(id) AS ("
+        " SELECT id FROM issues WHERE parent_id = ? AND project_id = ?"
+        " UNION"
+        " SELECT i.id FROM issues i JOIN sub ON i.parent_id = sub.id WHERE i.project_id = ?"
+        "), tree(id) AS (SELECT id FROM sub WHERE id != ?) "
+    )
+
+
+def _subtree_params(epic_id: str, project_id: str) -> list[str]:
+    return [epic_id, project_id, project_id, epic_id]
+
+
+async def epic_overview_rows(epic_id: str, project_id: str) -> list[OverviewTicket]:
+    """Every issue under ``epic_id`` in its project, each with its nearest
+    epic and the sprint its latest close charged (CHT-2097)."""
+    params = _subtree_params(epic_id, project_id)
+    rows = await execute_raw(
+        _subtree_cte()
+        + "SELECT i.id, i.identifier, i.title, i.status, i.issue_type, i.estimate, i.parent_id, "
+        "i.updated_at, i.completed_at, i.assignee_id, u.name AS assignee_name, u.is_agent AS assignee_is_agent "
+        "FROM issues i JOIN tree ON tree.id = i.id LEFT JOIN users u ON u.id = i.assignee_id",
+        params,
+    )
+    # One read for every close in the tree; the latest per issue wins.
+    closes: dict[str, tuple] = {}
+    for t in await execute_raw(
+        _subtree_cte()
+        + "SELECT t.issue_id, t.sprint_id, t.sprint_name, t.created_at, t.id FROM budget_transactions t "
+        "JOIN tree ON tree.id = t.issue_id",
+        params,
+    ):
+        key = (_when(t["created_at"]), t["id"])
+        if t["issue_id"] not in closes or key > closes[t["issue_id"]][0]:
+            closes[t["issue_id"]] = (key, t["sprint_id"], t["sprint_name"])
+    by_id = {r["id"]: r for r in rows}
+
+    def nearest_epic(r) -> str:
+        seen = set()
+        p = r["parent_id"]
+        while p in by_id and p not in seen:
+            seen.add(p)
+            if by_id[p]["issue_type"] in _EPIC:
+                return p
+            p = by_id[p]["parent_id"]
+        return epic_id
+
+    return [
+        OverviewTicket(
+            id=r["id"], identifier=r["identifier"], title=r["title"], status=r["status"],
+            issue_type=_type_value(r["issue_type"]), estimate=r["estimate"], assignee=_person(r),
+            epic_id=nearest_epic(r), updated_at=r["updated_at"], completed_at=r["completed_at"],
+            closed_in=OverviewSprint(id=closes[r["id"]][1], name=closes[r["id"]][2]) if r["id"] in closes else None,
+        )
+        for r in rows
+    ]
+
+
+async def epic_overview_links(epic_id: str, project_id: str) -> list[dict]:
+    """``(document_id, issue_id)`` for every document link on the epic or
+    an issue under it, the epic's own first (CHT-2097). One query, so a
+    large tree binds no list of ids."""
+    return await execute_raw(
+        _subtree_cte()
+        + "SELECT l.document_id, l.issue_id FROM document_issues l "
+        "WHERE l.issue_id = ? OR l.issue_id IN (SELECT id FROM tree) "
+        "ORDER BY CASE WHEN l.issue_id = ? THEN 0 ELSE 1 END",
+        [*_subtree_params(epic_id, project_id), epic_id, epic_id],
+    )
+
+
+async def epic_overview_activity_ids(epic_id: str, project_id: str, skip: int, limit: int) -> list[str]:
+    """One page of activity ids across the epic's tree, newest first, the
+    id breaking ties so pages neither repeat nor skip a row (CHT-2097)."""
+    rows = await execute_raw(
+        _subtree_cte()
+        + "SELECT a.id FROM issue_activities a "
+        "WHERE a.issue_id = ? OR a.issue_id IN (SELECT id FROM tree) "
+        "ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?",
+        [*_subtree_params(epic_id, project_id), epic_id, limit, skip],
+    )
+    return [r["id"] for r in rows]
+
+
+def _type_value(raw) -> str:
+    """An issue type as the wire spells it, whichever form the row stored."""
+    try:
+        return IssueType[raw].value
+    except KeyError:
+        return IssueType(raw).value

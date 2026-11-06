@@ -389,6 +389,12 @@ export class ApiClient {
         return this.request('GET', `/projects/${projectId}/epics`);
     }
 
+    /** Tickets, documents and activity across an epic's tree (CHT-2097). */
+    async getEpicOverview(issueId, { activitySkip = 0, activityLimit = 50 } = {}) {
+        const params = new URLSearchParams({ activity_skip: activitySkip, activity_limit: activityLimit });
+        return this.request('GET', `/issues/${issueId}/epic-overview?${params.toString()}`);
+    }
+
     async getTeamEpicProgress(teamId) {
         return this.request('GET', `/teams/${teamId}/epics`);
     }

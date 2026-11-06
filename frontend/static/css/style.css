@@ -8484,6 +8484,148 @@ button.stat-card-link:hover .stat-note {
     }
 }
 
+/* The epic page (CHT-2097): the epic-wide picture. Sections reuse the
+   ticket page's section and sub-issue row; these are the extras. */
+.epic-page .issue-detail-nav {
+    flex-wrap: wrap;
+}
+.epic-page-open-ticket {
+    margin-left: auto;
+}
+.epic-page-facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-xs);
+    margin: calc(var(--space-sm) * -1) 0 var(--space-lg);
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+}
+.epic-page-dot {
+    color: var(--text-muted);
+}
+.epic-page-pinned {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    margin-bottom: var(--space-lg);
+    font-size: var(--font-sm);
+}
+.epic-page-progress {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    margin-bottom: var(--space-xl);
+}
+.epic-page-sprints {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+}
+.epic-page-sprints-label {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+.epic-page-section > summary {
+    cursor: pointer;
+    list-style: none;
+}
+.epic-page-section > summary::-webkit-details-marker {
+    display: none;
+}
+.epic-page-section > summary h3::before {
+    content: "▸ ";
+    color: var(--text-muted);
+}
+.epic-page-section[open] > summary h3::before {
+    content: "▾ ";
+}
+.epic-page-under,
+.epic-page-when {
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+    font-weight: 400;
+}
+.epic-page-when {
+    margin-left: auto;
+    white-space: nowrap;
+}
+.epic-page-sprint-group + .epic-page-sprint-group {
+    margin-top: var(--space-lg);
+}
+.epic-page-sprint-group h4 {
+    margin: 0 0 var(--space-sm);
+    font-size: var(--font-sm);
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+.epic-page-docs {
+    display: flex;
+    flex-direction: column;
+}
+.epic-page-doc {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-sm);
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+}
+.epic-page-doc:hover {
+    background: var(--row-hover);
+}
+.epic-page-doc-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.epic-page-doc-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+}
+.epic-page-tag {
+    padding: 0 var(--space-sm);
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-pill);
+}
+.activity-content .epic-page-tag {
+    margin-right: var(--space-xs);
+}
+.epic-page-subepic-meter {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    width: 140px;
+}
+.epic-page-subepic-meter .meter {
+    flex: 1;
+}
+.epic-page-empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+}
+.epic-page-goal summary {
+    cursor: pointer;
+    list-style: none;
+}
+.epic-page-goal summary h4 {
+    display: inline;
+}
+@media (max-width: 768px) {
+    .epic-page-subepic-meter {
+        width: 72px;
+    }
+    .epic-page-doc-links {
+        display: none;
+    }
+}
+
 /* Epic detail page: progress bar and sub-issue rows. epic-detail-view.js
    rendered these classes with no styles at all, so the bar had no height and
    the status/assignee came out as 16px body text (CHT-1750). */

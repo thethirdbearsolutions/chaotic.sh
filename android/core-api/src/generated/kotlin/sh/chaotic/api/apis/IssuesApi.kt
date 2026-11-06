@@ -25,6 +25,7 @@ package sh.chaotic.api.apis
 
 import sh.chaotic.api.models.AddLabelRequest
 import sh.chaotic.api.models.DocumentResponse
+import sh.chaotic.api.models.EpicOverviewResponse
 import sh.chaotic.api.models.HTTPValidationError
 import sh.chaotic.api.models.IssueActivityFeedResponse
 import sh.chaotic.api.models.IssueActivityResponse
@@ -321,6 +322,44 @@ import io.ktor.http.ParametersBuilder
             val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.GET,
             "/api/issues/{issue_id}/description-revisions/{version}".replace("{" + "issue_id" + "}", "$issueId").replace("{" + "version" + "}", "$version"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * GET /api/issues/{issue_id}/epic-overview
+        * Get Epic Overview
+        * The epic-wide picture for its page (CHT-2097): every ticket under the issue, at any depth, with its nearest epic and the sprint it closed in; the documents linked to the issue or anything under it; and the activity across all of it, newest first, a page at a time. Works for any issue with children, not only an epic.
+         * @param issueId  
+         * @param activitySkip  (optional, default to 0)
+         * @param activityLimit  (optional, default to 50)
+         * @return EpicOverviewResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun getEpicOverviewApiIssuesIssueIdEpicOverviewGet(issueId: kotlin.String, activitySkip: kotlin.Int? = 0, activityLimit: kotlin.Int? = 50): HttpResponse<EpicOverviewResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = 
+                    io.ktor.client.utils.EmptyContent
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+            activitySkip?.apply { localVariableQuery["activity_skip"] = listOf("$activitySkip") }
+            activityLimit?.apply { localVariableQuery["activity_limit"] = listOf("$activityLimit") }
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/api/issues/{issue_id}/epic-overview".replace("{" + "issue_id" + "}", "$issueId"),
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,

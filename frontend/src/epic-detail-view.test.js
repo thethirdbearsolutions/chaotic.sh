@@ -8,15 +8,26 @@ vi.mock('./api.js', () => ({
     api: {
         getIssue: vi.fn(),
         getIssueByIdentifier: vi.fn(),
-        getSubIssues: vi.fn(),
-        getActivities: vi.fn(),
-        getComments: vi.fn(),
+        getEpicOverview: vi.fn(),
+        getProjectEpicProgress: vi.fn(),
+        getInbox: vi.fn(),
         updateIssue: vi.fn(),
     },
 }));
 
 vi.mock('./state.js', () => ({
     getCurrentView: vi.fn(() => 'epics'),
+    getCurrentTeam: vi.fn(() => ({ id: 'team-1' })),
+}));
+
+vi.mock('./inbox.js', () => ({
+    mountInboxSurface: vi.fn((id, entries) => {
+        document.getElementById(id).innerHTML = entries.map(e => `<div class="inbox-row" data-entry-id="${e.id}"></div>`).join('');
+    }),
+}));
+
+vi.mock('./documents.js', () => ({
+    viewDocument: vi.fn(),
 }));
 
 vi.mock('./ui.js', () => ({
@@ -31,6 +42,7 @@ vi.mock('./router.js', () => ({
 
 vi.mock('./epics.js', () => ({
     getCurrentEpics: vi.fn(() => []),
+    renderSprintStrip: vi.fn(() => '<span class="epic-sprint-strip"></span>'),
 }));
 
 vi.mock('./projects.js', () => ({
@@ -77,8 +89,9 @@ import { getCurrentView } from './state.js';
 import { showApiError, showToast } from './ui.js';
 import { navigateTo, saveScrollPosition } from './router.js';
 import { getProjects } from './projects.js';
-import { getAssigneeById, formatAssigneeName } from './assignees.js';
 import { getCurrentEpics } from './epics.js';
+import { mountInboxSurface } from './inbox.js';
+import { viewDocument } from './documents.js';
 import { registerActions } from './event-delegation.js';
 import {
     viewEpic,
@@ -88,44 +101,32 @@ import {
 // Actions registered at module import time — capture before vi.clearAllMocks wipes them
 const epicDetailActions = Object.assign({}, ...registerActions.mock.calls.map(c => c[0]));
 
-describe('epic-detail-view', () => {
+describe('epic-detail-view (CHT-2097)', () => {
     const makeEpic = (overrides = {}) => ({
-        id: 'epic-1',
-        identifier: 'CHT-100',
-        title: 'Test Epic',
-        description: 'Epic description',
-        status: 'in_progress',
-        priority: 'high',
-        issue_type: 'epic',
-        project_id: 'proj-1',
-        assignee_id: null,
-        estimate: 13,
-        labels: [],
-        created_at: '2025-01-01T00:00:00Z',
-        ...overrides,
+        id: 'epic-1', identifier: 'CHT-100', title: 'Test Epic', description: 'Epic description',
+        status: 'in_progress', priority: 'high', issue_type: 'epic', project_id: 'proj-1',
+        assignee_id: null, estimate: 13, labels: [], created_at: '2025-01-01T00:00:00Z',
+        updated_at: '2025-01-02T00:00:00Z', ...overrides,
     });
-
-    const makeSubIssue = (overrides = {}) => ({
-        id: 'sub-1',
-        identifier: 'CHT-101',
-        title: 'Sub issue 1',
-        status: 'todo',
-        assignee_id: null,
-        ...overrides,
+    const t = (id, status, extra = {}) => ({
+        id, identifier: `CHT-${id}`, title: `Ticket ${id}`, status, issue_type: 'task', estimate: null,
+        assignee: null, epic_id: 'epic-1', updated_at: '2025-01-03T00:00:00Z', completed_at: null, closed_in: null, ...extra,
     });
+    const overview = (overrides = {}) => ({ tickets: [], documents: [], activities: [], more_activity: false, ...overrides });
+    const content = () => document.getElementById('epic-detail-content');
+    const sectionIds = () => [...content().querySelectorAll('.epic-page-section')].map(s => s.id);
+    const rowIds = (sectionId) => [...content().querySelectorAll(`#${sectionId} .sub-issue-item`)].map(r => r.dataset.identifier);
 
     beforeEach(() => {
         vi.clearAllMocks();
-
         api.getIssue.mockResolvedValue(makeEpic());
         api.getIssueByIdentifier.mockResolvedValue(makeEpic());
-        api.getSubIssues.mockResolvedValue([]);
-        api.getActivities.mockResolvedValue([]);
-        api.getComments.mockResolvedValue([]);
-
+        api.getEpicOverview.mockResolvedValue(overview());
+        api.getProjectEpicProgress.mockResolvedValue({ epics: [], untracked: [] });
+        api.getInbox.mockResolvedValue([]);
         getCurrentView.mockReturnValue('epics');
         getProjects.mockReturnValue([{ id: 'proj-1', name: 'Test Project' }]);
-
+        getCurrentEpics.mockReturnValue([]);
         document.body.innerHTML = `
             <div class="view" id="epics-view"></div>
             <div class="view hidden" id="epic-detail-view">
@@ -134,411 +135,209 @@ describe('epic-detail-view', () => {
         `;
     });
 
-    describe('viewEpic', () => {
-        it('renders epic title and description', async () => {
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('Test Epic');
-            expect(content).toContain('Epic description');
-        });
-
-        it('shows the epic detail view and hides others', async () => {
-            await viewEpic('epic-1');
-
-            expect(document.getElementById('epic-detail-view').classList.contains('hidden')).toBe(false);
-            expect(document.getElementById('epics-view').classList.contains('hidden')).toBe(true);
-        });
-
-        it('renders progress bar with 0 sub-issues', async () => {
-            api.getSubIssues.mockResolvedValue([]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('0 of 0 done');
-            expect(content).toContain('0%');
-        });
-
-        it('renders progress bar with partial completion', async () => {
-            api.getSubIssues.mockResolvedValue([
-                makeSubIssue({ id: 's1', status: 'done' }),
-                makeSubIssue({ id: 's2', status: 'in_progress' }),
-                makeSubIssue({ id: 's3', status: 'todo' }),
-                makeSubIssue({ id: 's4', status: 'backlog' }),
-            ]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('1 of 4 done');
-            expect(content).toContain('25%');
-        });
-
-        it('leaves canceled sub-issues out of progress, like the Epics list (CHT-1902)', async () => {
-            api.getSubIssues.mockResolvedValue([
-                makeSubIssue({ id: 's1', status: 'done' }),
-                makeSubIssue({ id: 's2', status: 'canceled' }),
-                makeSubIssue({ id: 's3', status: 'todo' }),
-            ]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('1 of 2 done');
-            expect(content).toContain('50%');
-        });
-
-        it("uses the Epics list's counts when opened from it, nested tickets included", async () => {
-            getCurrentEpics.mockReturnValueOnce([{ id: 'epic-1', children: {
-                total: 6, backlog: 1, todo: 1, in_progress: 0, in_review: 0, done: 3, canceled: 1,
-            } }]);
-            api.getSubIssues.mockResolvedValue([makeSubIssue({ id: 's1', status: 'done' })]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('3 of 5 done');
-            expect(content).toContain('60%');
-        });
-
-        it('renders 100% progress with complete class', async () => {
-            api.getSubIssues.mockResolvedValue([
-                makeSubIssue({ id: 's1', status: 'done' }),
-                makeSubIssue({ id: 's2', status: 'done' }),
-            ]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('2 of 2 done');
-            expect(content).toContain('100%');
-            expect(content).toContain('epic-progress-complete');
-        });
-
-        it('renders sub-issues list with status and identifier', async () => {
-            const subIssues = [
-                makeSubIssue({ id: 's1', identifier: 'CHT-101', title: 'First task', status: 'done' }),
-                makeSubIssue({ id: 's2', identifier: 'CHT-102', title: 'Second task', status: 'in_progress' }),
-            ];
-            api.getSubIssues.mockResolvedValue(subIssues);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('CHT-101');
-            expect(content).toContain('First task');
-            expect(content).toContain('CHT-102');
-            expect(content).toContain('Second task');
-        });
-
-        it('renders sub-issue assignee when present', async () => {
-            getAssigneeById.mockReturnValue({ id: 'user-1', name: 'Alice' });
-            formatAssigneeName.mockReturnValue('Alice');
-            api.getSubIssues.mockResolvedValue([
-                makeSubIssue({ id: 's1', assignee_id: 'user-1' }),
-            ]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('Alice');
-        });
-
-        it('renders activity timeline', async () => {
-            api.getActivities.mockResolvedValue([
-                { activity_type: 'created', user_name: 'Bob', created_at: '2025-01-01T00:00:00Z' },
-                { activity_type: 'status_changed', user_name: 'Alice', old_value: 'backlog', new_value: 'in_progress', created_at: '2025-01-02T00:00:00Z' },
-            ]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('activity-item');
-            expect(content).toContain('Bob');
-        });
-
-        it('renders empty activity state', async () => {
-            api.getActivities.mockResolvedValue([]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('No activity yet');
-            expect(content).toContain('Activity will appear here as the epic is updated');
-            expect(content).toContain('empty-state');
-        });
-
-        it('renders empty sub-issues state', async () => {
-            api.getSubIssues.mockResolvedValue([]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('No sub-issues');
-            expect(content).toContain('Break this epic down by creating sub-issues');
-            expect(content).toContain('empty-state');
-        });
-
-        it('renders sidebar properties', async () => {
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('Status');
-            expect(content).toContain('Priority');
-            expect(content).toContain('Assignee');
-            expect(content).toContain('Estimate');
-            expect(content).toContain('Test Project');
-        });
-
-        it('renders labels when present', async () => {
-            api.getIssue.mockResolvedValue(makeEpic({
-                labels: [{ name: 'frontend', color: '#ff0000' }],
-            }));
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('frontend');
-        });
-
-        it('pushes history state when pushHistory is true', async () => {
-            const pushSpy = vi.spyOn(history, 'pushState');
-            await viewEpic('epic-1', true);
-
-            expect(pushSpy).toHaveBeenCalledWith(
-                { epicId: 'epic-1', view: 'epics' },
-                '',
-                '/epic/CHT-100'
-            );
-            pushSpy.mockRestore();
-        });
-
-        it('does not push history when pushHistory is false', async () => {
-            const pushSpy = vi.spyOn(history, 'pushState');
-            await viewEpic('epic-1', false);
-
-            expect(pushSpy).not.toHaveBeenCalled();
-            pushSpy.mockRestore();
-        });
-
-        it('redirects to issue detail view if not an epic', async () => {
-            api.getIssue.mockResolvedValue(makeEpic({ issue_type: 'task' }));
-            await viewEpic('issue-1');
-
-            expect(mockViewIssue).toHaveBeenCalledWith('issue-1', true);
-            // Should not render epic content
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).not.toContain('Progress');
-        });
-
-        it('falls back to epics navigation if not epic and no viewIssue', async () => {
-            // viewIssue is always available as an import now, so this test
-            // verifies the redirect path still works
-            api.getIssue.mockResolvedValue(makeEpic({ issue_type: 'bug' }));
-            await viewEpic('issue-1');
-
-            expect(mockViewIssue).toHaveBeenCalledWith('issue-1', true);
-        });
-
-        it('shows toast on error', async () => {
-            api.getIssue.mockRejectedValue(new Error('Not found'));
-            await viewEpic('epic-1');
-
-            expect(showApiError).toHaveBeenCalledWith('load epic', expect.objectContaining({ message: 'Not found' }));
-        });
-
-        it('sub-issue row click navigates to issue detail', async () => {
-            api.getSubIssues.mockResolvedValue([
-                makeSubIssue({ id: 'sub-1', identifier: 'CHT-101' }),
-            ]);
-            await viewEpic('epic-1');
-
-            const row = document.querySelector('.sub-issue-item');
-            expect(row).not.toBeNull();
-            row.click();
-
-            expect(mockViewIssue).toHaveBeenCalledWith('sub-1');
-        });
-
-        it('renders comments section when comments exist', async () => {
-            api.getComments.mockResolvedValue([
-                { id: 'c1', author_name: 'Alice', content: 'Looks good', created_at: '2025-01-01T00:00:00Z' },
-            ]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('Comments');
-            expect(content).toContain('Alice');
-            expect(content).toContain('Looks good');
-        });
-
-        it('does not render comments section when no comments', async () => {
-            api.getComments.mockResolvedValue([]);
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).not.toContain('epic-comments-section');
-        });
-
-        it('renders breadcrumb with project name and identifier', async () => {
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('Test Project');
-            expect(content).toContain('CHT-100');
-        });
-
-        it('omits description section when no description', async () => {
-            api.getIssue.mockResolvedValue(makeEpic({ description: null }));
-            await viewEpic('epic-1');
-
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).not.toContain('issue-detail-description');
-        });
-
-        // CHT-1211 item 1: scroll position must be saved before pushState
-        describe('scroll position', () => {
-            it('saves scroll position when pushHistory is true (default)', async () => {
-                await viewEpic('epic-1');
-                expect(saveScrollPosition).toHaveBeenCalled();
-            });
-
-            it('does not save scroll position when pushHistory=false', async () => {
-                await viewEpic('epic-1', false);
-                expect(saveScrollPosition).not.toHaveBeenCalled();
-            });
-
-            // CHT-1211 review #4: must run synchronously before the first
-            // await — proven by it firing even when the fetch rejects.
-            it('saves scroll position before the fetch (still saved on fetch failure)', async () => {
-                api.getIssue.mockRejectedValue(new Error('slow network died'));
-                await viewEpic('epic-1');
-                expect(saveScrollPosition).toHaveBeenCalled();
-            });
-        });
-
-        // CHT-1211 item 6: epic detail lacked prev/next parity with issue detail
-        describe('prev/next navigation', () => {
-            const epicList = [
-                { id: 'epic-a', identifier: 'CHT-90', title: 'First' },
-                { id: 'epic-1', identifier: 'CHT-100', title: 'Middle' },
-                { id: 'epic-c', identifier: 'CHT-110', title: 'Last' },
-            ];
-
-            it('renders prev/next buttons when epic is in the last-loaded list', async () => {
-                getCurrentEpics.mockReturnValue(epicList);
-                await viewEpic('epic-1');
-
-                const content = document.getElementById('epic-detail-content').innerHTML;
-                expect(content).toContain('issue-nav-arrows');
-                expect(content).toContain('2 / 3');
-            });
-
-            it('hides nav arrows when epic is not in the list', async () => {
-                getCurrentEpics.mockReturnValue([]);
-                await viewEpic('epic-1');
-
-                const content = document.getElementById('epic-detail-content').innerHTML;
-                expect(content).not.toContain('issue-nav-arrows');
-            });
-
-            it('disables prev button on first epic', async () => {
-                getCurrentEpics.mockReturnValue(epicList);
-                api.getIssue.mockResolvedValue(makeEpic({ id: 'epic-a', identifier: 'CHT-90' }));
-                await viewEpic('epic-a');
-
-                const content = document.getElementById('epic-detail-content').innerHTML;
-                const prevMatch = content.match(/<button[^>]*title="Previous epic"[^>]*>/);
-                expect(prevMatch[0]).toContain('disabled');
-            });
-
-            it('disables next button on last epic', async () => {
-                getCurrentEpics.mockReturnValue(epicList);
-                api.getIssue.mockResolvedValue(makeEpic({ id: 'epic-c', identifier: 'CHT-110' }));
-                await viewEpic('epic-c');
-
-                const content = document.getElementById('epic-detail-content').innerHTML;
-                const nextMatch = content.match(/<button[^>]*title="Next epic"[^>]*>/);
-                expect(nextMatch[0]).toContain('disabled');
-            });
-
-            it('next button navigates to the next epic in the list', async () => {
-                getCurrentEpics.mockReturnValue(epicList);
-                await viewEpic('epic-1');
-                api.getIssue.mockClear();
-                api.getIssue.mockResolvedValue(makeEpic({ id: 'epic-c', identifier: 'CHT-110' }));
-
-                // event-delegation.js is mocked (no real click routing) — invoke
-                // the registered handler directly, like issues-view.test.js does.
-                epicDetailActions['navigate-epic']({}, { epicId: 'epic-c' });
-                await new Promise(r => setTimeout(r, 0));
-
-                expect(api.getIssue).toHaveBeenCalledWith('epic-c');
-            });
-        });
+    it('shows the title, the goal and the facts, and swaps views', async () => {
+        await viewEpic('epic-1');
+        expect(content().querySelector('.issue-detail-title').textContent).toBe('Test Epic');
+        expect(content().querySelector('.epic-page-goal').textContent).toContain('Epic description');
+        expect(content().querySelector('.epic-page-facts').textContent).toContain('No owner');
+        expect(document.getElementById('epics-view').classList.contains('hidden')).toBe(true);
+        expect(document.getElementById('epic-detail-view').classList.contains('hidden')).toBe(false);
+        expect(saveScrollPosition).toHaveBeenCalled();
     });
 
-    describe('pinned status (CHT-1901)', () => {
-        it('offers "Follow sub-issues" for an open pinned epic', async () => {
-            api.getIssue.mockResolvedValue(makeEpic({ status_pinned: true }));
-            await viewEpic('epic-1');
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).toContain('data-action="epic-follow-children"');
-        });
+    it('sorts every ticket in the tree by status, newest first, tagging ones under a sub-epic', async () => {
+        api.getProjectEpicProgress.mockResolvedValue({ untracked: [], epics: [
+            { id: 'sub-1', identifier: 'CHT-200', title: 'Colours', status: 'in_progress', parent_epic_id: 'epic-1',
+              children: { total: 2, done: 1, canceled: 0 }, last_activity_at: '2025-01-05T00:00:00Z' },
+        ] });
+        api.getEpicOverview.mockResolvedValue(overview({ tickets: [
+            t('1', 'in_progress', { updated_at: '2025-01-01T00:00:00Z' }),
+            t('2', 'in_review', { updated_at: '2025-01-04T00:00:00Z' }),
+            t('3', 'in_progress', { updated_at: '2025-01-05T00:00:00Z', epic_id: 'sub-1' }),
+            t('4', 'todo'), t('5', 'backlog'), t('6', 'canceled'),
+            { ...t('200', 'in_progress'), issue_type: 'epic' },
+        ] }));
+        await viewEpic('epic-1');
+        expect(rowIds('epic-in-progress')).toEqual(['CHT-3', 'CHT-1', 'CHT-2']);
+        expect(content().querySelector('[data-identifier="CHT-3"] .epic-page-under').textContent).toBe('in Colours');
+        expect(rowIds('epic-up-next')).toEqual(['CHT-4']);
+        expect(rowIds('epic-backlog')).toEqual(['CHT-5']);
+        expect(content().querySelector('#epic-backlog').tagName).toBe('DETAILS');
+        expect(content().querySelector('#epic-backlog').open).toBe(false);
+        // The sub-epic is listed as a sub-epic, not a ticket.
+        expect(rowIds('epic-sub-epics')).toEqual(['CHT-200']);
+        expect(content().querySelector('#epic-sub-epics .meter-label').textContent).toBe('1 of 2');
+        // Canceled tickets count toward nothing.
+        expect(content().querySelector('.epic-detail-progress-label').textContent).toContain('0 of 5 tickets done');
+    });
 
-        it('hides it when the status follows the children', async () => {
-            await viewEpic('epic-1');
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).not.toContain('epic-follow-children');
-        });
+    it('lists every done ticket under the sprint it closed in, no cap', async () => {
+        const s1 = { id: 's1', name: 'Sprint 1' };
+        const s2 = { id: 's2', name: 'Sprint 2' };
+        api.getEpicOverview.mockResolvedValue(overview({ tickets: [
+            ...Array.from({ length: 12 }, (_, i) => t(`a${i}`, 'done', { completed_at: `2025-02-${String(i + 1).padStart(2, '0')}T00:00:00Z`, closed_in: s2 })),
+            t('old', 'done', { completed_at: '2025-01-01T00:00:00Z', closed_in: s1 }),
+            t('loose', 'done', { completed_at: '2024-12-01T00:00:00Z' }),
+        ] }));
+        await viewEpic('epic-1');
+        const groups = [...content().querySelectorAll('.epic-page-sprint-group')];
+        expect(groups.map(g => g.querySelector('h4').firstChild.textContent.trim())).toEqual(['Sprint 2', 'Sprint 1', 'No sprint']);
+        expect(groups[0].querySelectorAll('.sub-issue-item').length).toBe(12);
+        expect(groups[0].querySelector('.sub-issue-item').dataset.identifier).toBe('CHT-a11');
+        expect(content().querySelector('.epic-detail-progress-label').textContent).toContain('14 of 14 tickets done · 14 of 14 points');
+    });
 
-        it('hides it on a closed epic', async () => {
-            api.getIssue.mockResolvedValue(makeEpic({ status: 'done', status_pinned: true }));
-            await viewEpic('epic-1');
-            const content = document.getElementById('epic-detail-content').innerHTML;
-            expect(content).not.toContain('epic-follow-children');
-        });
+    it('shows what waits on you in this tree as Inbox rows, and nothing else', async () => {
+        api.getEpicOverview.mockResolvedValue(overview({ tickets: [t('1', 'in_review')] }));
+        api.getInbox.mockResolvedValue([
+            { id: 'in-1', kind: 'review_requested', issue_id: '1' },
+            { id: 'in-2', kind: 'gate_pending', issue_id: 'epic-1' },
+            { id: 'in-3', kind: 'review_requested', issue_id: 'elsewhere' },
+            { id: 'in-4', kind: 'review_requested', issue_id: '1', state: 'resolved' },
+        ]);
+        await viewEpic('epic-1');
+        expect(api.getInbox).toHaveBeenCalledWith('team-1', expect.objectContaining({ kinds: ['review_requested', 'gate_pending'] }));
+        expect(mountInboxSurface).toHaveBeenCalledWith('epic-needs-you-rows', [
+            expect.objectContaining({ id: 'in-1' }), expect.objectContaining({ id: 'in-2' }),
+        ], expect.any(Object));
+        expect(sectionIds()[0]).toBe('epic-needs-you');
+        expect(content().querySelectorAll('#epic-needs-you .inbox-row').length).toBe(2);
+    });
 
-        it('unpins and re-renders', async () => {
-            api.updateIssue.mockResolvedValue(makeEpic());
-            await epicDetailActions['epic-follow-children']({}, { epicId: 'epic-1' });
-            expect(api.updateIssue).toHaveBeenCalledWith('epic-1', { status_follows_children: true });
-            expect(showToast).toHaveBeenCalled();
-            expect(api.getIssue).toHaveBeenCalledWith('epic-1');
-        });
+    it('keeps its live refresh across refreshes', async () => {
+        api.getEpicOverview.mockResolvedValue(overview({ tickets: [t('1', 'in_review')] }));
+        api.getInbox.mockResolvedValue([{ id: 'in-1', kind: 'review_requested', issue_id: '1' }]);
+        await viewEpic('epic-1');
+        const first = mountInboxSurface.mock.calls[0][2];
+        first.reload();
+        await vi.waitFor(() => expect(mountInboxSurface).toHaveBeenCalledTimes(2));
+        expect(typeof mountInboxSurface.mock.calls[1][2].reload).toBe('function');
+    });
 
-        it('reports a failed unpin', async () => {
-            api.updateIssue.mockRejectedValue(new Error('nope'));
-            await epicDetailActions['epic-follow-children']({}, { epicId: 'epic-1' });
-            expect(showApiError).toHaveBeenCalledWith('update epic', expect.any(Error));
-        });
+    it('leaves Needs you out when nothing waits, and scrolls to a section on request', async () => {
+        Element.prototype.scrollIntoView = vi.fn();
+        await viewEpic('epic-1', true, { focus: 'epic-activity' });
+        expect(sectionIds()).not.toContain('epic-needs-you');
+        expect(mountInboxSurface).not.toHaveBeenCalled();
+        expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    });
+
+    it('lists docs linked anywhere in the tree with what they are linked to, and opens them', async () => {
+        api.getEpicOverview.mockResolvedValue(overview({ documents: [
+            { id: 'd1', title: 'Sequencing plan', icon: null, linked_to: ['CHT-100', 'CHT-7'], updated_at: '2025-01-01T00:00:00Z' },
+        ] }));
+        await viewEpic('epic-1');
+        const doc = content().querySelector('.epic-page-doc');
+        expect(doc.querySelector('.epic-page-doc-title').textContent).toBe('Sequencing plan');
+        expect([...doc.querySelectorAll('.epic-page-tag')].map(x => x.textContent)).toEqual(['CHT-100', 'CHT-7']);
+        doc.click();
+        expect(viewDocument).toHaveBeenCalledWith('d1');
+    });
+
+    it('shows activity across the tree tagged by ticket, and pages older activity in', async () => {
+        api.getEpicOverview
+            .mockResolvedValueOnce(overview({
+                tickets: [t('1', 'todo')],
+                activities: [{ id: 'a1', issue_id: '1', activity_type: 'created', created_at: '2025-01-01T00:00:00Z', user_name: 'Ada' }],
+                more_activity: true,
+            }))
+            .mockResolvedValueOnce(overview({
+                activities: [{ id: 'a2', issue_id: 'epic-1', activity_type: 'updated', created_at: '2024-01-01T00:00:00Z', user_name: 'Bob' }],
+                more_activity: false,
+            }));
+        await viewEpic('epic-1');
+        expect(content().querySelector('#epic-activity-rows .epic-page-tag').textContent).toBe('CHT-1');
+        content().querySelector('[data-epic-more-activity]').click();
+        await vi.waitFor(() => expect(content().querySelectorAll('#epic-activity-rows .activity-item').length).toBe(2));
+        expect(api.getEpicOverview).toHaveBeenLastCalledWith('epic-1', { activitySkip: 1 });
+        expect(content().querySelector('[data-epic-more-activity]')).toBeNull();
+    });
+
+    it('opens a ticket row, and a sub-epic as its epic page', async () => {
+        api.getProjectEpicProgress.mockResolvedValue({ untracked: [], epics: [
+            { id: 'sub-1', identifier: 'CHT-200', title: 'Sub', status: 'todo', parent_epic_id: 'epic-1', children: {} },
+        ] });
+        api.getEpicOverview.mockResolvedValue(overview({ tickets: [t('1', 'todo')] }));
+        await viewEpic('epic-1');
+        content().querySelector('#epic-up-next .sub-issue-item').click();
+        expect(mockViewIssue).toHaveBeenCalledWith('1');
+        content().querySelector('.epic-page-subepic').click();
+        await vi.waitFor(() => expect(api.getIssue).toHaveBeenCalledWith('sub-1'));
+    });
+
+    it('says there are no tickets yet', async () => {
+        await viewEpic('epic-1');
+        expect(content().textContent).toContain('No tickets yet');
+    });
+
+    it('still renders when the progress read fails', async () => {
+        api.getProjectEpicProgress.mockRejectedValue(new Error('down'));
+        api.getEpicOverview.mockResolvedValue(overview({ tickets: [t('1', 'todo')] }));
+        await viewEpic('epic-1');
+        expect(rowIds('epic-up-next')).toEqual(['CHT-1']);
+        expect(showApiError).not.toHaveBeenCalled();
+    });
+
+    it('redirects a non-epic to the issue view', async () => {
+        api.getIssue.mockResolvedValue(makeEpic({ issue_type: 'task' }));
+        await viewEpic('epic-1');
+        expect(mockViewIssue).toHaveBeenCalledWith('epic-1', true);
+        expect(api.getEpicOverview).not.toHaveBeenCalled();
+    });
+
+    it('reports a load failure', async () => {
+        api.getEpicOverview.mockRejectedValue(new Error('boom'));
+        await viewEpic('epic-1');
+        expect(showApiError).toHaveBeenCalledWith('load epic', expect.any(Error));
+    });
+
+    it('pushes /epic/<identifier> history, and not on a replay', async () => {
+        const push = vi.spyOn(history, 'pushState');
+        await viewEpic('epic-1');
+        expect(push).toHaveBeenCalledWith(expect.any(Object), '', '/epic/CHT-100');
+        push.mockClear();
+        await viewEpic('epic-1', false);
+        expect(push).not.toHaveBeenCalled();
+    });
+
+    it('builds prev/next from the Epics list', async () => {
+        getCurrentEpics.mockReturnValue([{ id: 'e0' }, { id: 'epic-1' }, { id: 'e2' }]);
+        await viewEpic('epic-1');
+        expect(content().querySelector('.issue-nav-counter').textContent).toBe('2 / 3');
+        expect(content().querySelector('[data-epic-id="e0"]')).toBeTruthy();
+        expect(content().querySelector('[data-epic-id="e2"]')).toBeTruthy();
+    });
+
+    it('offers to follow the tickets again on a hand-set status', async () => {
+        api.getIssue.mockResolvedValue(makeEpic({ status_pinned: true }));
+        await viewEpic('epic-1');
+        expect(content().querySelector('[data-action="epic-follow-children"]')).toBeTruthy();
+    });
+
+    it('opens the plain ticket page from "Open as ticket"', () => {
+        epicDetailActions['epic-open-as-ticket']({}, { epicId: 'epic-1' });
+        expect(mockViewIssue).toHaveBeenCalledWith('epic-1');
+    });
+
+    it('unpins a hand-set status', async () => {
+        api.updateIssue.mockResolvedValue({});
+        await epicDetailActions['epic-follow-children']({}, { epicId: 'epic-1' });
+        expect(api.updateIssue).toHaveBeenCalledWith('epic-1', { status_follows_children: true });
+        expect(showToast).toHaveBeenCalledWith('Status now follows its tickets');
     });
 
     describe('viewEpicByPath', () => {
-        it('resolves identifier and calls viewEpic', async () => {
-            api.getIssueByIdentifier.mockResolvedValue(makeEpic());
+        it('loads by identifier, and sends a non-epic to the issue view', async () => {
             await viewEpicByPath('CHT-100');
-
             expect(api.getIssueByIdentifier).toHaveBeenCalledWith('CHT-100');
-            expect(api.getIssue).toHaveBeenCalledWith('epic-1');
-        });
-
-        it('resolves by ID when no dash in identifier', async () => {
-            api.getIssue.mockResolvedValue(makeEpic());
-            await viewEpicByPath('epic-uuid-123');
-
-            // Has a dash, so treated as identifier
-            expect(api.getIssueByIdentifier).toHaveBeenCalledWith('epic-uuid-123');
-        });
-
-        it('redirects to issue detail if not an epic', async () => {
-            api.getIssueByIdentifier.mockResolvedValue(makeEpic({ issue_type: 'task' }));
-            await viewEpicByPath('CHT-101');
-
+            api.getIssueByIdentifier.mockResolvedValue(makeEpic({ issue_type: 'bug' }));
+            await viewEpicByPath('CHT-100');
             expect(mockViewIssue).toHaveBeenCalledWith('epic-1', false);
         });
 
-        it('navigates to epics on not found', async () => {
-            api.getIssueByIdentifier.mockResolvedValue(null);
+        it('goes back to Epics when the epic is missing', async () => {
+            api.getIssueByIdentifier.mockRejectedValue(new Error('404'));
             await viewEpicByPath('CHT-999');
-
-            expect(navigateTo).toHaveBeenCalledWith('epics', false);
-        });
-
-        it('navigates to epics on error', async () => {
-            api.getIssueByIdentifier.mockRejectedValue(new Error('fail'));
-            await viewEpicByPath('CHT-999');
-
             expect(navigateTo).toHaveBeenCalledWith('epics', false);
         });
     });

@@ -2,7 +2,7 @@
 from pydantic import BaseModel, field_validator
 
 from app.enums import ApprovalMode, IssuePriority, IssueStatus, SprintStatus
-from app.schemas.issue import _coerce_enum
+from app.schemas.issue import IssueActivityResponse, _coerce_enum
 from app.utils import DateTimeUTC
 
 
@@ -151,3 +151,51 @@ class EpicProgressResponse(BaseModel):
     epics: list[EpicProgress]
     untracked: list[UntrackedProgress]
     sprint_window: int
+
+
+class OverviewSprint(BaseModel):
+    id: str
+    name: str
+
+
+class OverviewTicket(BaseModel):
+    """One ticket anywhere under an epic, as its page lists it (CHT-2097)."""
+
+    id: str
+    identifier: str
+    title: str
+    status: IssueStatus
+    issue_type: str
+    estimate: int | None = None
+    assignee: EpicPerson | None = None
+    # The nearest epic above it: the page's epic, or a sub-epic.
+    epic_id: str
+    updated_at: DateTimeUTC | None = None
+    completed_at: DateTimeUTC | None = None
+    # The sprint whose budget its latest close charged.
+    closed_in: OverviewSprint | None = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def coerce_status(cls, v):
+        return _coerce_enum(IssueStatus, v)
+
+
+class OverviewDocument(BaseModel):
+    """A document linked to the epic or a ticket under it (CHT-2097)."""
+
+    id: str
+    title: str
+    icon: str | None = None
+    author_name: str | None = None
+    updated_at: DateTimeUTC | None = None
+    # Which of the epic's issues it is linked to, the epic itself first.
+    linked_to: list[str]
+
+
+class EpicOverviewResponse(BaseModel):
+    tickets: list[OverviewTicket]
+    documents: list[OverviewDocument]
+    activities: list[IssueActivityResponse]
+    # Whether older activity follows the page returned.
+    more_activity: bool = False

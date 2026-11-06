@@ -16,7 +16,7 @@ import { registerActions } from './event-delegation.js';
 import {
     getCurrentTeam, getInboxEntries, setInboxEntries,
     getInboxUnreadCount, setInboxUnreadCount,
-    setSelectedInboxIndex, getCurrentProject,
+    setSelectedInboxIndex, getCurrentProject, getCurrentView,
 } from './state.js';
 import { getProjects } from './projects.js';
 import { viewIssue } from './issue-detail-view.js';
@@ -112,6 +112,28 @@ function confirmRead(entryId) {
 }
 
 /** Forget every local overlay (test isolation; module state outlives a test). */
+// Where the Inbox's rows are drawn (CHT-2097). The Inbox view's list,
+// or another page that shows a few of them with the same row: the epic
+// page's "Needs you". One at a time, since only one view shows.
+const INBOX_SURFACE = 'inbox-list';
+let surface = { id: INBOX_SURFACE };
+
+/**
+ * Draw `entries` as Inbox rows in `containerId`, decided, commented on
+ * and expanded exactly as in the Inbox (CHT-2097).
+ * @param {string} containerId
+ * @param {Array} entries - inbox entries, as api.getInbox returns them
+ * @param {Object} [options]
+ * @param {string} [options.empty] - HTML shown once every row is gone
+ * @param {Function} [options.reload] - refetches after a live update
+ */
+export function mountInboxSurface(containerId, entries, { empty = '', reload = null } = {}) {
+    surface = { id: containerId, empty, reload };
+    expandedEntryId = null;
+    setInboxEntries(overlayLocalState(entries || []));
+    renderInbox();
+}
+
 export function resetInboxLocalState() {
     archivedLocally.clear();
     readLocally.clear();
@@ -121,6 +143,7 @@ export function resetInboxLocalState() {
     asksOpen.clear();
     kindFilter = 'all';
     reassignCommentPosted.clear();
+    surface = { id: INBOX_SURFACE };
 }
 
 /**
@@ -212,6 +235,18 @@ export async function loadInbox({ focusFirst = false, background = false } = {})
     const team = getCurrentTeam();
     if (!team) return;
 
+    // Another page shows Inbox rows (CHT-2097): a refresh there is its
+    // own, and only the Inbox view's load takes the rows back.
+    if (surface.id !== INBOX_SURFACE) {
+        const el = document.getElementById(surface.id);
+        if (el && !el.closest('.view.hidden') && getCurrentView() !== 'inbox') {
+            if (background) surface.reload?.();
+            return;
+        }
+        // That page is gone from view: the Inbox's rows are its own again.
+        surface = { id: INBOX_SURFACE };
+    }
+
     const container = document.getElementById('inbox-list');
     if (!container) return;
 
@@ -297,7 +332,7 @@ function renderInboxSkeleton(container) {
 
 function inboxRowById(entryId) {
     if (!entryId) return null;
-    return [...document.querySelectorAll('#inbox-list .inbox-row')]
+    return [...document.querySelectorAll(`#${surface.id} .inbox-row`)]
         .find(r => r.dataset.entryId === entryId) || null;
 }
 
@@ -311,7 +346,7 @@ function rowToggle(rowEl) {
  */
 function describeListFocus() {
     const active = document.activeElement;
-    const row = active?.closest?.('#inbox-list .inbox-row');
+    const row = active?.closest?.(`#${surface.id} .inbox-row`);
     if (!row) return null;
     return {
         entryId: row.dataset.entryId,
@@ -339,7 +374,7 @@ function restoreListFocus(saved, fallbackRow) {
  * unread-only filter (expanding marked it read), until the user moves on.
  */
 function applyBackgroundRefresh(fresh, archivedIds) {
-    const container = document.getElementById('inbox-list');
+    const container = document.getElementById(surface.id);
     if (!container) return;
     const old = getInboxEntries();
     const rows = [...container.querySelectorAll('.inbox-row')];
@@ -434,7 +469,7 @@ function rerenderInboxRows(ids) {
  * sidebar nav link holds focus). No-op when the list is empty.
  */
 export function selectInboxRow(index, { focus = true } = {}) {
-    const rows = document.querySelectorAll('#inbox-list .inbox-row');
+    const rows = document.querySelectorAll(`#${surface.id} .inbox-row`);
     rows.forEach(r => r.classList.remove('keyboard-selected'));
     if (rows.length === 0) {
         setSelectedInboxIndex(-1);
@@ -596,7 +631,7 @@ export function collapseInboxExpand() {
 }
 
 function setReassignBusy(entryId, busy) {
-    document.querySelectorAll('#inbox-list [data-action="reassign-inbox-entry"]').forEach(btn => {
+    document.querySelectorAll(`#${surface.id} [data-action="reassign-inbox-entry"]`).forEach(btn => {
         if (btn.dataset.entryId !== entryId) return;
         // aria-disabled (not disabled) so a focused button keeps focus.
         if (busy) {
@@ -688,7 +723,7 @@ export function openReassignInboxDialog(entryId) {
                 // Its trigger button left with the archived row: focus the
                 // row that took its place.
                 if (!document.activeElement || document.activeElement === document.body) {
-                    const row = document.querySelector('#inbox-list .inbox-row.keyboard-selected');
+                    const row = document.querySelector(`#${surface.id} .inbox-row.keyboard-selected`);
                     row?.querySelector('.inbox-row-toggle')?.focus({ preventScroll: true });
                 }
             }
@@ -1049,11 +1084,11 @@ function renderDecisionActions(entry) {
     return [primary, sendBack, comment].filter(Boolean);
 }
 
-const DECISION_BUTTONS = ['approve-inbox-entry', 'sign-off-inbox-entry', 'send-back-inbox-entry', 'comment-inbox-entry']
-    .map(a => `#inbox-list [data-action="${a}"]`).join(', ');
+const decisionButtons = () => ['approve-inbox-entry', 'sign-off-inbox-entry', 'send-back-inbox-entry', 'comment-inbox-entry']
+    .map(a => `#${surface.id} [data-action="${a}"]`).join(', ');
 
 function setDecisionBusy(entryId, busy) {
-    document.querySelectorAll(DECISION_BUTTONS).forEach(btn => {
+    document.querySelectorAll(decisionButtons()).forEach(btn => {
         if (btn.dataset.entryId !== entryId) return;
         if (busy) {
             btn.setAttribute('aria-disabled', 'true');
@@ -1395,10 +1430,15 @@ const EMPTY_COPY = {
  * Render the inbox list from current state.
  */
 export function renderInbox() {
-    const container = document.getElementById('inbox-list');
+    const container = document.getElementById(surface.id);
     if (!container) return;
 
     const entries = getInboxEntries();
+    if (surface.id !== INBOX_SURFACE) {
+        // Another page's rows: flat, in its order, its own empty text.
+        container.innerHTML = entries.length ? entries.map(renderInboxRow).join('') : (surface.empty || '');
+        return;
+    }
 
     if (entries.length === 0) {
         const empty = EMPTY_COPY[kindFilter] || EMPTY_COPY.all;
