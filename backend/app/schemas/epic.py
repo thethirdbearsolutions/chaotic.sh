@@ -119,6 +119,9 @@ class EpicProgress(BaseModel):
     last_activity_at: DateTimeUTC | None = None
     completed_at: DateTimeUTC | None = None
     awaiting_human: list[AwaitingHuman] = []
+    # The nearest epic above this one, in scope: the goal it serves
+    # (CHT-2095). Its counts stay its own; the list rolls them up.
+    parent_epic_id: str | None = None
 
     @field_validator("status", mode="before")
     @classmethod

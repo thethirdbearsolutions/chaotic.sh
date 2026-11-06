@@ -14,7 +14,6 @@ vi.mock('./api.js', () => ({
 // Mock the router module
 vi.mock('./router.js', () => ({
     navigateToEpicByIdentifier: vi.fn(),
-    navigateToIssueByIdentifier: vi.fn(),
 }));
 
 // utils.js is real, so the escaping test below exercises the real escapers.
@@ -32,7 +31,7 @@ vi.mock('./ui.js', () => ({
 import { setCurrentTeam, setCurrentProject, getSelectedEpicIndex, setSelectedEpicIndex } from './state.js';
 import { loadEpics, renderEpics, renderSprintStrip, getCurrentEpics, resetEpicsViewState, pctLabel } from './epics.js';
 import { api } from './api.js';
-import { navigateToEpicByIdentifier, navigateToIssueByIdentifier } from './router.js';
+import { navigateToEpicByIdentifier } from './router.js';
 import { showApiError } from './ui.js';
 import { forgetResults } from './last-result.js';
 
@@ -126,16 +125,6 @@ describe('loadEpics', () => {
         expect(el.innerHTML).toContain('Create epic');
     });
 
-    it('lists asks under no epic even when there are no epics', async () => {
-        api.getTeamEpicProgress.mockResolvedValue(response([], [untracked({ awaiting_human: [
-            { ritual_name: 'review', approval_mode: 'review', identifier: 'CHT-5', title: 'Loose', since: ago(MIN) },
-        ] })]));
-        await loadEpics();
-        const el = document.getElementById('epics-list');
-        expect(el.innerHTML).not.toContain('No epics found');
-        expect(el.querySelector('.epic-ask-row').dataset.issueIdentifier).toBe('CHT-5');
-    });
-
     it('reads the team-wide endpoint once, with no per-epic fetches', async () => {
         api.getTeamEpicProgress.mockResolvedValue(response([epic(), epic({ id: 'e2', identifier: 'CHT-20', title: 'Search Epic' })]));
         await loadEpics();
@@ -206,10 +195,11 @@ const person = (name, extra = {}) => ({ id: name, name, is_agent: false, ...extr
 const moving = (overrides = {}) => epic({
     in_flight: [ticket('Build it', { assignee: person('ivy') })], in_flight_count: 1, last_activity_at: ago(MIN), ...overrides,
 });
-const sectionIds = (container, key) =>
-    [...container.querySelectorAll(`.epic-section-${key} .epic-row`)].map(r => r.dataset.identifier);
+const rowIds = (container) => [...container.querySelectorAll('.epic-row')].map(r => r.dataset.identifier);
+const chip = (container, key) => container.querySelector(`[data-epics-filter="${key}"]`);
+const ask = (identifier, extra = {}) => ({ ritual_name: 'review', approval_mode: 'review', identifier, title: 'T', since: ago(MIN), ...extra });
 
-describe('renderEpics (CHT-2043)', () => {
+describe('renderEpics (CHT-2095)', () => {
     let container;
     beforeEach(() => {
         setupDom();
@@ -218,44 +208,121 @@ describe('renderEpics (CHT-2043)', () => {
         container = document.getElementById('epics-list');
     });
 
-    it('sorts epics into moving, quiet and shipped, each by time; prev/next follows the rows', () => {
+    it('lists open epics in one list, most recently touched first, whatever is in progress', () => {
         renderEpics(response([
-            moving({ id: 'm-old', identifier: 'CHT-1', last_activity_at: ago(60 * MIN) }),
-            moving({ id: 'm-new', identifier: 'CHT-2', last_activity_at: ago(MIN) }),
-            epic({ id: 'q-empty', identifier: 'CHT-3', children: kids(0, 0), open_children: 0 }),
-            epic({ id: 'q-old', identifier: 'CHT-4', last_shipped: ticket('Old', { completed_at: ago(9000 * MIN) }) }),
-            epic({ id: 'q-new', identifier: 'CHT-5', last_shipped: ticket('New', { completed_at: ago(10 * MIN) }) }),
-            epic({ id: 's-old', identifier: 'CHT-6', status: 'done', completed_at: ago(5000 * MIN) }),
-            epic({ id: 's-new', identifier: 'CHT-7', status: 'canceled', completed_at: ago(MIN) }),
+            moving({ id: 'a', identifier: 'CHT-1', last_activity_at: ago(7 * 24 * 60 * MIN) }),
+            epic({ id: 'b', identifier: 'CHT-2', last_activity_at: ago(24 * 60 * MIN) }),
+            epic({ id: 'c', identifier: 'CHT-3', children: kids(3, 3), open_children: 0, last_activity_at: ago(30 * MIN) }),
+            epic({ id: 'd', identifier: 'CHT-4', status: 'done', completed_at: ago(MIN), last_activity_at: ago(MIN) }),
         ]), container);
-        expect(sectionIds(container, 'moving')).toEqual(['CHT-2', 'CHT-1']);
-        expect(sectionIds(container, 'quiet')).toEqual(['CHT-5', 'CHT-4', 'CHT-3']);
-        expect(sectionIds(container, 'shipped')).toEqual(['CHT-7', 'CHT-6']);
-        const rows = [...container.querySelectorAll('.epic-row')].map(r => r.dataset.identifier);
-        expect(getCurrentEpics().map(e => e.identifier)).toEqual(rows);
-        expect(container.querySelector('[data-identifier="CHT-3"]').classList.contains('epic-row-empty')).toBe(true);
-        expect(container.querySelectorAll('.epic-canceled-tag').length).toBe(1);
-        expect(container.querySelector('.epic-section-moving .section-count').textContent).toBe('2');
+        expect(rowIds(container)).toEqual(['CHT-3', 'CHT-2', 'CHT-1']);
+        expect(getCurrentEpics().map(e => e.identifier)).toEqual(rowIds(container));
+        expect(container.querySelectorAll('.epic-section').length).toBe(1);
+        // All done stays in its place and asks the question on its row.
+        expect(container.querySelector('[data-identifier="CHT-3"] .list-row-sub').textContent).toBe('All done · close it?');
     });
 
-    it('says who is on what and what shipped last', () => {
+    it('says each epic\'s tickets by status, zeros left out, who holds them on hover', () => {
         renderEpics(response([moving({
-            in_flight: [
-                ticket('Picker', { assignee: person('ivy', { is_agent: true }) }),
-                ticket('Header', { status: 'in_review' }),
-                ticket('Third one', { assignee: person('Sam') }),
-            ],
-            in_flight_count: 4,
-            last_shipped: ticket('Collapse', { status: 'done', completed_at: ago(40 * MIN) }),
+            children: { total: 9, backlog: 4, todo: 2, in_progress: 2, in_review: 1, done: 0, canceled: 0 },
+            in_flight: [ticket('Picker', { assignee: person('ivy') }), ticket('Header')],
         })]), container);
-        const sub = container.querySelector('.epic-section-moving .list-row-sub').textContent;
-        expect(sub).toBe('ivy on Picker, Unassigned on Header, +2 more · shipped Collapse 40m ago');
+        const sub = container.querySelector('.list-row-sub');
+        expect(sub.textContent).toBe('2 in progress · 1 in review · 2 todo · 4 backlog');
+        expect(sub.querySelector('[title]').getAttribute('title')).toBe('ivy: Picker\nUnassigned: Header');
+    });
+
+    it('chips narrow the list without reordering it, and count what each would show', () => {
+        renderEpics(response([
+            moving({ id: 'a', identifier: 'CHT-1', last_activity_at: ago(10 * MIN) }),
+            epic({ id: 'b', identifier: 'CHT-2', children: kids(2, 2), open_children: 0, last_activity_at: ago(20 * MIN) }),
+            moving({ id: 'c', identifier: 'CHT-3', last_activity_at: ago(5 * MIN), awaiting_human: [ask('CHT-30')] }),
+            epic({ id: 'd', identifier: 'CHT-4', status: 'done', completed_at: ago(9 * MIN) }),
+            epic({ id: 'e', identifier: 'CHT-5', status: 'canceled', completed_at: ago(MIN) }),
+        ]), container);
+        const counts = Object.fromEntries([...container.querySelectorAll('[data-epics-filter]')]
+            .map(b => [b.dataset.epicsFilter, b.querySelector('.segmented-count').textContent]));
+        expect(counts).toEqual({ open: '3', in_progress: '2', all_done: '1', needs_you: '1', shipped: '2', all: '5' });
+        expect(chip(container, 'open').classList.contains('active')).toBe(true);
+
+        setSelectedEpicIndex(0);
+        chip(container, 'in_progress').click();
+        expect(getSelectedEpicIndex()).toBe(-1);
+        expect(rowIds(container)).toEqual(['CHT-3', 'CHT-1']);
+        chip(container, 'all_done').click();
+        expect(rowIds(container)).toEqual(['CHT-2']);
+        chip(container, 'needs_you').click();
+        expect(rowIds(container)).toEqual(['CHT-3']);
+        expect(container.querySelector('.epic-needs-you').textContent).toBe('1 needs you');
+        chip(container, 'shipped').click();
+        expect(rowIds(container)).toEqual(['CHT-5', 'CHT-4']);
+        expect(navigateToEpicByIdentifier).not.toHaveBeenCalled();
+    });
+
+    it('lists every shipped epic: no cap', () => {
+        const closed = Array.from({ length: 12 }, (_, i) => epic({
+            id: `s${i}`, identifier: `CHT-${i}`, status: 'done', completed_at: ago(i * MIN),
+        }));
+        renderEpics(response(closed), container);
+        chip(container, 'shipped').click();
+        expect(rowIds(container).length).toBe(12);
+    });
+
+    it('says when a chip matches nothing', () => {
+        renderEpics(response([epic()]), container);
+        chip(container, 'needs_you').click();
+        expect(container.querySelector('.epic-filter-empty').textContent).toBe('No needs you epics.');
+    });
+
+    it('nests sub-epics under their parent, collapsed, with the parent rolled up', () => {
+        renderEpics(response([
+            // The parent's own tickets: 1 done, 1 todo, and the in-progress sub-epic.
+            epic({ id: 'p', identifier: 'CHT-1', title: 'Polish', last_activity_at: ago(60 * MIN),
+                children: { total: 3, backlog: 0, todo: 1, in_progress: 1, in_review: 0, done: 1, canceled: 0 } }),
+            moving({ id: 's', identifier: 'CHT-2', title: 'Colours', parent_epic_id: 'p', last_activity_at: ago(MIN),
+                children: { total: 4, backlog: 1, todo: 0, in_progress: 1, in_review: 0, done: 2, canceled: 0 },
+                awaiting_human: [ask('CHT-20')] }),
+            epic({ id: 'o', identifier: 'CHT-3', last_activity_at: ago(30 * MIN) }),
+        ]), container);
+        // The parent sorts by its newest touch anywhere under it.
+        expect(rowIds(container)).toEqual(['CHT-1', 'CHT-3']);
+        const parent = container.querySelector('[data-identifier="CHT-1"]');
+        expect(parent.querySelector('.meter-label').textContent).toBe('3 of 6');
+        expect(parent.querySelector('.list-row-sub').textContent).toBe('1 in progress · 1 todo · 1 backlog · 1 needs you · ▸ 1 sub-epic');
+
+        parent.querySelector('[data-epic-toggle-subs]').click();
+        expect(rowIds(container)).toEqual(['CHT-1', 'CHT-2', 'CHT-3']);
+        const sub = container.querySelector('[data-identifier="CHT-2"]');
+        expect(sub.classList.contains('epic-row-sub')).toBe(true);
+        expect(sub.style.getPropertyValue('--epic-depth')).toBe('1');
+        expect(getCurrentEpics().map(e => e.identifier)).toEqual(['CHT-1', 'CHT-2', 'CHT-3']);
+        expect(navigateToEpicByIdentifier).not.toHaveBeenCalled();
+
+        container.querySelector('[data-epic-toggle-subs]').click();
+        expect(rowIds(container)).toEqual(['CHT-1', 'CHT-3']);
+    });
+
+    it('lifts a sub-epic to the top when its parent is filtered out', () => {
+        renderEpics(response([
+            epic({ id: 'p', identifier: 'CHT-1', status: 'done', completed_at: ago(MIN) }),
+            moving({ id: 's', identifier: 'CHT-2', parent_epic_id: 'p' }),
+        ]), container);
+        expect(rowIds(container)).toEqual(['CHT-2']);
+        expect(container.querySelector('.epic-row-sub')).toBeNull();
+    });
+
+    it('survives a parent cycle in old data', () => {
+        renderEpics(response([
+            epic({ id: 'a', identifier: 'CHT-1', parent_epic_id: 'b' }),
+            epic({ id: 'b', identifier: 'CHT-2', parent_epic_id: 'a' }),
+        ]), container);
+        // The loop is cut once: one becomes the root, the other its sub-epic.
+        container.querySelector('[data-epic-toggle-subs]').click();
+        expect(rowIds(container).sort()).toEqual(['CHT-1', 'CHT-2']);
     });
 
     it('shows the epic owner after the title, and nothing when unassigned', () => {
         renderEpics(response([
-            // Distinct times: two ago(MIN) calls can land a millisecond
-            // apart, and the newer one would sort first.
             moving({ identifier: 'CHT-1', owner: person('Rowan'), last_activity_at: ago(MIN) }),
             moving({ id: 'e2', identifier: 'CHT-2', last_activity_at: ago(5 * MIN) }),
         ]), container);
@@ -263,95 +330,33 @@ describe('renderEpics (CHT-2043)', () => {
         expect(owners).toEqual(['· Rowan', null]);
     });
 
-    it('leads each epic row with its sprint strip and ends it with the meter', () => {
-        renderEpics(response([moving({ children: kids(2, 4) })]), container);
+    it('leads each epic row with its sprint strip and ends it with the meter and when it was touched', () => {
+        renderEpics(response([moving({ children: kids(2, 4), last_activity_at: ago(40 * MIN) })]), container);
         const row = container.querySelector('.epic-row');
         expect(row.firstElementChild.classList.contains('epic-spark')).toBe(true);
         expect(row.querySelectorAll('.epic-sprint-tick').length).toBe(3);
         expect(row.querySelector('.meter-fill').style.width).toBe('50%');
         expect(row.querySelector('.meter-label').textContent).toBe('2 of 4');
         expect(row.querySelector('.meter').getAttribute('title')).toContain('50% done');
+        expect(row.querySelector('.epic-touched').textContent).toBe('40m ago');
     });
 
     it('leaves canceled tickets out of the meter, and says when there are none', () => {
         renderEpics(response([
-            epic({ identifier: 'CHT-1', children: kids(2, 4, { todo: 1, canceled: 1 }) }),
+            epic({ identifier: 'CHT-1', children: kids(2, 4, { todo: 1, canceled: 1 }), last_activity_at: ago(MIN) }),
             epic({ id: 'e2', identifier: 'CHT-2', children: kids(0, 0), open_children: 0 }),
         ]), container);
-        const labels = [...container.querySelectorAll('.meter-label')].map(l => l.textContent);
+        const labels = [...container.querySelectorAll('.meter-label:not(.epic-touched)')].map(l => l.textContent);
         expect(labels).toEqual(['2 of 3', 'No tickets']);
+        expect(container.querySelector('[data-identifier="CHT-2"] .list-row-sub').textContent).toBe('No tickets yet');
     });
 
-    it('lists what waits on a person, oldest first, and opens the ticket', () => {
-        renderEpics(response([
-            moving({
-                title: 'Redesign',
-                awaiting_human: [
-                    { ritual_name: 'design-review', approval_mode: 'review', identifier: 'CHT-41', title: 'Picker', since: ago(25 * MIN), requested_by_name: 'ivy' },
-                ],
-            }),
-            epic({ id: 'e2', identifier: 'CHT-2', status: 'done', awaiting_human: [
-                { ritual_name: 'stale', approval_mode: 'review', identifier: 'CHT-99', title: 'Closed epic', since: ago(1000) },
-            ] }),
-        ], [untracked({ awaiting_human: [
-            { ritual_name: 'release', approval_mode: 'gate', identifier: 'CHT-39', title: 'Publish', since: ago(120 * MIN), requested_by_name: 'moss' },
-        ] })]), container);
-        const asks = [...container.querySelectorAll('.epic-ask-row')];
-        expect(asks.map(a => a.querySelector('.list-row-title').textContent)).toEqual([
-            'Complete release: Publish', 'Approve design-review: Picker', 'Approve stale: Closed epic',
-        ]);
-        expect(asks[0].querySelector('.list-row-sub').textContent).toBe('No epic · requested by moss 2h ago');
-        expect(asks[1].querySelector('.list-row-sub').textContent).toBe('Redesign · attested by ivy 25m ago');
-        expect(asks[1].querySelector('.list-row-action').textContent).toBe('Approve');
-        expect(asks[0].querySelector('.list-row-action').textContent).toBe('Complete');
-        // Not an epic row, so the keyboard cursor and prev/next skip it.
-        expect(asks[0].classList.contains('epic-row')).toBe(false);
-        asks[1].click();
-        expect(navigateToIssueByIdentifier).toHaveBeenCalledWith('CHT-41');
-        expect(navigateToEpicByIdentifier).not.toHaveBeenCalled();
-    });
-
-    it('asks about an open epic whose tickets are all done, and nowhere else', () => {
-        renderEpics(response([
-            epic({ identifier: 'CHT-1', children: kids(3, 3), open_children: 0, last_shipped: ticket('Last', { completed_at: ago(2 * MIN) }) }),
-        ]), container);
-        expect(sectionIds(container, 'waiting')).toEqual(['CHT-1']);
-        expect(sectionIds(container, 'quiet')).toEqual([]);
-        expect(container.querySelector('.epic-section-waiting .list-row-sub').textContent).toBe('Every ticket is done · last shipped 2m ago');
-        expect(container.querySelector('.epic-section-waiting .section-count').textContent).toBe('1');
-    });
-
-    it('keeps an ask on open work under a closed epic', () => {
-        renderEpics(response([epic({ status: 'done', title: 'Closed goal', awaiting_human: [
-            { ritual_name: 'review', approval_mode: 'review', identifier: 'CHT-77', title: 'Still open', since: ago(MIN) },
-        ] })]), container);
-        expect([...container.querySelectorAll('.epic-ask-row')].map(a => a.dataset.issueIdentifier)).toEqual(['CHT-77']);
-    });
-
-    it('omits empty sections', () => {
-        renderEpics(response([moving()]), container);
-        expect([...container.querySelectorAll('.epic-section')].map(s => s.className)).toEqual(['epic-section epic-section-moving']);
-    });
-
-    it('shows the latest shipped epics until asked for all', () => {
-        const closed = Array.from({ length: 7 }, (_, i) => epic({
-            id: `s${i}`, identifier: `CHT-${i}`, status: 'done', completed_at: ago(i * MIN),
-        }));
-        renderEpics(response(closed), container);
-        expect(sectionIds(container, 'shipped').length).toBe(5);
-        // The hidden ones still follow, for the epic page's prev/next and counts.
-        expect(getCurrentEpics().length).toBe(7);
-        expect(container.querySelector('.epic-section-shipped .section-count').textContent).toBe('7');
-        const toggle = container.querySelector('[data-epics-toggle-closed]');
-        expect(toggle.textContent).toBe('Show all 7');
-        setSelectedEpicIndex(0);
-        toggle.click();
-        expect(getSelectedEpicIndex()).toBe(-1);
-        expect(sectionIds(container, 'shipped').length).toBe(7);
-        expect(getCurrentEpics().length).toBe(7);
-        expect(navigateToEpicByIdentifier).not.toHaveBeenCalled();
-        container.querySelector('[data-epics-toggle-closed]').click();
-        expect(sectionIds(container, 'shipped').length).toBe(5);
+    it('lists no approvals: they are facts about an epic, on its row', () => {
+        renderEpics(response([epic({ awaiting_human: [ask('CHT-41'), ask('CHT-42')] })],
+            [untracked({ awaiting_human: [ask('CHT-39')] })]), container);
+        expect(container.querySelector('.epic-ask-row')).toBeNull();
+        expect(container.textContent).not.toContain('CHT-39');
+        expect(container.querySelector('.epic-needs-you').textContent).toBe('2 need you');
     });
 
     it('marks a hand-set status on an open epic', () => {
@@ -378,13 +383,12 @@ describe('renderEpics (CHT-2043)', () => {
         const evil = '<img src=x onerror="window.__pwned=1">';
         renderEpics(response(
             [moving({
-                title: evil, identifier: evil, project_key: evil, owner: person(evil),
+                id: evil, title: evil, identifier: evil, project_key: evil, owner: person(evil),
                 sprints: [{ ...sprints([1])[0], name: evil }],
                 in_flight: [ticket(evil, { assignee: person(evil) })],
-                last_shipped: ticket(evil, { completed_at: ago(MIN) }),
-                awaiting_human: [{ ritual_name: evil, approval_mode: 'review', identifier: evil, title: evil, since: ago(MIN), requested_by_name: evil }],
-            }), epic({ id: 'e2', project_key: 'WEB' })],
-            [untracked({ project_key: evil, awaiting_human: [{ ritual_name: evil, approval_mode: 'gate', identifier: evil, title: evil, since: ago(MIN) }] })],
+                awaiting_human: [ask(evil)],
+            }), epic({ id: 'e2', project_key: 'WEB', parent_epic_id: evil })],
+            [untracked({ project_key: evil })],
         ), container);
         expect(container.querySelector('img')).toBeNull();
         expect(container.textContent).toContain('<img');

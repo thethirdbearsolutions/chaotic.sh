@@ -8393,6 +8393,57 @@ button.stat-card-link:hover .stat-note {
     padding: var(--space-md) 0 0;
 }
 
+/* One list (CHT-2095): chips above it, sub-epics indented under their
+   parent, "needs you" in the accent that means it. */
+.epic-filter {
+    align-self: flex-start;
+    flex-wrap: wrap;
+}
+.epic-sections > .epic-filter + .epic-section {
+    margin-top: calc(var(--space-xl) * -1);
+}
+.segmented-count {
+    margin-left: 2px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+.epic-row {
+    --epic-depth: 0;
+}
+.epic-section .epic-row.epic-row-sub {
+    padding-left: calc(var(--space-lg) + var(--epic-depth) * 24px);
+}
+.epic-row-sub .list-row-title {
+    font-weight: 400;
+}
+.epic-needs-you {
+    color: var(--accent-fg);
+    font-weight: 500;
+}
+.epic-all-done {
+    color: var(--text-secondary);
+}
+.epic-subs-toggle {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.epic-subs-toggle:hover {
+    color: var(--text-primary);
+    text-decoration: underline;
+}
+.epic-touched {
+    color: var(--text-muted);
+}
+.epic-filter-empty {
+    margin: 0;
+    padding: var(--space-lg) 0;
+    color: var(--text-muted);
+}
+
 /* Phone epic rows (CHT-2043): the sub-line wraps, the outer columns
    narrow. After the rules above so it wins at equal specificity. */
 @media (max-width: 768px) {
