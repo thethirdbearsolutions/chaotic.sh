@@ -1,5 +1,5 @@
 const {chromium}=require('playwright');
-const S=process.argv[2], B='http://127.0.0.1:24300';
+const S=process.argv[2], B=process.env.CHAOTIC_URL||'http://127.0.0.1:24300';
 (async()=>{const b=await chromium.launch();
 const ctx=await b.newContext({viewport:{width:1440,height:900},deviceScaleFactor:2,colorScheme:'dark'});
 const p=await ctx.newPage(); p.on('pageerror',e=>console.log('ERR',e.message));

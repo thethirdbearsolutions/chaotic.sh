@@ -1,20 +1,29 @@
-"""Seed a throwaway Chaotic server with made-up data for the website's
-product screenshots (CHT-2089). Everything here is fictional.
+r"""Seed a throwaway Chaotic server with made-up data for the website's
+product screenshots (CHT-2089). Everything here is fictional, and the
+script refuses any server that is not on localhost.
 
     # in backend/, against a fresh database:
     DATABASE_URL=sqlite+aiosqlite:////tmp/demo.db BCRYPT_ROUNDS=4 \
         uv run uvicorn app.main:app --port 24300 &
     uv run python ../scripts/website-screenshots/seed.py
-    node ../scripts/website-screenshots/shoot.js /tmp \
+    NODE_PATH=../frontend/node_modules node ../scripts/website-screenshots/shoot.js /tmp \
         '[["inbox","/inbox"],["epics","/epics"],["detail","/issue/API-8"]]'
 
-Then crop each shot to 2880x1620 and save it as website/images/app-*.webp.
+shoot.js reads the server from CHAOTIC_URL (default http://127.0.0.1:24300).
+Crop each 2880x1800 shot to its top 2880x1620 and save it as
+website/images/app-<name>.webp:
+
+    uv run python -c "from PIL import Image; Image.open('/tmp/inbox.png').convert('RGB')\
+        .crop((0, 0, 2880, 1620)).save('../website/images/app-inbox.webp', quality=86, method=6)"
+
 Avatars come from DiceBear (notionists and bottts-neutral styles).
 """
 import sys, json, pathlib, urllib.parse
 import httpx
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:24300/api"
+if urllib.parse.urlsplit(BASE).hostname not in ("127.0.0.1", "localhost", "::1"):
+    raise SystemExit(f"refusing to seed {BASE}: this script is for a throwaway local server only")
 HERE = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else "/tmp")
 AV = HERE / "chaotic-demo-avatars"
 AV.mkdir(exist_ok=True)
@@ -35,7 +44,9 @@ def avatar(seed, style, bg):
     f = AV / f"{style}-{seed}.png"
     if not f.exists():
         url = f"https://api.dicebear.com/9.x/{style}/png?seed={urllib.parse.quote(seed)}&size=256&backgroundColor={bg}"
-        f.write_bytes(httpx.get(url, timeout=30).content)
+        r = httpx.get(url, timeout=30)
+        r.raise_for_status()
+        f.write_bytes(r.content)
     return f.read_bytes()
 
 
@@ -147,7 +158,6 @@ def actor(who):
     return keys.get(who) or tok.get(who)
 
 
-
 for title, (i, who, status) in made.items():
     if status == "todo" or status == "backlog":
         continue
@@ -155,7 +165,6 @@ for title, (i, who, status) in made.items():
     req("PATCH", f"/issues/{i['id']}", t, json={"status": "in_progress"})
     if status in ("done", "in_review"):
         req("PATCH", f"/issues/{i['id']}", t, json={"status": "in_review"})
-    if status in ("done", "in_review"):
         r = rituals[i["project_id"]]
         req("POST", f"/rituals/{r['id']}/attest-issue/{i['id']}", t,
             json={"note": "Review found two edge cases in the retry path; both fixed with tests."})

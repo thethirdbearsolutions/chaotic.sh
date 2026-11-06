@@ -216,26 +216,31 @@
     <section class="section" id="product">
         <div class="section-content">
             <h2 class="section-title">The Dashboard</h2>
-            <div class="carousel" data-carousel aria-roledescription="carousel" aria-label="Screens from the web app">
-                <div class="carousel-track">
-                    <figure class="carousel-slide is-active" aria-label="Inbox">
+            <div class="carousel" data-carousel role="region" aria-roledescription="carousel" aria-label="Screens from the web app">
+                <div class="carousel-track" aria-live="off">
+                    <figure class="carousel-slide is-active" role="group" aria-roledescription="slide" aria-label="1 of 3: Inbox">
                         <img src="images/app-inbox.webp" width="1440" height="810"
                              alt="Inbox: an assignment, mentions from people and agents, and code reviews waiting for approval">
                     </figure>
-                    <figure class="carousel-slide" aria-label="Epics" aria-hidden="true">
+                    <figure class="carousel-slide" role="group" aria-roledescription="slide" aria-label="2 of 3: Epics" aria-hidden="true">
                         <img src="images/app-epics.webp" width="1440" height="810" loading="lazy"
                              alt="Epics: approvals waiting on you, then each epic with who is working on it and how far along it is">
                     </figure>
-                    <figure class="carousel-slide" aria-label="Ticket" aria-hidden="true">
+                    <figure class="carousel-slide" role="group" aria-roledescription="slide" aria-label="3 of 3: Ticket" aria-hidden="true">
                         <img src="images/app-detail.webp" width="1440" height="810" loading="lazy"
                              alt="A ticket in review: an agent attested its code-review ritual, and it waits for a person to approve">
                     </figure>
                 </div>
-                <div class="carousel-dots" role="tablist">
-                    <button type="button" class="carousel-dot is-active" role="tab" aria-selected="true" aria-label="Inbox"></button>
-                    <button type="button" class="carousel-dot" role="tab" aria-selected="false" aria-label="Epics"></button>
-                    <button type="button" class="carousel-dot" role="tab" aria-selected="false" aria-label="Ticket"></button>
+                <div class="carousel-controls">
+                    <button type="button" class="carousel-toggle" aria-label="Pause slides">
+                        <svg class="icon-pause" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="1" width="3" height="10" fill="currentColor"/><rect x="7" y="1" width="3" height="10" fill="currentColor"/></svg>
+                        <svg class="icon-play" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1l8 5-8 5z" fill="currentColor"/></svg>
+                    </button>
+                    <button type="button" class="carousel-dot is-active" aria-label="Show slide 1: Inbox" aria-current="true"></button>
+                    <button type="button" class="carousel-dot" aria-label="Show slide 2: Epics"></button>
+                    <button type="button" class="carousel-dot" aria-label="Show slide 3: Ticket"></button>
                 </div>
+            </div>
             </div>
         </div>
     </section>
@@ -524,13 +529,19 @@
     </footer>
 
     <script>
-        // Product carousel (CHT-2089): advances every 5s, pauses on hover
-        // or focus, and stays put for prefers-reduced-motion.
+        // Product carousel (CHT-2089): advances every 5s unless paused by
+        // its button, hovered, focused, hidden, or prefers-reduced-motion.
         document.querySelectorAll('[data-carousel]').forEach((root) => {
             const slides = [...root.querySelectorAll('.carousel-slide')];
             const dots = [...root.querySelectorAll('.carousel-dot')];
+            const track = root.querySelector('.carousel-track');
+            const toggle = root.querySelector('.carousel-toggle');
+            const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
             let current = 0;
             let timer = null;
+            let hovered = false;
+            let focused = false;
+            let paused = motion.matches;
             const show = (i) => {
                 current = (i + slides.length) % slides.length;
                 slides.forEach((s, j) => {
@@ -539,18 +550,27 @@
                 });
                 dots.forEach((d, j) => {
                     d.classList.toggle('is-active', j === current);
-                    d.setAttribute('aria-selected', j === current ? 'true' : 'false');
+                    if (j === current) d.setAttribute('aria-current', 'true');
+                    else d.removeAttribute('aria-current');
                 });
             };
-            const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            const start = () => { if (!reduce && !timer) timer = setInterval(() => show(current + 1), 5000); };
-            const stop = () => { clearInterval(timer); timer = null; };
-            dots.forEach((d, j) => d.addEventListener('click', () => { show(j); stop(); start(); }));
-            root.addEventListener('mouseenter', stop);
-            root.addEventListener('mouseleave', start);
-            root.addEventListener('focusin', stop);
-            root.addEventListener('focusout', start);
-            start();
+            const sync = () => {
+                const run = !paused && !hovered && !focused && !document.hidden;
+                if (run && !timer) timer = setInterval(() => show(current + 1), 5000);
+                if (!run && timer) { clearInterval(timer); timer = null; }
+                track.setAttribute('aria-live', run ? 'off' : 'polite');
+                root.classList.toggle('is-paused', paused);
+                toggle.setAttribute('aria-label', paused ? 'Play slides' : 'Pause slides');
+            };
+            dots.forEach((d, j) => d.addEventListener('click', () => show(j)));
+            toggle.addEventListener('click', () => { paused = !paused; sync(); });
+            root.addEventListener('mouseenter', () => { hovered = true; sync(); });
+            root.addEventListener('mouseleave', () => { hovered = false; sync(); });
+            root.addEventListener('focusin', () => { focused = true; sync(); });
+            root.addEventListener('focusout', (e) => { if (!root.contains(e.relatedTarget)) { focused = false; sync(); } });
+            document.addEventListener('visibilitychange', sync);
+            motion.addEventListener?.('change', (e) => { paused = e.matches; sync(); });
+            sync();
         });
 
         const sliders = document.querySelectorAll('.growth-slider');
@@ -616,8 +636,10 @@
             rotationTimer = setInterval(cycleTagline, 3000);
         });
 
-        // Auto-rotate every 3 seconds
-        rotationTimer = setInterval(cycleTagline, 3000);
+        // Auto-rotate every 3 seconds, unless the visitor asked for less motion
+        if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            rotationTimer = setInterval(cycleTagline, 3000);
+        }
     </script>
     <script src="js/nav.js" defer></script>
 </body>
