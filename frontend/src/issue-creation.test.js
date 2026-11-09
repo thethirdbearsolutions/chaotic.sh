@@ -150,6 +150,16 @@ describe('issue-creation', () => {
             expect(content).toContain('Other Project');
         });
 
+        it('draws the project select as the searchable picker, keys as hints (CHT-2119)', () => {
+            showCreateIssueModal('proj-2');
+            const select = document.getElementById('create-issue-project');
+            const btn = document.querySelector('.picker-btn[data-picker-for="create-issue-project"]');
+            expect(btn).not.toBeNull();
+            expect(select.classList.contains('picker-native')).toBe(true);
+            expect(btn.getAttribute('aria-label')).toBe('Project: Other Project');
+            expect(btn.querySelector('.picker-label-hint').textContent).toBe('OTH');
+        });
+
         it('preselects given project ID', () => {
             showCreateIssueModal('proj-2');
             const select = document.getElementById('create-issue-project');

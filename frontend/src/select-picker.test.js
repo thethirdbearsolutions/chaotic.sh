@@ -30,6 +30,18 @@ describe('select picker (CHT-1961)', () => {
         expect(select.tabIndex).toBe(-1);
     });
 
+    it('scrolling its own list does not re-place the popover, a page scroll does (CHT-2118)', () => {
+        const select = makeSelect(30);
+        const btn = enhanceSelect(select);
+        btn.click();
+        const popover = document.querySelector('.picker-popover');
+        popover.style.maxHeight = '200px'; // stands in for place()'s value
+        document.querySelector('.picker-list').dispatchEvent(new Event('scroll'));
+        expect(popover.style.maxHeight).toBe('200px');
+        document.dispatchEvent(new Event('scroll'));
+        expect(popover.style.maxHeight).not.toBe('200px');
+    });
+
     it('is idempotent', () => {
         const select = makeSelect();
         enhanceSelect(select);

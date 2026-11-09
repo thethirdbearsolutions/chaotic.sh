@@ -304,7 +304,13 @@ function openPopover(select, button, returnTo) {
         close(false);
     };
 
-    const onReflow = () => place();
+    // Scrolling the list itself is not a reflow. The capture listener sees
+    // it too, and place() clears the max-height to measure, which snapped
+    // the list back to its top on every wheel step (CHT-2118).
+    const onReflow = (e) => {
+        if (e?.type === 'scroll' && e.target instanceof Node && popover.contains(e.target)) return;
+        place();
+    };
     // Escape with focus outside the popover (a click left it on the page):
     // the popover is still the top layer, so it closes first.
     const onDocKey = (e) => {

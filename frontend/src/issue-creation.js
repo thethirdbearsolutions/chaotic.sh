@@ -18,6 +18,7 @@ import { formatStatus, formatPriority, formatIssueType, renderAvatar, escapeHtml
 import { formatAssigneeName, formatAssigneeOptionLabel, getAssigneeOptionList } from './assignees.js';
 import { registerActions } from './event-delegation.js';
 import { BOARD_STATUSES, PRIORITY_OPTIONS } from './constants.js';
+import { enhanceSelect } from './select-picker.js';
 
 const ISSUE_TEMPLATES = [
     {
@@ -80,14 +81,14 @@ export function showCreateIssueModal(preselectedProjectId = null) {
     setCreateIssueLabelIds([]);
 
     const projectOptions = getProjects().map(p => `
-        <option value="${p.id}" ${p.id === projectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>
+        <option value="${escapeAttr(p.id)}" data-hint="${escapeAttr(p.key || '')}" ${p.id === projectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>
     `).join('');
 
     document.getElementById('modal-title').textContent = '';
     document.getElementById('modal-content').innerHTML = `
         <div class="create-issue-modal">
             <div class="create-issue-header">
-                <select id="create-issue-project" class="project-select" data-action="update-create-project">
+                <select id="create-issue-project" class="project-select" data-picker aria-label="Project" data-action="update-create-project">
                     <option value="">Select project</option>
                     ${projectOptions}
                 </select>
@@ -165,6 +166,9 @@ export function showCreateIssueModal(preselectedProjectId = null) {
             <input type="hidden" id="create-issue-sprint" value="">
         </div>
     `;
+    // The same searchable picker as the sidebar's project switcher, not the
+    // browser's own dropdown (CHT-2119).
+    enhanceSelect(document.getElementById('create-issue-project'));
     showModal();
     updateCreateIssueLabelsLabel();
 
