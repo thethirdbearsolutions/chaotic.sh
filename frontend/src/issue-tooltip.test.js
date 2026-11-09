@@ -95,7 +95,7 @@ describe('Issue Tooltip', () => {
             // Create a test link
             const link = document.createElement('a');
             link.className = 'issue-link';
-            link.href = '#/issue/CHT-123';
+            link.href = '/issue/CHT-123';
             link.textContent = 'CHT-123';
             document.body.appendChild(link);
 
@@ -120,7 +120,7 @@ describe('Issue Tooltip', () => {
             // Create a test link
             const link = document.createElement('a');
             link.className = 'issue-link';
-            link.href = '#/issue/CHT-123';
+            link.href = '/issue/CHT-123';
             document.body.appendChild(link);
 
             // Trigger mouseout
@@ -150,7 +150,7 @@ describe('Issue Tooltip', () => {
 
             const link = document.createElement('a');
             link.className = 'issue-link';
-            link.href = '#/issue/TEST-456';
+            link.href = '/issue/TEST-456';
             link.textContent = 'Some Text';
             document.body.appendChild(link);
 
@@ -207,7 +207,7 @@ describe('Issue Tooltip', () => {
             // Create and hover a link to show tooltip
             const link = document.createElement('a');
             link.className = 'issue-link';
-            link.href = '#/issue/CHT-200';
+            link.href = '/issue/CHT-200';
             document.body.appendChild(link);
 
             link.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
@@ -243,7 +243,7 @@ describe('Issue Tooltip', () => {
 
             const link = document.createElement('a');
             link.className = 'issue-link';
-            link.href = '#/issue/CHT-100';
+            link.href = '/issue/CHT-100';
             document.body.appendChild(link);
 
             // First hover

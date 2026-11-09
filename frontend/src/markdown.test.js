@@ -133,7 +133,7 @@ describe('Markdown rendering security', () => {
         if (match[1]) {
           const issueId = match[1];
           const link = document.createElement('a');
-          link.href = `#/issue/${issueId}`;
+          link.href = `/issue/${issueId}`;
           link.className = 'issue-link';
           link.textContent = issueId;
           fragment.appendChild(link);
@@ -301,7 +301,7 @@ describe('Markdown rendering security', () => {
       const text = 'This references CHT-123 in the text';
       const result = renderCommentContent(text);
 
-      expect(result).toContain('href="#/issue/CHT-123"');
+      expect(result).toContain('href="/issue/CHT-123"');
       expect(result).toContain('class="issue-link"');
     });
 
@@ -309,16 +309,16 @@ describe('Markdown rendering security', () => {
       const text = 'CHT-123 and CHT-456 are related';
       const result = renderCommentContent(text);
 
-      expect(result).toContain('href="#/issue/CHT-123"');
-      expect(result).toContain('href="#/issue/CHT-456"');
+      expect(result).toContain('href="/issue/CHT-123"');
+      expect(result).toContain('href="/issue/CHT-456"');
     });
 
     it('handles issue references with different prefixes', () => {
       const text = 'ABC-1 and LONGPREFIX-999';
       const result = renderCommentContent(text);
 
-      expect(result).toContain('href="#/issue/ABC-1"');
-      expect(result).toContain('href="#/issue/LONGPREFIX-999"');
+      expect(result).toContain('href="/issue/ABC-1"');
+      expect(result).toContain('href="/issue/LONGPREFIX-999"');
     });
 
     it('does not convert invalid issue references', () => {
@@ -326,13 +326,13 @@ describe('Markdown rendering security', () => {
       const result = renderCommentContent(text);
 
       // A-1 is too short (needs 2-10 chars)
-      expect(result).not.toContain('href="#/issue/A-1"');
+      expect(result).not.toContain('href="/issue/A-1"');
       // TOOLONGPREFIX-1 is too long (>10 chars)
-      expect(result).not.toContain('href="#/issue/TOOLONGPREFIX-1"');
+      expect(result).not.toContain('href="/issue/TOOLONGPREFIX-1"');
       // CHT- has no number
-      expect(result).not.toContain('href="#/issue/CHT-"');
+      expect(result).not.toContain('href="/issue/CHT-"');
       // CHT-ABC has letters instead of numbers
-      expect(result).not.toContain('href="#/issue/CHT-ABC"');
+      expect(result).not.toContain('href="/issue/CHT-ABC"');
     });
 
     it('preserves issue links within markdown code blocks', () => {
@@ -391,7 +391,7 @@ describe('Markdown rendering security', () => {
 
       expect(result).toContain('class="mention"');
       expect(result).toContain('@alice');
-      expect(result).toContain('href="#/issue/CHT-123"');
+      expect(result).toContain('href="/issue/CHT-123"');
     });
 
     it('handles markdown formatting with issue references', () => {
@@ -399,7 +399,7 @@ describe('Markdown rendering security', () => {
       const result = renderCommentContent(text);
 
       expect(result).toContain('<strong>Important</strong>');
-      expect(result).toContain('href="#/issue/CHT-123"');
+      expect(result).toContain('href="/issue/CHT-123"');
     });
 
     it('handles markdown formatting with mentions', () => {
@@ -418,7 +418,7 @@ describe('Markdown rendering security', () => {
       expect(result).toContain('class="mention"');
       expect(result).toContain('@alice');
       expect(result).toContain('<strong>please review</strong>');
-      expect(result).toContain('href="#/issue/CHT-123"');
+      expect(result).toContain('href="/issue/CHT-123"');
       expect(result).toContain('<em>urgently</em>');
     });
 
@@ -470,15 +470,15 @@ describe('Markdown rendering security', () => {
       const result = renderCommentContent(text);
 
       // Should not create a link (prefix too long)
-      expect(result).not.toContain('href="#/issue/');
+      expect(result).not.toContain('href="/issue/');
     });
 
     it('handles issue references at start and end of text', () => {
       const text = 'CHT-123 in the middle CHT-456';
       const result = renderCommentContent(text);
 
-      expect(result).toContain('href="#/issue/CHT-123"');
-      expect(result).toContain('href="#/issue/CHT-456"');
+      expect(result).toContain('href="/issue/CHT-123"');
+      expect(result).toContain('href="/issue/CHT-456"');
     });
 
     it('handles mentions at start of text', () => {

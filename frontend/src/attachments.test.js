@@ -172,7 +172,7 @@ describe('rendered markdown', () => {
 
     it('still links issue ids and mentions', () => {
         const html = renderCommentContent(`CHT-1 @sam ![a](${PATH})`);
-        expect(html).toContain('href="#/issue/CHT-1"');
+        expect(html).toContain('href="/issue/CHT-1"');
         expect(html).toContain('class="mention"');
     });
 });

@@ -44,6 +44,21 @@ describe('renderRelatedWork', () => {
         expect(el.querySelectorAll('.related-add').length).toBe(1);
     });
 
+    it('lists linked documents last, escaped, with their real path (CHT-2121)', () => {
+        const el = dom(renderRelatedWork(issue,
+            [{ id: 's1', identifier: 'CHT-2', title: 'Child', status: 'todo' }], [],
+            { documents: [{ id: 'd 1', title: '<img src=x onerror=alert(1)>' }, { id: 'd2', title: '' }] }));
+        const kinds = [...el.querySelectorAll('.related-kind')].map(k => k.textContent);
+        expect(kinds).toEqual(['Sub-issue', 'Document', 'Document']);
+        const docs = el.querySelectorAll('[data-action="open-linked-document"]');
+        expect(docs[0].getAttribute('href')).toBe('/document/d%201');
+        expect(docs[0].dataset.documentId).toBe('d 1');
+        expect(el.querySelector('.related-list img')).toBeNull();
+        expect(docs[1].textContent).toBe('Untitled');
+        // A document is unlinked from the document, not from here.
+        expect(el.querySelectorAll('[data-action="remove-relation"]').length).toBe(0);
+    });
+
     it('is a heading and an Add when there is nothing', () => {
         const el = dom(renderRelatedWork(issue, [], []));
         expect(el.querySelector('.related-list')).toBeNull();

@@ -1602,7 +1602,7 @@ describe('initIssueLinkHandler DOM bindings', () => {
     it('clicking issue-link anchor navigates to issue', async () => {
         const link = document.createElement('a');
         link.className = 'issue-link';
-        link.href = '#/issue/CHT-999';
+        link.href = '/issue/CHT-999';
         document.body.appendChild(link);
 
         api.getToken.mockReturnValue(null);
@@ -1611,6 +1611,41 @@ describe('initIssueLinkHandler DOM bindings', () => {
         const { navigateToIssueByIdentifier } = await import('./router.js');
         link.click();
         expect(navigateToIssueByIdentifier).toHaveBeenCalledWith('CHT-999');
+
+        link.remove();
+    });
+
+    it.each([['metaKey'], ['ctrlKey'], ['shiftKey']])('leaves a %s click to the browser (CHT-2117)', async (mod) => {
+        const link = document.createElement('a');
+        link.className = 'issue-link';
+        link.href = '/issue/CHT-998';
+        document.body.appendChild(link);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+
+        const { navigateToIssueByIdentifier } = await import('./router.js');
+        navigateToIssueByIdentifier.mockClear();
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, [mod]: true });
+        link.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(navigateToIssueByIdentifier).not.toHaveBeenCalled();
+
+        link.remove();
+    });
+
+    it('still follows the older #/issue/ form', async () => {
+        const link = document.createElement('a');
+        link.className = 'issue-link';
+        link.href = '#/issue/CHT-997';
+        document.body.appendChild(link);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+
+        const { navigateToIssueByIdentifier } = await import('./router.js');
+        link.click();
+        expect(navigateToIssueByIdentifier).toHaveBeenCalledWith('CHT-997');
 
         link.remove();
     });

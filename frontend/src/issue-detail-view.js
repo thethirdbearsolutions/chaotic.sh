@@ -722,7 +722,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
         // the whole detail view. Isolate it like documents.js's viewDocument()
         // does, and surface a small notice in the comments section instead.
         let commentsLoadFailed = false;
-        const [issue, comments, activities, subIssues, relations, ritualStatus, attachments] = await Promise.all([
+        const [issue, comments, activities, subIssues, relations, ritualStatus, attachments, linkedDocuments] = await Promise.all([
             api.getIssue(issueId),
             api.getComments(issueId).catch(e => { console.error('Failed to load comments:', e); commentsLoadFailed = true; return []; }),
             api.getActivities(issueId, 0, ACTIVITY_PAGE),
@@ -731,6 +731,9 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             api.getTicketRitualsStatus(issueId).catch(() => ({ pending_rituals: [], completed_rituals: [] })),
             // A failed list shows a notice in its section, not a failed page.
             api.getAttachments(issueId).catch(e => { console.error('Failed to load attachments:', e); return null; }),
+            // Linked documents (CHT-2121). A failure leaves them out rather
+            // than failing the page.
+            api.getIssueDocuments(issueId).catch(e => { console.error('Failed to load linked documents:', e); return []; }),
         ]);
 
         // Comments in time order. Attestations reach the timeline as
@@ -866,7 +869,7 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
 
                     ${renderAttachmentsSection(issue.id, attachments, attachmentViewer(issue))}
 
-                    ${renderRelatedWork(issue, subIssues, relations, { formatEstimate })}
+                    ${renderRelatedWork(issue, subIssues, relations, { formatEstimate, documents: linkedDocuments })}
 
                     ${renderTimeline({
                         comments: allComments, activities, ritualStatus, commentsLoadFailed, issueId: issue.id,
@@ -1542,6 +1545,16 @@ function navigateAdjacentIssue(direction) {
 // Event delegation actions
 // ============================================================================
 
+/**
+ * A plain click opens the document in the app; a modified click keeps the
+ * link's own new-tab behaviour.
+ */
+function openDocumentLink(event, documentId) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button === 1) return;
+    event.preventDefault();
+    viewDocument(documentId);
+}
+
 registerActions({
     'retry-issue-comments': (_event, data) => {
         // Simplest correct fix (CHT-1224, mirrors documents.js's
@@ -1566,13 +1579,8 @@ registerActions({
         if (selection && !selection.isCollapsed && selection.toString().trim()) return;
         editDescription(data.issueId);
     },
-    'open-gate-document': (event, data) => {
-        // Plain click opens the document in the app; a modified click keeps
-        // the link's own new-tab behaviour.
-        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1) return;
-        event.preventDefault();
-        viewDocument(data.documentId);
-    },
+    'open-gate-document': (event, data) => openDocumentLink(event, data.documentId),
+    'open-linked-document': (event, data) => openDocumentLink(event, data.documentId),
     'scroll-to-ticket-gate': () => {
         scrollToTicketGate();
     },
