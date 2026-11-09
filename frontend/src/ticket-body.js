@@ -3,9 +3,10 @@
  * ritual gate, rendered as one quiet page rather than a stack of boxed
  * sections.
  *
- * - Related work: sub-issues and relations in one list, with each row's
- *   kind on the right and a single "+ Add". When there is none it is a
- *   heading and that button, not an empty state.
+ * - Related work: sub-issues, relations and linked documents in one list,
+ *   with each row's kind on the right and a single "+ Add". When there is
+ *   none it is a heading and that button, not an empty state. Linked
+ *   documents had no place on the page at all until CHT-2121.
  * - Timeline: comments and activity in one stream, oldest first. Comments
  *   keep their full body; everything else is one line. An attestation is
  *   an event, not a second copy of its note: the one still waiting for
@@ -23,6 +24,7 @@ import { getStatusIcon } from './issue-list.js';
 import { renderCommentContent } from './rich-text.js';
 
 const ICON = {
+    doc: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
     remove: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
 };
 
@@ -38,15 +40,23 @@ function relationKind(rel) {
     return 'Related';
 }
 
-const KIND_ORDER = { 'Blocked by': 0, 'Sub-issue': 1, 'Blocks': 2, 'Duplicates': 3, 'Duplicated by': 3, 'Related': 4 };
+const KIND_ORDER = { 'Blocked by': 0, 'Sub-issue': 1, 'Blocks': 2, 'Duplicates': 3, 'Duplicated by': 3, 'Related': 4, 'Document': 5 };
+
+// A plain click opens the document in the app; a modified click is left to
+// the browser, so the href must be the document's real path.
+const documentLink = (doc) =>
+    `<a href="/document/${encodeURIComponent(doc.id)}" class="related-link" data-action="open-linked-document" data-document-id="${escapeAttr(doc.id)}"><span class="related-title">${escapeHtml(doc.title || 'Untitled')}</span></a>`;
 
 /**
- * Sub-issues and relations as one list.
+ * Sub-issues, relations and linked documents as one list.
  * @param {Object} issue
  * @param {Array} subIssues
  * @param {Array} relations
+ * @param {Object} [options]
+ * @param {Array|null} [options.documents] - documents linked to the issue;
+ *   null when their list could not be loaded
  */
-export function renderRelatedWork(issue, subIssues = [], relations = [], { formatEstimate = null } = {}) {
+export function renderRelatedWork(issue, subIssues = [], relations = [], { formatEstimate = null, documents = [] } = {}) {
     const estimate = (s) => (s.estimate == null ? ''
         : ` · ${escapeHtml(formatEstimate ? formatEstimate(s.estimate, s.project_id || issue.project_id) : `${s.estimate} pts`)}`);
     const rows = [
@@ -72,6 +82,15 @@ export function renderRelatedWork(issue, subIssues = [], relations = [], { forma
                 </li>`,
             };
         }),
+        ...(documents || []).map(doc => ({
+            kind: 'Document',
+            html: `
+                <li class="related-row">
+                    <span class="related-status">${ICON.doc}</span>
+                    ${documentLink(doc)}
+                    <span class="related-kind">Document</span>
+                </li>`,
+        })),
     ].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
 
     return `
@@ -87,6 +106,7 @@ export function renderRelatedWork(issue, subIssues = [], relations = [], { forma
                 </details>
             </div>
             ${rows.length ? `<ul class="related-list">${rows.map(r => r.html).join('')}</ul>` : ''}
+            ${documents === null ? '<p class="related-note">Linked documents could not be loaded.</p>' : ''}
         </section>`;
 }
 

@@ -699,14 +699,20 @@ function initIssueLinkHandler() {
     // Handle clicks on issue-link anchors created by convertIssueReferencesToMarkdown
     document.addEventListener('click', (e) => {
         const target = e.target.closest('a.issue-link');
-        if (target) {
-            e.preventDefault();
-            const href = target.getAttribute('href');
-            if (href && href.startsWith('#/issue/')) {
-                const identifier = href.replace('#/issue/', '');
-                navigateToIssueByIdentifier(identifier);
-            }
-        }
+        if (!target) return;
+        // A modified click (Cmd/Ctrl/Shift, middle button) is the browser's:
+        // new tab or window. This used to preventDefault every click, so
+        // Cmd+click on an issue reference did nothing at all (CHT-2117).
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        const href = target.getAttribute('href') || '';
+        // `/issue/X` since CHT-2117. The older `#/issue/X` form is only
+        // reachable from hand-written HTML now, and still works.
+        const match = href.match(/^(?:#)?\/issue\/([^/?#]+)$/);
+        if (!match) return;
+        let identifier;
+        try { identifier = decodeURIComponent(match[1]); } catch { return; }
+        e.preventDefault();
+        navigateToIssueByIdentifier(identifier);
     });
 }
 

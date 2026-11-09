@@ -170,6 +170,14 @@ function optionList(select) {
         .map(o => ({ value: o.value, text: o.textContent.trim(), hint: o.dataset.hint || '', disabled: o.disabled }));
 }
 
+/** Stop the click that ends the current press, and only that one. */
+function swallowNextClick() {
+    const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+    document.addEventListener('click', stop, { capture: true, once: true });
+    // A press that ends in no click (dragged off) must not eat a later one.
+    setTimeout(() => document.removeEventListener('click', stop, true), 1000);
+}
+
 function openPopover(select, button, returnTo) {
     closeSelectPicker({ restoreFocus: false });
     const options = optionList(select);
@@ -210,6 +218,9 @@ function openPopover(select, button, returnTo) {
     };
 
     const place = () => {
+        // Clearing max-height to measure clamps the list's scroll to its
+        // top; keep where it was (CHT-2118).
+        const scrollTop = list.scrollTop;
         const r = button.getBoundingClientRect();
         const vw = window.visualViewport?.width || window.innerWidth;
         const vh = window.visualViewport?.height || window.innerHeight;
@@ -231,6 +242,7 @@ function openPopover(select, button, returnTo) {
             popover.style.maxHeight = `${Math.max(120, below)}px`;
             popover.style.top = `${r.bottom + 4}px`;
         }
+        list.scrollTop = scrollTop;
     };
 
     const choose = (o) => {
@@ -301,10 +313,21 @@ function openPopover(select, button, returnTo) {
 
     const onPointer = (e) => {
         if (popover.contains(e.target) || button.contains(e.target)) return;
+        // A press on a modal's backdrop only dismisses the picker, as a
+        // native select's menu did: the click that follows would otherwise
+        // close the whole modal and lose what was entered (CHT-2119).
+        const overlay = button.closest('#modal-overlay');
+        if (overlay && overlay.contains(e.target) && !e.target.closest('.modal')) swallowNextClick();
         close(false);
     };
 
-    const onReflow = () => place();
+    // Scrolling the list itself is not a reflow. The capture listener sees
+    // it too, and place() clears the max-height to measure, which snapped
+    // the list back to its top on every wheel step (CHT-2118).
+    const onReflow = (e) => {
+        if (e?.type === 'scroll' && e.target instanceof Node && popover.contains(e.target)) return;
+        place();
+    };
     // Escape with focus outside the popover (a click left it on the page):
     // the popover is still the top layer, so it closes first.
     const onDocKey = (e) => {

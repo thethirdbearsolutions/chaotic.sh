@@ -3,6 +3,8 @@
  * Modal, toast notifications, and dropdown management
  */
 
+import { closeSelectPicker } from './select-picker.js';
+
 let currentDropdownKeyHandler = null;
 
 // Shared focusable-element selector for the modal focus trap (CHT-1215),
@@ -94,6 +96,9 @@ export function showModal() {
  */
 export function closeModal() {
   closeAllDropdowns();
+  // A picker opened from the modal must not outlive it: Cmd+Enter and
+  // Cmd+K pass through an open picker and close the modal (CHT-2119).
+  closeSelectPicker({ restoreFocus: false });
   modalMarkedDirty = false;
   document.getElementById('modal-overlay').classList.add('hidden');
   document.querySelector('.modal')?.classList.remove('modal-wide');

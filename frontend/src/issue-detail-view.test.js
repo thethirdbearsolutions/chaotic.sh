@@ -14,6 +14,7 @@ vi.mock('./api.js', () => ({
         getRelations: vi.fn().mockResolvedValue([]),
         getTicketRitualsStatus: vi.fn().mockResolvedValue({ pending_rituals: [], completed_rituals: [] }),
         getAttachments: vi.fn().mockResolvedValue([]),
+        getIssueDocuments: vi.fn().mockResolvedValue([]),
         getSprints: vi.fn().mockResolvedValue([]),
         createComment: vi.fn().mockResolvedValue({}),
         updateIssue: vi.fn().mockResolvedValue({}),
@@ -553,6 +554,20 @@ describe('issue-detail-view', () => {
             expect(document.querySelector('#issue-attachments .attachments-hint').textContent).toMatch(/could not be loaded/);
         });
 
+        it('lists linked documents under Related work, and leaves them out when the list fails (CHT-2121)', async () => {
+            api.getIssueDocuments.mockResolvedValueOnce([{ id: 'doc-9', title: 'Design spec' }]);
+            await viewIssue('issue-1');
+            expect(api.getIssueDocuments).toHaveBeenCalledWith('issue-1');
+            const link = document.querySelector('.related-work [data-action="open-linked-document"]');
+            expect(link.textContent).toBe('Design spec');
+            expect(link.getAttribute('href')).toBe('/document/doc-9');
+
+            api.getIssueDocuments.mockRejectedValueOnce(new Error('down'));
+            expect(await viewIssue('issue-1', false)).toBe('rendered');
+            expect(document.querySelector('.related-work [data-action="open-linked-document"]')).toBeNull();
+            expect(document.querySelector('.related-work .related-note').textContent).toMatch(/could not be loaded/);
+        });
+
         it('reads admin from the issue\'s own team, and says unknown for another team (CHT-1996)', async () => {
             const { attachmentViewer } = await import('./issue-detail-view.js');
             const { getProjects } = await import('./projects.js');
@@ -866,7 +881,7 @@ describe('issue-detail-view', () => {
             it('does not open the editor when the click lands on an issue-ref link inside the content', async () => {
                 await viewIssue('issue-1');
                 const content = document.querySelector('.description-content');
-                content.innerHTML = '<a class="issue-link" href="#/issue/CHT-1">CHT-1</a>';
+                content.innerHTML = '<a class="issue-link" href="/issue/CHT-1">CHT-1</a>';
                 const link = content.querySelector('a');
 
                 detailActions['edit-description']({ target: link }, { issueId: 'issue-1' });
@@ -1690,6 +1705,26 @@ describe('issue-detail-view', () => {
             detailActions['open-gate-document'](modified, { documentId: 'doc-1' });
             expect(modified.preventDefault).not.toHaveBeenCalled();
             expect(viewDocument).not.toHaveBeenCalled();
+        });
+
+        it('opens a document from Related work the same way (CHT-2121)', () => {
+            const plain = { preventDefault: vi.fn(), metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, button: 0 };
+            detailActions['open-linked-document'](plain, { documentId: 'doc-2' });
+            expect(plain.preventDefault).toHaveBeenCalled();
+            expect(viewDocument).toHaveBeenCalledWith('doc-2');
+
+            viewDocument.mockReset();
+            const modified = { ...plain, preventDefault: vi.fn(), ctrlKey: true };
+            detailActions['open-linked-document'](modified, { documentId: 'doc-2' });
+            expect(modified.preventDefault).not.toHaveBeenCalled();
+            expect(viewDocument).not.toHaveBeenCalled();
+        });
+
+        it('opens a linked document on Enter, which carries no mouse button (CHT-2121)', () => {
+            const enter = { type: 'keydown', key: 'Enter', preventDefault: vi.fn() };
+            detailActions['open-linked-document'](enter, { documentId: 'doc-3' });
+            expect(enter.preventDefault).toHaveBeenCalled();
+            expect(viewDocument).toHaveBeenCalledWith('doc-3');
         });
 
         it('a reload that lands after another ticket opened does not repaint it', async () => {

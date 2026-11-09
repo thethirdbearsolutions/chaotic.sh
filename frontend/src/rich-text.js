@@ -30,6 +30,16 @@ function renderRich(content) {
 }
 
 /**
+ * Where an issue reference points. A real path, not a `#/issue/` fragment:
+ * a fragment resolves against the page it sits on, so a new tab opened from
+ * it (Cmd/Ctrl+click, middle click) loaded the current page, not the issue
+ * (CHT-2117).
+ */
+export function issueHref(identifier) {
+    return `/issue/${encodeURIComponent(identifier)}`;
+}
+
+/**
  * Process text nodes in an element with a callback
  * @param {Element} element - DOM element
  * @param {Function} callback - Function to call on each text node
@@ -105,7 +115,7 @@ export function addIssueLinksAndMentions(textNode) {
             // Issue reference
             const issueId = match[1];
             const link = document.createElement('a');
-            link.href = `#/issue/${issueId}`;
+            link.href = issueHref(issueId);
             link.className = 'issue-link';
             link.textContent = issueId;
             fragment.appendChild(link);
@@ -164,7 +174,7 @@ export function addIssueLinks(textNode) {
         // Issue reference
         const issueId = match[1];
         const link = document.createElement('a');
-        link.href = `#/issue/${issueId}`;
+        link.href = issueHref(issueId);
         link.className = 'issue-link';
         link.textContent = issueId;
         fragment.appendChild(link);
