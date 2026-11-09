@@ -30,11 +30,6 @@ function renderRich(content) {
 }
 
 /**
- * Process text nodes in an element with a callback
- * @param {Element} element - DOM element
- * @param {Function} callback - Function to call on each text node
- */
-/**
  * Where an issue reference points. A real path, not a `#/issue/` fragment:
  * a fragment resolves against the page it sits on, so a new tab opened from
  * it (Cmd/Ctrl+click, middle click) loaded the current page, not the issue
@@ -44,6 +39,11 @@ export function issueHref(identifier) {
     return `/issue/${encodeURIComponent(identifier)}`;
 }
 
+/**
+ * Process text nodes in an element with a callback
+ * @param {Element} element - DOM element
+ * @param {Function} callback - Function to call on each text node
+ */
 export function processTextNodes(element, callback) {
     // Walk through all child nodes, but skip code/pre elements
     const walker = document.createTreeWalker(

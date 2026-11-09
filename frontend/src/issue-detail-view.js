@@ -731,9 +731,9 @@ export async function viewIssue(issueId, pushHistory = true, { refresh = false }
             api.getTicketRitualsStatus(issueId).catch(() => ({ pending_rituals: [], completed_rituals: [] })),
             // A failed list shows a notice in its section, not a failed page.
             api.getAttachments(issueId).catch(e => { console.error('Failed to load attachments:', e); return null; }),
-            // Linked documents (CHT-2121). A failure leaves them out rather
-            // than failing the page.
-            api.getIssueDocuments(issueId).catch(e => { console.error('Failed to load linked documents:', e); return []; }),
+            // Linked documents (CHT-2121). A failure shows a note under
+            // Related work rather than failing the page.
+            api.getIssueDocuments(issueId).catch(e => { console.error('Failed to load linked documents:', e); return null; }),
         ]);
 
         // Comments in time order. Attestations reach the timeline as

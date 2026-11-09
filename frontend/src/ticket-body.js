@@ -53,7 +53,8 @@ const documentLink = (doc) =>
  * @param {Array} subIssues
  * @param {Array} relations
  * @param {Object} [options]
- * @param {Array} [options.documents] - documents linked to the issue
+ * @param {Array|null} [options.documents] - documents linked to the issue;
+ *   null when their list could not be loaded
  */
 export function renderRelatedWork(issue, subIssues = [], relations = [], { formatEstimate = null, documents = [] } = {}) {
     const estimate = (s) => (s.estimate == null ? ''
@@ -105,6 +106,7 @@ export function renderRelatedWork(issue, subIssues = [], relations = [], { forma
                 </details>
             </div>
             ${rows.length ? `<ul class="related-list">${rows.map(r => r.html).join('')}</ul>` : ''}
+            ${documents === null ? '<p class="related-note">Linked documents could not be loaded.</p>' : ''}
         </section>`;
 }
 

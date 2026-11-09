@@ -705,11 +705,14 @@ function initIssueLinkHandler() {
         // Cmd+click on an issue reference did nothing at all (CHT-2117).
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
         const href = target.getAttribute('href') || '';
-        // `/issue/X` since CHT-2117; the older `#/issue/X` form still works.
+        // `/issue/X` since CHT-2117. The older `#/issue/X` form is only
+        // reachable from hand-written HTML now, and still works.
         const match = href.match(/^(?:#)?\/issue\/([^/?#]+)$/);
         if (!match) return;
+        let identifier;
+        try { identifier = decodeURIComponent(match[1]); } catch { return; }
         e.preventDefault();
-        navigateToIssueByIdentifier(decodeURIComponent(match[1]));
+        navigateToIssueByIdentifier(identifier);
     });
 }
 

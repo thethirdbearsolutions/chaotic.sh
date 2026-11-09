@@ -565,6 +565,7 @@ describe('issue-detail-view', () => {
             api.getIssueDocuments.mockRejectedValueOnce(new Error('down'));
             expect(await viewIssue('issue-1', false)).toBe('rendered');
             expect(document.querySelector('.related-work [data-action="open-linked-document"]')).toBeNull();
+            expect(document.querySelector('.related-work .related-note').textContent).toMatch(/could not be loaded/);
         });
 
         it('reads admin from the issue\'s own team, and says unknown for another team (CHT-1996)', async () => {
@@ -1717,6 +1718,13 @@ describe('issue-detail-view', () => {
             detailActions['open-linked-document'](modified, { documentId: 'doc-2' });
             expect(modified.preventDefault).not.toHaveBeenCalled();
             expect(viewDocument).not.toHaveBeenCalled();
+        });
+
+        it('opens a linked document on Enter, which carries no mouse button (CHT-2121)', () => {
+            const enter = { type: 'keydown', key: 'Enter', preventDefault: vi.fn() };
+            detailActions['open-linked-document'](enter, { documentId: 'doc-3' });
+            expect(enter.preventDefault).toHaveBeenCalled();
+            expect(viewDocument).toHaveBeenCalledWith('doc-3');
         });
 
         it('a reload that lands after another ticket opened does not repaint it', async () => {

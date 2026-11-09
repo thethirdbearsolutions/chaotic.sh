@@ -1634,6 +1634,31 @@ describe('initIssueLinkHandler DOM bindings', () => {
         link.remove();
     });
 
+    it.each([
+        ['an Alt click', '/issue/CHT-996', { altKey: true }],
+        ['a non-main button', '/issue/CHT-996', { button: 1 }],
+        ['a link that is not to an issue', 'https://example.com/x', {}],
+        ['a malformed escape', '/issue/%E0', {}],
+    ])('neither blocks nor routes %s (CHT-2117)', async (_name, href, init) => {
+        const link = document.createElement('a');
+        link.className = 'issue-link';
+        link.setAttribute('href', href);
+        document.body.appendChild(link);
+
+        api.getToken.mockReturnValue(null);
+        await domReadyCallback();
+
+        const { navigateToIssueByIdentifier } = await import('./router.js');
+        navigateToIssueByIdentifier.mockClear();
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true, ...init });
+        // Keep jsdom from attempting the navigation itself.
+        document.addEventListener('click', (ev) => ev.preventDefault(), { once: true });
+        link.dispatchEvent(event);
+        expect(navigateToIssueByIdentifier).not.toHaveBeenCalled();
+
+        link.remove();
+    });
+
     it('still follows the older #/issue/ form', async () => {
         const link = document.createElement('a');
         link.className = 'issue-link';

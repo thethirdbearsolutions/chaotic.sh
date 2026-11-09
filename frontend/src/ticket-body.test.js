@@ -59,6 +59,12 @@ describe('renderRelatedWork', () => {
         expect(el.querySelectorAll('[data-action="remove-relation"]').length).toBe(0);
     });
 
+    it('says so when linked documents could not be loaded (CHT-2121)', () => {
+        expect(dom(renderRelatedWork(issue, [], [], { documents: null })).querySelector('.related-note').textContent)
+            .toMatch(/could not be loaded/);
+        expect(dom(renderRelatedWork(issue, [], [], { documents: [] })).querySelector('.related-note')).toBeNull();
+    });
+
     it('is a heading and an Add when there is nothing', () => {
         const el = dom(renderRelatedWork(issue, [], []));
         expect(el.querySelector('.related-list')).toBeNull();

@@ -10562,6 +10562,7 @@ body.theme-light {
 .related-add-menu button:hover,
 .related-add-menu button:focus-visible { background: var(--bg-tertiary); }
 .related-list { list-style: none; margin: 0; padding: 0; }
+.related-note { margin: 4px 0 0; color: var(--text-muted); font-size: var(--font-sm); }
 .related-row {
     display: flex;
     align-items: center;
