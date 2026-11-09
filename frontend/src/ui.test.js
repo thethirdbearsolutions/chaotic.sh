@@ -17,6 +17,7 @@ import {
   focusModalFirstField,
   showMentionWarnings,
 } from './ui.js';
+import { enhanceSelect, isSelectPickerOpen } from './select-picker.js';
 
 describe('showModal', () => {
   beforeEach(() => {
@@ -46,6 +47,15 @@ describe('isModalOpen', () => {
 describe('closeModal', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="modal-overlay"></div>';
+  });
+
+  it('closes a picker opened from the modal (CHT-2119)', () => {
+    document.body.innerHTML = '<div id="modal-overlay"><div class="modal"><select id="s" data-picker><option value="a">A</option></select></div></div>';
+    enhanceSelect(document.getElementById('s')).click();
+    expect(isSelectPickerOpen()).toBe(true);
+    closeModal();
+    expect(isSelectPickerOpen()).toBe(false);
+    expect(document.querySelector('.picker-popover')).toBeNull();
   });
 
   it('adds hidden class to modal overlay', () => {

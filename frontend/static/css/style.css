@@ -11371,3 +11371,9 @@ body.theme-light {
 .epic-page-section .epic-filter {
     margin-bottom: var(--space-sm);
 }
+
+/* New Issue: the project picker keeps the look the select had (CHT-2119). */
+.create-issue-header .picker-btn {
+    flex-shrink: 0;
+    background: var(--bg-tertiary);
+}

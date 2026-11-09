@@ -42,6 +42,32 @@ describe('select picker (CHT-1961)', () => {
         expect(popover.style.maxHeight).not.toBe('200px');
     });
 
+    it('a press on a modal backdrop dismisses only the picker (CHT-2119)', () => {
+        document.body.innerHTML = '<div id="modal-overlay"><div class="modal"><select id="s" data-picker><option value="a">A</option></select><input id="in"></div></div>';
+        const overlay = document.getElementById('modal-overlay');
+        enhanceSelect(document.getElementById('s')).click();
+        expect(isSelectPickerOpen()).toBe(true);
+        const onOverlayClick = vi.fn();
+        overlay.addEventListener('click', onOverlayClick);
+        overlay.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        expect(isSelectPickerOpen()).toBe(false);
+        overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(onOverlayClick).not.toHaveBeenCalled();
+        // Only that one click: the next reaches the backdrop.
+        overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(onOverlayClick).toHaveBeenCalledTimes(1);
+
+        // A press inside the modal closes the picker and keeps its click.
+        enhanceSelect(document.getElementById('s'));
+        document.querySelector('.picker-btn').click();
+        const input = document.getElementById('in');
+        const onInputClick = vi.fn();
+        input.addEventListener('click', onInputClick);
+        input.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        input.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(onInputClick).toHaveBeenCalledTimes(1);
+    });
+
     it('is idempotent', () => {
         const select = makeSelect();
         enhanceSelect(select);
