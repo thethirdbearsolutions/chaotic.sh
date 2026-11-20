@@ -9,10 +9,12 @@
  */
 
 import { renderMarkdown } from './gate-approvals.js';
+import { markDocumentLinks } from './doc-refs.js';
 
 /**
  * Sanitized markdown HTML (attachment references already marked by
- * renderMarkdown, CHT-1996), with issue links and @mentions. Parsed in a
+ * renderMarkdown, CHT-1996), with issue links, document links (CHT-2120)
+ * and @mentions. Parsed in a
  * <template>, whose content is inert: a div would fetch every <img> in it
  * at once, before the page even shows it.
  * @param {string} content
@@ -26,6 +28,8 @@ function renderRich(content) {
     template.innerHTML = sanitizedHtml;
     // Walk through text nodes only and apply transformations
     processTextNodes(template.content, addIssueLinksAndMentions);
+    // Links to a document open it in the app (CHT-2120).
+    markDocumentLinks(template.content);
     return template.innerHTML;
 }
 
@@ -51,10 +55,13 @@ export function processTextNodes(element, callback) {
         NodeFilter.SHOW_TEXT,
         {
             acceptNode: function(node) {
-                // Skip text nodes that are inside code or pre elements
+                // Skip text nodes inside code or pre elements, and inside
+                // links: an issue key in a link's text would put a link in
+                // a link, which the browser splits, emptying the outer one
+                // (CHT-2120).
                 let parent = node.parentElement;
                 while (parent && parent !== element) {
-                    if (parent.tagName === 'CODE' || parent.tagName === 'PRE') {
+                    if (parent.tagName === 'CODE' || parent.tagName === 'PRE' || parent.tagName === 'A') {
                         return NodeFilter.FILTER_REJECT;
                     }
                     parent = parent.parentElement;

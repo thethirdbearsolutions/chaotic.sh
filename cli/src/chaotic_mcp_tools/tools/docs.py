@@ -43,7 +43,12 @@ async def doc_view(
     backend: Backend,
     document_id: Annotated[str, Field(description="Document id, exact title, or id prefix.")],
 ) -> dict:
-    """Show a document's content, comments, and linked issues."""
+    """Show a document's content, comments, and linked issues.
+
+    Markdown anywhere (an issue description, a comment, another document)
+    references a document as a link to its id, `[Title](/document/<id>)`;
+    the web app shows it as a link that opens the document (CHT-2120).
+    """
     resolved_id = await backend.resolve_document(document_id)
     d = dict(await backend.get_document(resolved_id))
     d["comments"] = list(await backend.list_document_comments(d["id"]) or [])
@@ -94,7 +99,11 @@ async def doc_create(
         Field(description="Create as a global/team-wide document instead of project-scoped.")
     ] = False,
 ) -> dict:
-    """Create a new document."""
+    """Create a new document.
+
+    Reference it from markdown elsewhere as `[Title](/document/<id>)`, with
+    the id this returns (CHT-2120).
+    """
     if is_global and not project:
         project_id = None
         team_id = await backend.resolve_team(team)

@@ -468,3 +468,143 @@ describe('textarea/container parameterization (CHT-1214)', () => {
         expect(container.querySelectorAll('.mention-suggestion').length).toBe(1);
     });
 });
+
+// CHT-2120: `[[` offers documents and inserts a markdown link to the one picked.
+describe('[[ document references (CHT-2120)', () => {
+    let setupMentionAutocomplete;
+    let docRefSuggestions;
+    let textarea;
+    let container;
+    const DOCS = [
+        { id: 'd1', title: 'Release plan', icon: null },
+        { id: 'd2', title: 'Q3 [draft]', icon: '📄' },
+    ];
+
+    beforeEach(async () => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        vi.doMock('./teams.js', () => ({ getMembers: vi.fn(() => [{ id: '1', name: 'Ada Lovelace', email: 'ada@example.com' }]) }));
+        vi.doMock('./doc-refs.js', async () => {
+            const actual = await vi.importActual('./doc-refs.js');
+            return { ...actual, docRefSuggestions: vi.fn(async () => DOCS) };
+        });
+        ({ setupMentionAutocomplete } = await import('./mention-autocomplete.js'));
+        ({ docRefSuggestions } = await import('./doc-refs.js'));
+        document.body.innerHTML = `
+            <textarea id="edit-description"></textarea>
+            <div id="edit-description-mention-suggestions" class="hidden"></div>
+        `;
+        textarea = document.getElementById('edit-description');
+        container = document.getElementById('edit-description-mention-suggestions');
+        setupMentionAutocomplete('edit-description', 'edit-description-mention-suggestions');
+        textarea.focus();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.doUnmock('./doc-refs.js');
+    });
+
+    function type(text, caret = text.length) {
+        textarea.value = text;
+        textarea.setSelectionRange(caret, caret);
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    const settle = () => vi.advanceTimersByTimeAsync(200);
+    const titles = () => Array.from(container.querySelectorAll('.mention-name')).map(n => n.textContent.trim());
+    const keydown = (key) => textarea.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+
+    it('searches documents by what follows [[ and lists them', async () => {
+        type('See [[rel');
+        await settle();
+        expect(docRefSuggestions).toHaveBeenCalledWith('rel');
+        expect(container.classList.contains('hidden')).toBe(false);
+        expect(titles()).toEqual(['Release plan', '📄 Q3 [draft]']);
+    });
+
+    it('waits for typing to pause before searching', async () => {
+        type('[[r');
+        type('[[re');
+        type('[[rel');
+        await settle();
+        expect(docRefSuggestions).toHaveBeenCalledTimes(1);
+        expect(docRefSuggestions).toHaveBeenCalledWith('rel');
+    });
+
+    it('inserts the link on Enter, with the caret after it, keeping the rest', async () => {
+        const inputs = vi.fn();
+        type('See [[rel for scope.', 9);
+        textarea.addEventListener('input', inputs);
+        await settle();
+        keydown('Enter');
+        expect(textarea.value).toBe('See [Release plan](/document/d1) for scope.');
+        expect(textarea.selectionStart).toBe('See [Release plan](/document/d1)'.length);
+        expect(container.classList.contains('hidden')).toBe(true);
+        expect(inputs).toHaveBeenCalled();
+    });
+
+    it('inserts the clicked document, its title escaped', async () => {
+        type('[[q');
+        await settle();
+        container.querySelectorAll('.mention-suggestion')[1].click();
+        expect(textarea.value).toBe('[Q3 \\[draft\\]](/document/d2)');
+    });
+
+    it('drops an answer that comes back after the text moved on', async () => {
+        let release;
+        docRefSuggestions.mockImplementationOnce(() => new Promise(r => { release = r; }));
+        type('[[rel');
+        await settle();
+        type('[[rel]] done');
+        release(DOCS);
+        await settle();
+        expect(container.classList.contains('hidden')).toBe(true);
+    });
+
+    it('drops a search still out when Escape closes the list', async () => {
+        let release;
+        docRefSuggestions.mockImplementationOnce(() => new Promise(r => { release = r; }));
+        type('[[rel');
+        await settle();
+        // Show something so Escape has a list to close.
+        container.classList.remove('hidden');
+        keydown('Escape');
+        release(DOCS);
+        await settle();
+        expect(container.classList.contains('hidden')).toBe(true);
+    });
+
+    it('drops the list for an older query as soon as the query changes', async () => {
+        type('[[rel');
+        await settle();
+        expect(container.classList.contains('hidden')).toBe(false);
+        docRefSuggestions.mockImplementationOnce(() => new Promise(() => {}));
+        type('[[relxyz');
+        expect(container.classList.contains('hidden')).toBe(true);
+        const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+        textarea.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(textarea.value).toBe('[[relxyz');
+    });
+
+    it('keeps the list when a click lands on the same query', async () => {
+        type('[[rel');
+        await settle();
+        textarea.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(container.classList.contains('hidden')).toBe(false);
+        expect(docRefSuggestions).toHaveBeenCalledTimes(1);
+    });
+
+    it('offers nothing inside code', async () => {
+        type('`grid[[0` here', '`grid[[0'.length);
+        await settle();
+        expect(docRefSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('still offers @mentions', async () => {
+        type('cc @ad');
+        expect(container.querySelector('.mention-handle').textContent).toBe('@ada');
+        keydown('Enter');
+        expect(textarea.value).toBe('cc @ada ');
+    });
+});

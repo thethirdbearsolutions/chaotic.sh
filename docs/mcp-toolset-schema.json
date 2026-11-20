@@ -138,7 +138,7 @@
       }
     },
     "doc_create": {
-      "description": "Create a new document.",
+      "description": "Create a new document.\n\nReference it from markdown elsewhere as `[Title](/document/<id>)`, with\nthe id this returns (CHT-2120).",
       "inputSchema": {
         "properties": {
           "content": {
@@ -425,7 +425,7 @@
       }
     },
     "doc_view": {
-      "description": "Show a document's content, comments, and linked issues.",
+      "description": "Show a document's content, comments, and linked issues.\n\nMarkdown anywhere (an issue description, a comment, another document)\nreferences a document as a link to its id, `[Title](/document/<id>)`;\nthe web app shows it as a link that opens the document (CHT-2120).",
       "inputSchema": {
         "properties": {
           "document_id": {
