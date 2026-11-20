@@ -16,6 +16,7 @@ import { TaskList, TaskItem } from '@tiptap/extension-list';
 import { TableKit } from '@tiptap/extension-table';
 import { Placeholder } from '@tiptap/extensions';
 import Suggestion, { exitSuggestion } from '@tiptap/suggestion';
+import { PluginKey } from '@tiptap/pm/state';
 
 /**
  * What the app checks before using this bundle. A tab opened before a
@@ -150,12 +151,7 @@ function mentionExtension(getItems) {
             return [Suggestion({
                 editor: this.editor,
                 char: '@',
-                allow: ({ state, range }) => {
-                    const $from = state.doc.resolve(range.from);
-                    if ($from.parent.type.spec.code) return false;
-                    return !state.doc.rangeHasMark(range.from, Math.min(range.to, state.doc.content.size), state.schema.marks.code)
-                        && !(state.storedMarks || $from.marks()).some(m => m.type.name === 'code');
-                },
+                allow: outsideCode,
                 items: ({ query }) => getItems(query),
                 command: ({ editor, range, props }) => {
                     editor.chain().focus().insertContentAt(range, [{ type: 'text', text: `@${props.handle} ` }]).run();
@@ -171,10 +167,95 @@ function mentionExtension(getItems) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// [[ document references (CHT-2120)
+// ---------------------------------------------------------------------------
+
+/** Not inside code: there `[[` is code (`grid[[0]]`), not a reference. */
+function outsideCode({ state, range }) {
+    const $from = state.doc.resolve(range.from);
+    if ($from.parent.type.spec.code) return false;
+    return !state.doc.rangeHasMark(range.from, Math.min(range.to, state.doc.content.size), state.schema.marks.code)
+        && !(state.storedMarks || $from.marks()).some(m => m.type.name === 'code');
+}
+
+const DocRefPluginKey = new PluginKey('chaoticDocRef');
+
+/**
+ * `[[` and part of a title offers documents (`getItems(query)` resolves
+ * to `[{id, title, href}]`); picking one inserts the title linked to the
+ * document, which the markdown writes as `[Title](/document/<id>)`, the
+ * same text the textarea inserts. Spaces are allowed: titles have them.
+ */
+function docRefExtension(getItems) {
+    return Extension.create({
+        name: 'chaoticDocRef',
+        addProseMirrorPlugins() {
+            return [Suggestion({
+                pluginKey: DocRefPluginKey,
+                editor: this.editor,
+                char: '[[',
+                allowSpaces: true,
+                debounce: 150,
+                allow: outsideCode,
+                items: async ({ query }) => {
+                    try {
+                        return (await getItems(query)) || [];
+                    } catch {
+                        return [];
+                    }
+                },
+                command: ({ editor, range, props }) => {
+                    editor.chain().focus()
+                        .insertContentAt(range, [{ type: 'text', text: props.title, marks: [{ type: 'link', attrs: { href: props.href } }] }])
+                        .unsetMark('link')
+                        .run();
+                },
+                render: () => suggestionPopup(this.editor, {
+                    label: 'Documents to link',
+                    renderRow: (item) => {
+                        const name = document.createElement('span');
+                        name.className = 'mention-name';
+                        name.textContent = item.icon ? `${item.icon} ${item.title}` : item.title;
+                        const kind = document.createElement('span');
+                        kind.className = 'mention-handle';
+                        kind.textContent = 'document';
+                        return [name, kind];
+                    },
+                }),
+            })];
+        },
+        onBlur() {
+            if (!this.editor.isDestroyed) exitSuggestion(this.editor.view, DocRefPluginKey);
+        },
+    });
+}
+
 let popupSeq = 0;
 
-/** The suggestion list: a listbox at the caret, kept on screen. */
+/** A mention row: the name (marked if an agent), then the @handle. */
+function mentionRow(item) {
+    const name = document.createElement('span');
+    name.className = 'mention-name';
+    name.textContent = item.name;
+    if (item.isAgent) {
+        const kind = document.createElement('span');
+        kind.className = 'mention-kind';
+        kind.textContent = 'agent';
+        name.append(' ', kind);
+    }
+    const handle = document.createElement('span');
+    handle.className = 'mention-handle';
+    handle.textContent = `@${item.handle}`;
+    return [name, handle];
+}
+
 function mentionPopup(editor) {
+    return suggestionPopup(editor, { label: 'People to mention', renderRow: mentionRow });
+}
+
+/** The suggestion list: a listbox at the caret, kept on screen. */
+function suggestionPopup(editor, { label, renderRow }) {
     let el = null;
     let items = [];
     let selected = 0;
@@ -194,19 +275,7 @@ function mentionPopup(editor) {
             row.className = `mention-suggestion${i === selected ? ' selected' : ''}`;
             row.setAttribute('role', 'option');
             row.setAttribute('aria-selected', String(i === selected));
-            const name = document.createElement('span');
-            name.className = 'mention-name';
-            name.textContent = item.name;
-            if (item.isAgent) {
-                const kind = document.createElement('span');
-                kind.className = 'mention-kind';
-                kind.textContent = 'agent';
-                name.append(' ', kind);
-            }
-            const handle = document.createElement('span');
-            handle.className = 'mention-handle';
-            handle.textContent = `@${item.handle}`;
-            row.append(name, handle);
+            row.append(...renderRow(item));
             row.addEventListener('mousedown', (e) => { e.preventDefault(); pick(item); });
             el.appendChild(row);
         });
@@ -238,7 +307,7 @@ function mentionPopup(editor) {
             el.id = id;
             el.className = 'mention-suggestions rich-mention-suggestions';
             el.setAttribute('role', 'listbox');
-            el.setAttribute('aria-label', 'People to mention');
+            el.setAttribute('aria-label', label);
             document.body.appendChild(el);
             dom.setAttribute('aria-controls', id);
             dom.setAttribute('aria-autocomplete', 'list');
@@ -308,9 +377,11 @@ const shouldAutoLink = (url) => /^(https?:\/\/|mailto:|www\.)/i.test(url);
  * @param {() => void} [opts.onSubmit]
  * @param {() => void} [opts.onEscape]
  * @param {(query: string) => Array<{handle: string, name: string}>} [opts.getMentionItems]
+ * @param {(query: string) => Promise<Array<{id: string, title: string, href: string, icon?: string}>>} [opts.getDocumentItems]
+ *   documents for `[[` references (CHT-2120); without it `[[` is plain text
  * @returns {Editor}
  */
-export function createEditor({ element, markdown = '', placeholder = '', onUpdate, onSubmit, onEscape, getMentionItems, onFocus, onBlur }) {
+export function createEditor({ element, markdown = '', placeholder = '', onUpdate, onSubmit, onEscape, getMentionItems, getDocumentItems, onFocus, onBlur }) {
     const extensions = [
         StarterKit.configure({
             paragraph: false,
@@ -333,6 +404,7 @@ export function createEditor({ element, markdown = '', placeholder = '', onUpdat
         keysExtension({ onSubmit, onEscape }),
     ];
     if (getMentionItems) extensions.push(mentionExtension(getMentionItems));
+    if (getDocumentItems) extensions.push(docRefExtension(getDocumentItems));
 
     const editor = new Editor({
         element,

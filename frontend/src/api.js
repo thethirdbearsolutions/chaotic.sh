@@ -601,12 +601,13 @@ export class ApiClient {
         return this.request('POST', `/teams/${teamId}/documents`, data);
     }
 
-    async getDocuments(teamId, projectId = null, search = null, sprintId = null) {
+    async getDocuments(teamId, projectId = null, search = null, sprintId = null, limit = null) {
         let url = `/teams/${teamId}/documents`;
         const params = [];
         if (projectId) params.push(`project_id=${projectId}`);
         if (sprintId) params.push(`sprint_id=${sprintId}`);
         if (search) params.push(`search=${encodeURIComponent(search)}`);
+        if (limit) params.push(`limit=${encodeURIComponent(limit)}`);
         if (params.length) url += `?${params.join('&')}`;
         return this.request('GET', url);
     }

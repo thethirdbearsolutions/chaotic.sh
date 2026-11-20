@@ -305,3 +305,64 @@ describe('mention list and blur (PR #534 review I4)', () => {
         expect(document.querySelector('.rich-mention-suggestions')).toBeNull();
     });
 });
+
+// CHT-2120: [[ picks a document and inserts a link the markdown writes as
+// [Title](/document/<id>), the same text the textarea inserts.
+describe('[[ document references', () => {
+    const docs = [
+        { id: 'd1', title: 'Release plan', href: '/document/d1' },
+        { id: 'd2', title: 'Q3 [draft]', href: '/document/d2', icon: '📄' },
+    ];
+    const getDocumentItems = async (q) => docs.filter(d => d.title.toLowerCase().includes(q.toLowerCase()));
+    // The search is debounced (150 ms) and async.
+    const settle = () => new Promise(r => setTimeout(r, 250));
+    const list = () => document.querySelector('[aria-label="Documents to link"]');
+
+    it('offers documents after [[, spaces allowed, and inserts a link', async () => {
+        const ed = mount({ getDocumentItems });
+        ed.commands.focus();
+        ed.commands.insertContent('see [[release p');
+        await settle();
+        expect([...list().querySelectorAll('.mention-name')].map(n => n.textContent)).toEqual(['Release plan']);
+        list().querySelector('.mention-suggestion').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        expect(getMarkdown(ed)).toBe('see [Release plan](/document/d1)');
+        expect(list()).toBeNull();
+        // Typing on does not extend the link.
+        ed.commands.insertContent(' next');
+        expect(getMarkdown(ed)).toBe('see [Release plan](/document/d1) next');
+    });
+
+    it('escapes brackets in the title', async () => {
+        const ed = mount({ getDocumentItems });
+        ed.commands.focus();
+        ed.commands.insertContent('[[q3');
+        await settle();
+        list().querySelector('.mention-suggestion').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        expect(getMarkdown(ed)).toBe('[Q3 \\[draft\\]](/document/d2)');
+    });
+
+    it('offers nothing inside code', async () => {
+        const ed = mount({ getDocumentItems });
+        ed.commands.focus();
+        ed.commands.setCodeBlock();
+        ed.commands.insertContent('grid [[0');
+        await settle();
+        expect(list()).toBeNull();
+    });
+
+    it('keeps @mentions working beside it', async () => {
+        const ed = mount({ getDocumentItems, getMentionItems: (q) => [{ handle: 'sam', name: 'Sam' }].filter(p => p.handle.startsWith(q)) });
+        ed.commands.focus();
+        ed.commands.insertContent('hi @sa');
+        await new Promise(r => setTimeout(r, 0));
+        expect(document.querySelector('[aria-label="People to mention"]')).not.toBeNull();
+    });
+
+    it('leaves [[ as text without a document source', async () => {
+        const ed = mount({});
+        ed.commands.focus();
+        ed.commands.insertContent('[[x');
+        await settle();
+        expect(list()).toBeNull();
+    });
+});

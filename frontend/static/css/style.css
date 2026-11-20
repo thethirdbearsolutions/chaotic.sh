@@ -4248,6 +4248,22 @@ input[type="checkbox"] {
     text-decoration: underline;
 }
 
+/* A link to a document in rendered markdown (CHT-2120): the same chip as
+   an issue reference, so both read as references to something in the app. */
+.markdown-body a.doc-link {
+    color: var(--accent-color);
+    text-decoration: none;
+    font-weight: 500;
+    background-color: rgba(99, 102, 241, 0.1);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+.markdown-body a.doc-link:hover {
+    background-color: rgba(99, 102, 241, 0.2);
+    text-decoration: underline;
+}
+
 /* Issue tooltip preview */
 .issue-tooltip {
     position: absolute;

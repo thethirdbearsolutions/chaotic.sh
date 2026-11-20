@@ -18,6 +18,7 @@
 
 import { getComposerMode, setComposerMode } from './storage.js';
 import { mentionSuggestions } from './mention-autocomplete.js';
+import { docRefSuggestions, documentHref } from './doc-refs.js';
 import { renderCommentContent } from './rich-text.js';
 import { showToast } from './ui.js';
 
@@ -276,6 +277,7 @@ function mount(state, api) {
             markdown: '',
             placeholder: state.placeholder,
             getMentionItems: (q) => mentionSuggestions(q, state.mentionContext),
+            getDocumentItems: async (q) => (await docRefSuggestions(q)).map(d => ({ ...d, href: documentHref(d.id) })),
             onUpdate: (md) => {
                 state.syncing = true;
                 textarea.value = md;

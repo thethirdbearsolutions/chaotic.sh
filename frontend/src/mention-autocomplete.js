@@ -8,6 +8,7 @@
 import { escapeHtml, escapeAttr } from './utils.js';
 import { getMembers } from './teams.js';
 import { getAgents } from './agents.js';
+import { DOC_REF_TRIGGER, docRefMarkdown, docRefSuggestions } from './doc-refs.js';
 
 /**
  * The @handle that mentions this team member. The server works it out
@@ -105,7 +106,9 @@ export function isInsideCodeSpan(text, pos) {
 }
 
 /**
- * Wire up @mention autocomplete on a textarea.
+ * Wire up @mention autocomplete on a textarea, and `[[` document
+ * references (CHT-2120): `[[` and part of a title offers matching
+ * documents, and picking one inserts `[Title](/document/<id>)`.
  *
  * Defaults to the comment box for backward compatibility; the issue
  * description editor also calls this with its own textarea/container ids
@@ -128,11 +131,18 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
     // CHT-1215: which suggestion ArrowUp/ArrowDown has highlighted, so
     // Enter/Tab can accept it without requiring the mouse.
     let highlightedIndex = -1;
+    // What picking the button at an index does, for the list on show.
+    let acceptAt = null;
+    // Each document search bumps this, so a slow answer to an older query
+    // never replaces the list for what is typed now (CHT-2120).
+    let docQuerySeq = 0;
+    let docQueryTimer = null;
 
     const hide = () => {
         container.classList.add('hidden');
         container.innerHTML = '';
         highlightedIndex = -1;
+        acceptAt = null;
     };
 
     const setHighlighted = (index) => {
@@ -152,7 +162,61 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
         hide();
     };
 
+    /** Replace `[[query` before the caret with the document's link. */
+    const acceptDocument = (doc) => {
+        const caret = textarea.selectionStart || 0;
+        const prefix = textarea.value.slice(0, caret);
+        const match = prefix.match(DOC_REF_TRIGGER);
+        if (!match) { hide(); return; }
+        const before = prefix.slice(0, match.index) + docRefMarkdown(doc);
+        textarea.value = before + textarea.value.slice(caret);
+        textarea.focus();
+        textarea.setSelectionRange(before.length, before.length);
+        hide();
+        // Drafts and the composer listen for input; a script's edit fires none.
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    const showDocuments = (docs) => {
+        if (!docs.length) {
+            hide();
+            return;
+        }
+        container.innerHTML = docs.map(d => `
+            <button type="button" class="mention-suggestion doc-ref-suggestion">
+                <span class="mention-name">${d.icon ? `${escapeHtml(d.icon)} ` : ''}${escapeHtml(d.title)}</span>
+                <span class="mention-handle">document</span>
+            </button>
+        `).join('');
+        container.classList.remove('hidden');
+        acceptAt = (i) => acceptDocument(docs[i]);
+        container.querySelectorAll('.mention-suggestion').forEach((btn, i) => {
+            btn.addEventListener('click', () => acceptDocument(docs[i]));
+            btn.addEventListener('mouseenter', () => setHighlighted(i));
+        });
+        setHighlighted(0);
+    };
+
+    const searchDocuments = (query) => {
+        const seq = ++docQuerySeq;
+        clearTimeout(docQueryTimer);
+        docQueryTimer = setTimeout(async () => {
+            const docs = await docRefSuggestions(query);
+            if (seq !== docQuerySeq) return;
+            // Still a `[[` at the caret, for this query? The person may have
+            // typed on, or moved away, while the search was out.
+            const caret = textarea.selectionStart || 0;
+            const match = textarea.value.slice(0, caret).match(DOC_REF_TRIGGER);
+            if (!match || match[1] !== query || textarea.hidden) return;
+            if (document.activeElement !== textarea) return;
+            showDocuments(docs);
+        }, 150);
+    };
+
     const update = () => {
+        // A new keystroke outdates any document search still out.
+        docQuerySeq++;
+        clearTimeout(docQueryTimer);
         // The rich editor has its own list; its sync writes here (CHT-2028).
         if (textarea.hidden) {
             hide();
@@ -164,6 +228,11 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
             return;
         }
         const prefix = textarea.value.slice(0, caret);
+        const docMatch = prefix.match(DOC_REF_TRIGGER);
+        if (docMatch) {
+            searchDocuments(docMatch[1]);
+            return;
+        }
         const match = prefix.match(/(^|\s)@([a-zA-Z0-9._-]*)$/);
         if (!match) {
             hide();
@@ -184,6 +253,7 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
             </button>
         `).join('');
         container.classList.remove('hidden');
+        acceptAt = (i) => acceptSuggestion(suggestions[i].handle);
 
         container.querySelectorAll('.mention-suggestion').forEach((btn, i) => {
             btn.addEventListener('click', () => acceptSuggestion(btn.dataset.handle));
@@ -221,10 +291,9 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
             setHighlighted(highlightedIndex - 1);
         } else if (event.key === 'Enter' || event.key === 'Tab') {
             const buttons = container.querySelectorAll('.mention-suggestion');
-            const target = buttons[highlightedIndex];
-            if (target) {
+            if (buttons[highlightedIndex] && acceptAt) {
                 event.preventDefault();
-                acceptSuggestion(target.dataset.handle);
+                acceptAt(highlightedIndex);
             }
         }
     });

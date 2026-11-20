@@ -9,10 +9,12 @@
  */
 
 import { renderMarkdown } from './gate-approvals.js';
+import { markDocumentLinks } from './doc-refs.js';
 
 /**
  * Sanitized markdown HTML (attachment references already marked by
- * renderMarkdown, CHT-1996), with issue links and @mentions. Parsed in a
+ * renderMarkdown, CHT-1996), with issue links, document links (CHT-2120)
+ * and @mentions. Parsed in a
  * <template>, whose content is inert: a div would fetch every <img> in it
  * at once, before the page even shows it.
  * @param {string} content
@@ -26,6 +28,8 @@ function renderRich(content) {
     template.innerHTML = sanitizedHtml;
     // Walk through text nodes only and apply transformations
     processTextNodes(template.content, addIssueLinksAndMentions);
+    // Links to a document open it in the app (CHT-2120).
+    markDocumentLinks(template.content);
     return template.innerHTML;
 }
 
