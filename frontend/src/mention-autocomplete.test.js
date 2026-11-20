@@ -561,6 +561,40 @@ describe('[[ document references (CHT-2120)', () => {
         expect(container.classList.contains('hidden')).toBe(true);
     });
 
+    it('drops a search still out when Escape closes the list', async () => {
+        let release;
+        docRefSuggestions.mockImplementationOnce(() => new Promise(r => { release = r; }));
+        type('[[rel');
+        await settle();
+        // Show something so Escape has a list to close.
+        container.classList.remove('hidden');
+        keydown('Escape');
+        release(DOCS);
+        await settle();
+        expect(container.classList.contains('hidden')).toBe(true);
+    });
+
+    it('drops the list for an older query as soon as the query changes', async () => {
+        type('[[rel');
+        await settle();
+        expect(container.classList.contains('hidden')).toBe(false);
+        docRefSuggestions.mockImplementationOnce(() => new Promise(() => {}));
+        type('[[relxyz');
+        expect(container.classList.contains('hidden')).toBe(true);
+        const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+        textarea.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(textarea.value).toBe('[[relxyz');
+    });
+
+    it('keeps the list when a click lands on the same query', async () => {
+        type('[[rel');
+        await settle();
+        textarea.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(container.classList.contains('hidden')).toBe(false);
+        expect(docRefSuggestions).toHaveBeenCalledTimes(1);
+    });
+
     it('offers nothing inside code', async () => {
         type('`grid[[0` here', '`grid[[0'.length);
         await settle();

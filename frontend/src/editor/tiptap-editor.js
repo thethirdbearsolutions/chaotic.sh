@@ -17,6 +17,7 @@ import { TableKit } from '@tiptap/extension-table';
 import { Placeholder } from '@tiptap/extensions';
 import Suggestion, { exitSuggestion } from '@tiptap/suggestion';
 import { PluginKey } from '@tiptap/pm/state';
+import { DOC_REF_TRIGGER } from '../doc-ref-syntax.js';
 
 /**
  * What the app checks before using this bundle. A tab opened before a
@@ -151,7 +152,8 @@ function mentionExtension(getItems) {
             return [Suggestion({
                 editor: this.editor,
                 char: '@',
-                allow: outsideCode,
+                // Inside a `[[` search the @ is part of a title (CHT-2120).
+                allow: (props) => outsideCode(props) && !textBeforeCaret(props.state.selection.$from).match(DOC_REF_TRIGGER),
                 items: ({ query }) => getItems(query),
                 command: ({ editor, range, props }) => {
                     editor.chain().focus().insertContentAt(range, [{ type: 'text', text: `@${props.handle} ` }]).run();
@@ -181,6 +183,27 @@ function outsideCode({ state, range }) {
 
 const DocRefPluginKey = new PluginKey('chaoticDocRef');
 
+/** The text of the caret's block up to the caret; a hard break reads as a newline. */
+function textBeforeCaret($pos) {
+    return $pos.parent.textBetween(0, $pos.parentOffset, '\n', '\n');
+}
+
+/**
+ * Where a `[[` search starts and what it asks, by the textarea's own rule
+ * (DOC_REF_TRIGGER): `]]`, a line break or 80 characters end it, and no
+ * space is needed before `[[`. The stock matcher keeps going past `]]`
+ * when spaces are allowed, so picking a document would swallow the text
+ * after it.
+ */
+function findDocRefMatch({ $position }) {
+    const match = textBeforeCaret($position).match(DOC_REF_TRIGGER);
+    if (!match) return null;
+    // Every character of textBetween is one position: text is, and each
+    // leaf (a hard break) is one character standing for one node.
+    const from = $position.pos - match[0].length;
+    return { range: { from, to: $position.pos }, query: match[1], text: match[0] };
+}
+
 /**
  * `[[` and part of a title offers documents (`getItems(query)` resolves
  * to `[{id, title, href}]`); picking one inserts the title linked to the
@@ -195,7 +218,7 @@ function docRefExtension(getItems) {
                 pluginKey: DocRefPluginKey,
                 editor: this.editor,
                 char: '[[',
-                allowSpaces: true,
+                findSuggestionMatch: findDocRefMatch,
                 debounce: 150,
                 allow: outsideCode,
                 items: async ({ query }) => {
@@ -206,8 +229,9 @@ function docRefExtension(getItems) {
                     }
                 },
                 command: ({ editor, range, props }) => {
+                    const title = String(props.title || '').replace(/\s+/g, ' ').trim() || 'Untitled';
                     editor.chain().focus()
-                        .insertContentAt(range, [{ type: 'text', text: props.title, marks: [{ type: 'link', attrs: { href: props.href } }] }])
+                        .insertContentAt(range, [{ type: 'text', text: title, marks: [{ type: 'link', attrs: { href: props.href } }] }])
                         .unsetMark('link')
                         .run();
                 },

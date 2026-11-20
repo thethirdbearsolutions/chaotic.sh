@@ -15,26 +15,13 @@
 
 import { api } from './api.js';
 import { getCurrentTeam } from './state.js';
+import { DOC_REF_TRIGGER, escapeLinkText } from './doc-ref-syntax.js';
 
-/**
- * `[[` and what follows it up to the caret: a title search. No brackets
- * or newline in the query, so a closed `[[x]]` or a line break ends it.
- * Group 1 is the query.
- */
-export const DOC_REF_TRIGGER = /\[\[([^[\]\n]{0,80})$/;
+export { DOC_REF_TRIGGER, escapeLinkText };
 
 /** The path a reference points at. */
 export function documentHref(id) {
     return `/document/${encodeURIComponent(id)}`;
-}
-
-/**
- * A title made safe to sit between `[` and `]`: a bracket would end the
- * link text early and a backslash would escape the next character. A line
- * break would end the link altogether.
- */
-export function escapeLinkText(text) {
-    return String(text || '').replace(/\s+/g, ' ').trim().replace(/[\\[\]]/g, '\\$&');
 }
 
 /** The markdown a reference inserts. */
@@ -63,12 +50,19 @@ export function documentIdFromHref(href, origin = globalThis.location?.origin) {
     if (!/^(\/|https?:\/\/)/i.test(href) || href.startsWith('//')) return null;
     const match = url.pathname.match(/^\/document\/([^/]+)\/?$/);
     if (!match) return null;
+    let id;
     try {
-        return decodeURIComponent(match[1]);
+        id = decodeURIComponent(match[1]);
     } catch {
         return null;
     }
+    // An id, nothing more: a decoded `../` or `/` would steer which API
+    // path opening the document fetches.
+    return DOCUMENT_ID.test(id) ? id : null;
 }
+
+/** What a document id can look like (they are UUIDs). */
+const DOCUMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * Make each link to a document in rendered markdown open it in the app:
@@ -78,9 +72,14 @@ export function documentIdFromHref(href, origin = globalThis.location?.origin) {
  * @param {DocumentFragment|Element} root
  */
 export function markDocumentLinks(root) {
-    for (const a of root.querySelectorAll('a[href]')) {
+    for (const a of root.querySelectorAll('a')) {
         const id = documentIdFromHref(a.getAttribute('href'));
-        if (!id) continue;
+        if (!id) {
+            // Content can bring a class; only a real document link wears the chip.
+            a.classList.remove('doc-link');
+            if (!a.classList.length) a.removeAttribute('class');
+            continue;
+        }
         a.classList.add('doc-link');
         a.dataset.action = 'open-linked-document';
         a.dataset.documentId = id;
@@ -105,7 +104,7 @@ export async function docRefSuggestions(query) {
         const docs = await api.getDocuments(team.id, null, q || null, null, SUGGESTION_LIMIT);
         return (Array.isArray(docs) ? docs : [])
             .slice(0, SUGGESTION_LIMIT)
-            .map(d => ({ id: d.id, title: d.title || 'Untitled', icon: d.icon || null }));
+            .map(d => ({ id: d.id, title: String(d.title || '').replace(/\s+/g, ' ').trim() || 'Untitled', icon: d.icon || null }));
     } catch {
         return [];
     }

@@ -137,12 +137,19 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
     // never replaces the list for what is typed now (CHT-2120).
     let docQuerySeq = 0;
     let docQueryTimer = null;
+    // The query the document list on show answers, or null.
+    let shownDocQuery = null;
 
     const hide = () => {
         container.classList.add('hidden');
         container.innerHTML = '';
         highlightedIndex = -1;
         acceptAt = null;
+        shownDocQuery = null;
+        // Closing the list (Escape, blur) also drops a search still out,
+        // so its answer does not reopen it.
+        docQuerySeq++;
+        clearTimeout(docQueryTimer);
     };
 
     const setHighlighted = (index) => {
@@ -177,11 +184,12 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
         textarea.dispatchEvent(new Event('input', { bubbles: true }));
     };
 
-    const showDocuments = (docs) => {
+    const showDocuments = (docs, query) => {
         if (!docs.length) {
             hide();
             return;
         }
+        shownDocQuery = query;
         container.innerHTML = docs.map(d => `
             <button type="button" class="mention-suggestion doc-ref-suggestion">
                 <span class="mention-name">${d.icon ? `${escapeHtml(d.icon)} ` : ''}${escapeHtml(d.title)}</span>
@@ -209,7 +217,7 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
             const match = textarea.value.slice(0, caret).match(DOC_REF_TRIGGER);
             if (!match || match[1] !== query || textarea.hidden) return;
             if (document.activeElement !== textarea) return;
-            showDocuments(docs);
+            showDocuments(docs, query);
         }, 150);
     };
 
@@ -230,7 +238,11 @@ export function setupMentionAutocomplete(textareaId = 'new-comment', containerId
         const prefix = textarea.value.slice(0, caret);
         const docMatch = prefix.match(DOC_REF_TRIGGER);
         if (docMatch) {
-            searchDocuments(docMatch[1]);
+            // A list for another query (or the people list) would accept
+            // Enter for what is no longer typed; drop it while the new
+            // search runs. A click on the same query keeps it.
+            if (shownDocQuery !== docMatch[1]) hide();
+            if (shownDocQuery === null) searchDocuments(docMatch[1]);
             return;
         }
         const match = prefix.match(/(^|\s)@([a-zA-Z0-9._-]*)$/);

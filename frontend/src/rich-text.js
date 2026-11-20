@@ -55,10 +55,13 @@ export function processTextNodes(element, callback) {
         NodeFilter.SHOW_TEXT,
         {
             acceptNode: function(node) {
-                // Skip text nodes that are inside code or pre elements
+                // Skip text nodes inside code or pre elements, and inside
+                // links: an issue key in a link's text would put a link in
+                // a link, which the browser splits, emptying the outer one
+                // (CHT-2120).
                 let parent = node.parentElement;
                 while (parent && parent !== element) {
-                    if (parent.tagName === 'CODE' || parent.tagName === 'PRE') {
+                    if (parent.tagName === 'CODE' || parent.tagName === 'PRE' || parent.tagName === 'A') {
                         return NodeFilter.FILTER_REJECT;
                     }
                     parent = parent.parentElement;

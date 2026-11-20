@@ -613,36 +613,36 @@ export class ApiClient {
     }
 
     async getDocument(documentId) {
-        return this.request('GET', `/documents/${documentId}`);
+        return this.request('GET', `/documents/${encodeURIComponent(documentId)}`);
     }
 
     async updateDocument(documentId, data) {
-        return this.request('PATCH', `/documents/${documentId}`, data);
+        return this.request('PATCH', `/documents/${encodeURIComponent(documentId)}`, data);
     }
 
     async deleteDocument(documentId) {
-        return this.request('DELETE', `/documents/${documentId}`);
+        return this.request('DELETE', `/documents/${encodeURIComponent(documentId)}`);
     }
 
     async getDocumentRevisions(documentId) {
-        return this.request('GET', `/documents/${documentId}/revisions`);
+        return this.request('GET', `/documents/${encodeURIComponent(documentId)}/revisions`);
     }
 
     async getDocumentRevision(documentId, version) {
-        return this.request('GET', `/documents/${documentId}/revisions/${version}`);
+        return this.request('GET', `/documents/${encodeURIComponent(documentId)}/revisions/${version}`);
     }
 
     // Document-Issue Links
     async getDocumentIssues(documentId) {
-        return this.request('GET', `/documents/${documentId}/issues`);
+        return this.request('GET', `/documents/${encodeURIComponent(documentId)}/issues`);
     }
 
     async linkDocumentToIssue(documentId, issueId) {
-        return this.request('POST', `/documents/${documentId}/issues/${issueId}`);
+        return this.request('POST', `/documents/${encodeURIComponent(documentId)}/issues/${issueId}`);
     }
 
     async unlinkDocumentFromIssue(documentId, issueId) {
-        return this.request('DELETE', `/documents/${documentId}/issues/${issueId}`);
+        return this.request('DELETE', `/documents/${encodeURIComponent(documentId)}/issues/${issueId}`);
     }
 
     async getIssueDocuments(issueId) {
@@ -651,32 +651,32 @@ export class ApiClient {
 
     // Document Comments
     async getDocumentComments(documentId) {
-        return this.request('GET', `/documents/${documentId}/comments`);
+        return this.request('GET', `/documents/${encodeURIComponent(documentId)}/comments`);
     }
 
     async createDocumentComment(documentId, content) {
-        return this.request('POST', `/documents/${documentId}/comments`, { content });
+        return this.request('POST', `/documents/${encodeURIComponent(documentId)}/comments`, { content });
     }
 
     async updateDocumentComment(documentId, commentId, content) {
-        return this.request('PATCH', `/documents/${documentId}/comments/${commentId}`, { content });
+        return this.request('PATCH', `/documents/${encodeURIComponent(documentId)}/comments/${commentId}`, { content });
     }
 
     async deleteDocumentComment(documentId, commentId) {
-        return this.request('DELETE', `/documents/${documentId}/comments/${commentId}`);
+        return this.request('DELETE', `/documents/${encodeURIComponent(documentId)}/comments/${commentId}`);
     }
 
     // Document Labels
     async getDocumentLabels(documentId) {
-        return this.request('GET', `/documents/${documentId}/labels`);
+        return this.request('GET', `/documents/${encodeURIComponent(documentId)}/labels`);
     }
 
     async addLabelToDocument(documentId, labelId) {
-        return this.request('POST', `/documents/${documentId}/labels/${labelId}`);
+        return this.request('POST', `/documents/${encodeURIComponent(documentId)}/labels/${labelId}`);
     }
 
     async removeLabelFromDocument(documentId, labelId) {
-        return this.request('DELETE', `/documents/${documentId}/labels/${labelId}`);
+        return this.request('DELETE', `/documents/${encodeURIComponent(documentId)}/labels/${labelId}`);
     }
 
     // Labels

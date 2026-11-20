@@ -35,6 +35,11 @@ describe('docRefMarkdown', () => {
 
     it('escapes what would end the link text, and folds line breaks', () => {
         expect(escapeLinkText('a [draft] \\ v2\nnotes')).toBe('a \\[draft\\] \\\\ v2 notes');
+    });
+
+    it('escapes inline markdown and HTML, so the title renders as typed', () => {
+        expect(escapeLinkText('*a* _b_ `c` ~~d~~ <b>e</b> ![f] & g|h')).toBe(
+            '\\*a\\* \\_b\\_ \\`c\\` \\~\\~d\\~\\~ \\<b\\>e\\</b\\> \\!\\[f\\] \\& g\\|h');
         expect(docRefMarkdown({ id: ID, title: 'Q3 [draft]' })).toBe(`[Q3 \\[draft\\]](/document/${ID})`);
     });
 
@@ -72,6 +77,13 @@ describe('documentIdFromHref', () => {
         expect(documentIdFromHref(null, ORIGIN)).toBeNull();
     });
 
+    it('takes only an id, so an encoded path cannot steer the fetch', () => {
+        expect(documentIdFromHref('/document/..%2Fusers%2Fme', ORIGIN)).toBeNull();
+        expect(documentIdFromHref('/document/a%2Fb', ORIGIN)).toBeNull();
+        expect(documentIdFromHref('/document/%2E%2E', ORIGIN)).toBeNull();
+        expect(documentIdFromHref('/document/d1', ORIGIN)).toBe('d1');
+    });
+
     it('survives a malformed escape', () => {
         expect(documentIdFromHref('/document/%E0%A4%A', ORIGIN)).toBeNull();
     });
@@ -89,6 +101,15 @@ describe('markDocumentLinks', () => {
         expect(doc.getAttribute('href')).toBe(`/document/${ID}`);
         expect(other.className).toBe('');
         expect(other.dataset.action).toBeUndefined();
+    });
+
+    it('takes the document chip off a link that is not a document\'s', () => {
+        const t = document.createElement('template');
+        t.innerHTML = '<a class="doc-link" href="https://elsewhere.example/x">x</a><a class="doc-link other">y</a>';
+        markDocumentLinks(t.content);
+        const [a, b] = t.content.querySelectorAll('a');
+        expect(a.hasAttribute('class')).toBe(false);
+        expect(b.className).toBe('other');
     });
 });
 
@@ -108,6 +129,20 @@ describe('rendered markdown (CHT-2120)', () => {
     it('renders an escaped title the way it was typed', () => {
         const a = render(docRefMarkdown({ id: ID, title: 'Q3 [draft]' })).querySelector('a.doc-link');
         expect(a.textContent).toBe('Q3 [draft]');
+    });
+
+    it('keeps an issue key in the title inside the document link', () => {
+        const div = render(docRefMarkdown({ id: ID, title: 'CHT-12 design' }));
+        const links = div.querySelectorAll('a');
+        expect(links).toHaveLength(1);
+        expect(links[0].classList.contains('doc-link')).toBe(true);
+        expect(links[0].textContent).toBe('CHT-12 design');
+    });
+
+    it('renders a title with markdown in it as typed', () => {
+        const a = render(docRefMarkdown({ id: ID, title: '*Draft* <b>v2</b> `x`' })).querySelector('a.doc-link');
+        expect(a.textContent).toBe('*Draft* <b>v2</b> `x`');
+        expect(a.children).toHaveLength(0);
     });
 
     it('marks a pasted URL of this app\'s document', () => {
@@ -144,10 +179,14 @@ describe('docRefSuggestions', () => {
         api.getDocuments.mockResolvedValue([
             { id: 'd1', title: 'Release plan', icon: '📄', content: 'long' },
             { id: 'd2', title: null },
+            { id: 'd3', title: '  Two\nlines ' },
+            { id: 'd4', title: '   ' },
         ]);
         expect(await docRefSuggestions(' release ')).toEqual([
             { id: 'd1', title: 'Release plan', icon: '📄' },
             { id: 'd2', title: 'Untitled', icon: null },
+            { id: 'd3', title: 'Two lines', icon: null },
+            { id: 'd4', title: 'Untitled', icon: null },
         ]);
         expect(api.getDocuments).toHaveBeenCalledWith('team-1', null, 'release', null, 6);
     });

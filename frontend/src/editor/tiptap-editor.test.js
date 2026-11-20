@@ -358,6 +358,41 @@ describe('[[ document references', () => {
         expect(document.querySelector('[aria-label="People to mention"]')).not.toBeNull();
     });
 
+    it('ends the search at ]], so picking does not swallow later text', async () => {
+        // A source that answers anything, so only the trigger decides.
+        const ed = mount({ getDocumentItems: async () => docs });
+        ed.commands.focus();
+        ed.commands.insertContent('[[release]] and more');
+        await settle();
+        expect(list()).toBeNull();
+    });
+
+    it('needs no space before [[, and replaces only up to the caret', async () => {
+        const ed = mount({ getDocumentItems });
+        ed.commands.focus();
+        ed.commands.insertContent('(see[[release');
+        await settle();
+        list().querySelector('.mention-suggestion').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        expect(getMarkdown(ed)).toBe('(see[Release plan](/document/d1)');
+    });
+
+    it('treats an @ inside a [[ search as part of the title', async () => {
+        const ed = mount({ getDocumentItems, getMentionItems: () => [{ handle: 'ada', name: 'Ada' }] });
+        ed.commands.focus();
+        ed.commands.insertContent('[[notes @ad');
+        await settle();
+        expect(document.querySelector('[aria-label="People to mention"]')).toBeNull();
+    });
+
+    it('folds whitespace in the title it inserts', async () => {
+        const ed = mount({ getDocumentItems: async () => [{ id: 'd9', title: ' Two\nlines ', href: '/document/d9' }] });
+        ed.commands.focus();
+        ed.commands.insertContent('[[two');
+        await settle();
+        list().querySelector('.mention-suggestion').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        expect(getMarkdown(ed)).toBe('[Two lines](/document/d9)');
+    });
+
     it('leaves [[ as text without a document source', async () => {
         const ed = mount({});
         ed.commands.focus();
