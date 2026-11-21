@@ -39,6 +39,8 @@ from app.schemas.issue import (
     LabelResponse,
 )
 from app.schemas.document import DocumentResponse
+from app.schemas.issue import IssueMoveRequest, IssueMoveResponse
+from app.services.issue_move_service import IssueMoveError, move_issue
 from app.schemas.epic import EpicOverviewResponse, OverviewDocument
 from app.services.epic_progress import epic_overview_activity_ids, epic_overview_links, epic_overview_rows
 from app.oxyde_models.document import OxydeDocument
@@ -1376,6 +1378,27 @@ async def delete_issue(issue_id: str, current_user: CurrentUser):
     )
 
     await issue_service.delete(issue, actor_id=current_user.id)
+
+
+@router.post("/{issue_id}/move", response_model=IssueMoveResponse)
+@writes
+async def move_issue_to_project(
+    issue_id: str, body: IssueMoveRequest, current_user: CurrentUser,
+) -> IssueMoveResponse:
+    """Move an issue, and with ``with_children`` its descendants, to another
+    project of the same team (CHT-2106). Each moved issue is renumbered in
+    the target; its old identifier keeps resolving to it. ``dry_run``
+    reports the plan and writes nothing."""
+    issue, source = await visible_issue(current_user, issue_id)
+    target = await visible_project(current_user, body.project_id)
+    try:
+        plan = await move_issue(
+            issue, source, target, current_user.id,
+            with_children=body.with_children, dry_run=body.dry_run,
+        )
+    except IssueMoveError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return IssueMoveResponse(**plan.as_dict())
 
 
 # Labels

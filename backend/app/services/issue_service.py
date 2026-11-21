@@ -27,6 +27,7 @@ from app.oxyde_models.issue import (
     OxydeBudgetTransaction,
     OxydeIssueDescriptionRevision,
 )
+from app.oxyde_models.issue_alias import OxydeIssueAlias
 from app.oxyde_models.label import OxydeLabel
 from app.oxyde_models.project import OxydeProject
 from app.oxyde_models.ritual import OxydeRitualRejection
@@ -1339,12 +1340,19 @@ class IssueService:
             logger.exception("Failed to settle children-closed entries for issue=%s", issue_id)
 
     async def _get_next_issue_number_for_key(self, project_key: str) -> int:
-        """Get the next issue number for a project key."""
+        """Get the next issue number for a project key: past every issue
+        with the key and every old identifier with it (CHT-2106)."""
         rows = await execute_raw(
             "SELECT COALESCE(MAX(number), 0) as max_num FROM issues WHERE identifier LIKE ?",
             [f"{project_key}-%"],
         )
-        return rows[0]["max_num"] + 1
+        top = rows[0]["max_num"]
+        alias_rows = await execute_raw(
+            "SELECT COALESCE(MAX(number), 0) AS max_num FROM issue_aliases WHERE identifier LIKE ?",
+            [f"{project_key}-%"],
+        )
+        top = max(top, alias_rows[0]["max_num"])
+        return top + 1
 
     async def create(
         self, issue_in: IssueCreate, project, creator_id: str,
@@ -1482,7 +1490,22 @@ class IssueService:
         return await OxydeIssue.objects.filter(id=issue_id).join("creator").prefetch("labels").first()
 
     async def get_by_identifier(self, identifier: str, team_id: str | None = None) -> OxydeIssue | None:
-        """Get issue by identifier (e.g., PRJ-123)."""
+        """Get issue by identifier (e.g., PRJ-123), or by an identifier it
+        had before it moved to another project (CHT-2106)."""
+        issue = await self._get_by_current_identifier(identifier, team_id)
+        if issue is not None:
+            return issue
+        alias = await OxydeIssueAlias.objects.filter(identifier=identifier.upper()).first()
+        if alias is None:
+            return None
+        issue = await self.get_by_id(alias.issue_id)
+        if issue is not None and team_id is not None:
+            project = await OxydeProject.objects.filter(id=issue.project_id).first()
+            if project is None or project.team_id != team_id:
+                return None
+        return issue
+
+    async def _get_by_current_identifier(self, identifier: str, team_id: str | None) -> OxydeIssue | None:
         if team_id is not None:
             # Team-scoped lookup via raw SQL join
             rows = await execute_raw(
@@ -3116,11 +3139,17 @@ class IssueService:
         # Batch lookup: resolve identifiers to issues in same team
         placeholders = ",".join("?" for _ in identifiers)
         confine = " AND i.project_id = ?" if project_id else ""
+        scope = [source_team_id] + ([project_id] if project_id else [])
         target_rows = await execute_raw(
             f"SELECT i.id, i.identifier FROM issues i "
             f"JOIN projects p ON i.project_id = p.id "
-            f"WHERE i.identifier IN ({placeholders}) AND p.team_id = ?{confine}",
-            list(identifiers) + [source_team_id] + ([project_id] if project_id else []),
+            f"WHERE i.identifier IN ({placeholders}) AND p.team_id = ?{confine} "
+            # An identifier an issue had before a move still names it (CHT-2106).
+            f"UNION SELECT i.id, a.identifier FROM issue_aliases a "
+            f"JOIN issues i ON a.issue_id = i.id "
+            f"JOIN projects p ON i.project_id = p.id "
+            f"WHERE a.identifier IN ({placeholders}) AND p.team_id = ?{confine}",
+            list(identifiers) + scope + list(identifiers) + scope,
         )
         if not target_rows:
             return []
@@ -3144,7 +3173,8 @@ class IssueService:
         async with atomic():
             for identifier in identifiers:
                 target_id = targets.get(identifier)
-                if not target_id:
+                if not target_id or target_id == issue_id:
+                    # The second: the issue's own old identifier.
                     continue
                 if frozenset((issue_id, target_id)) in existing_pairs:
                     continue

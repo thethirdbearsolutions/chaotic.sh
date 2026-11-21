@@ -45,6 +45,7 @@ from .issues import (
     issue_create,
     issue_label,
     issue_list,
+    issue_move,
     issue_ready,
     issue_relations,
     issue_revision,
@@ -69,7 +70,7 @@ from .sprints import (
 
 ALL_TOOLS = (
     issue_list, issue_view, issue_create, issue_update, issue_comment, issue_attach, issue_start,
-    issue_ready, issue_relations, issue_block, issue_unblock,
+    issue_ready, issue_relations, issue_block, issue_unblock, issue_move,
     label_list, issue_label, issue_revisions, issue_revision,
     doc_list, doc_view, doc_create, doc_update,
     doc_link, doc_unlink, doc_revisions, doc_revision,

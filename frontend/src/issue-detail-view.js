@@ -171,6 +171,11 @@ export function formatActivityText(activity) {
                 return `Moved to sprint <strong>${escapeHtml(activity.sprint_name)}</strong>`;
             }
             return `Moved to sprint`;
+        case 'moved':
+            // CHT-2106: old_value/new_value are the old and new identifiers.
+            return activity.old_value
+                ? `Moved from <strong>${escapeHtml(activity.old_value)}</strong> to <strong>${escapeHtml(activity.new_value || '')}</strong>`
+                : 'Moved to another project';
         case 'removed_from_sprint':
             if (activity.sprint_name) {
                 return `Removed from sprint <strong>${escapeHtml(activity.sprint_name)}</strong>`;

@@ -291,6 +291,21 @@ describe('issue-detail-view', () => {
             expect(result).toContain('Sprint 1');
         });
 
+        it('formats a move to another project with both identifiers (CHT-2106)', () => {
+            const activity = { activity_type: 'moved', old_value: 'ENG-4', new_value: 'OPS-9' };
+            const result = formatActivityText(activity);
+            expect(result).toContain('Moved from');
+            expect(result).toContain('ENG-4');
+            expect(result).toContain('OPS-9');
+        });
+
+        it('escapes identifiers in a project move (XSS)', () => {
+            const xss = '<img src=x onerror=alert(1)>';
+            escapeHtml.mockImplementation((text) => text === xss ? '&lt;img&gt;' : (text || ''));
+            const result = formatActivityText({ activity_type: 'moved', old_value: xss, new_value: 'OPS-1' });
+            expect(result).not.toContain(xss);
+        });
+
         it('formats generic update with field name', () => {
             const activity = { activity_type: 'updated', field_name: 'title' };
             expect(formatActivityText(activity)).toContain('Updated title');

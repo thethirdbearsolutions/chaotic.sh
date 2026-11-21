@@ -36,7 +36,7 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * Type of activity.
  *
- * Values: created,updated,status_changed,priority_changed,assigned,unassigned,commented,labeled,unlabeled,moved_to_sprint,removed_from_sprint,ritual_attested,ritual_approved,ritual_rejected,intent_opened,intent_cleared,intent_canceled,lease_expired,email_delivery_failed,unknown_default_open_api
+ * Values: created,updated,status_changed,priority_changed,assigned,unassigned,commented,labeled,unlabeled,moved_to_sprint,removed_from_sprint,ritual_attested,ritual_approved,ritual_rejected,intent_opened,intent_cleared,intent_canceled,lease_expired,email_delivery_failed,moved,unknown_default_open_api
  */
 @Serializable(with = ActivityTypeSerializer::class)
 enum class ActivityType(val value: kotlin.String) {
@@ -97,6 +97,9 @@ enum class ActivityType(val value: kotlin.String) {
 
     @SerialName(value = "email_delivery_failed")
     email_delivery_failed("email_delivery_failed"),
+
+    @SerialName(value = "moved")
+    moved("moved"),
 
     @SerialName(value = "unknown_default_open_api")
     unknown_default_open_api("unknown_default_open_api");

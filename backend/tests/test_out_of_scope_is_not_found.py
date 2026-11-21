@@ -237,6 +237,9 @@ ROUTES = [
     ("POST", "/api/issues/{issue}/labels", {"label_id": "{label}"}, "issue"),
     ("DELETE", "/api/issues/{issue}/labels/{label}", None, "issue"),
     ("POST", "/api/issues/batch-update", {"issue_ids": ["{issue}"], "priority": "high"}, "issue"),
+    # Moving an issue (CHT-2106): either the issue or the target project out of scope.
+    ("POST", "/api/issues/{issue}/move", {"project_id": "{own_project}", "dry_run": True}, "issue"),
+    ("POST", "/api/issues/{own_issue}/move", {"project_id": "{project}", "dry_run": True}, "project"),
     ("POST", "/api/issues/batch-update", {"issue_ids": ["{own_issue}"], "label_ids": ["{label}"]}, "label"),
     ("POST", "/api/issues/batch-update", {"issue_ids": ["{own_issue}"], "add_label_ids": ["{label}"]}, "label"),
     # Comments.
@@ -999,6 +1002,9 @@ MCP_PROBES = [
     ("issue_label", {"identifier": "{own_identifier}", "remove": ["{label_name}"]}, "label_name"),
     ("issue_block", {"identifier": "{identifier}", "blocked": "{own_identifier}"}, "identifier"),
     ("issue_block", {"identifier": "{own_identifier}", "blocked": "{identifier}"}, "identifier"),
+    ("issue_move", {"identifier": "{identifier}", "project": "{own_project}", "dry_run": True}, "identifier"),
+    ("issue_move", {"identifier": "{own_identifier}", "project": "{project}", "dry_run": True}, "project"),
+    ("issue_move", {"identifier": "{own_identifier}", "project": "{project_key}", "dry_run": True}, "project_key"),
     ("issue_unblock", {"identifier": "{identifier}", "related": "{own_identifier}"}, "identifier"),
     ("issue_unblock", {"identifier": "{own_identifier}", "related": "{identifier}"}, "identifier"),
     ("issue_unblock", {"identifier": "{own_identifier}", "relation_id": "{relation}"}, "relation"),
@@ -1143,6 +1149,7 @@ MCP_NOT_ROW_KEYED = {
     **{("issue_ready", a): _MCP_VALUE for a in ("mine", "include_assigned", "all_projects")},
     **{("issue_ready", a): _MCP_PAGING for a in ("limit", "detail")},
     ("issue_block", "relation_type"): _MCP_VALUE,
+    **{("issue_move", a): _MCP_VALUE for a in ("with_children", "dry_run")},
     ("issue_revisions", "limit"): _MCP_PAGING,
     ("issue_revision", "version"): _REVISION,
     **{("doc_list", a): _MCP_VALUE for a in ("search", "all_projects")},

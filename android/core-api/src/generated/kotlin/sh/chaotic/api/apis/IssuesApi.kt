@@ -36,6 +36,8 @@ import sh.chaotic.api.models.IssueCommentResponse
 import sh.chaotic.api.models.IssueCommentUpdate
 import sh.chaotic.api.models.IssueDescriptionRevisionListItem
 import sh.chaotic.api.models.IssueDescriptionRevisionResponse
+import sh.chaotic.api.models.IssueMoveRequest
+import sh.chaotic.api.models.IssueMoveResponse
 import sh.chaotic.api.models.IssuePriority
 import sh.chaotic.api.models.IssueQueryFieldsResponse
 import sh.chaotic.api.models.IssueRelationCreate
@@ -848,6 +850,40 @@ import io.ktor.http.ParametersBuilder
             )
 
             return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * POST /api/issues/{issue_id}/move
+        * Move Issue To Project
+        * Move an issue, and with &#x60;&#x60;with_children&#x60;&#x60; its descendants, to another project of the same team (CHT-2106). Each moved issue is renumbered in the target; its old identifier keeps resolving to it. &#x60;&#x60;dry_run&#x60;&#x60; reports the plan and writes nothing.
+         * @param issueId  
+         * @param issueMoveRequest  
+         * @return IssueMoveResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun moveIssueToProjectApiIssuesIssueIdMovePost(issueId: kotlin.String, issueMoveRequest: IssueMoveRequest): HttpResponse<IssueMoveResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = issueMoveRequest
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.POST,
+            "/api/issues/{issue_id}/move".replace("{" + "issue_id" + "}", "$issueId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return jsonRequest(
             localVariableConfig,
             localVariableBody,
             localVariableAuthNames

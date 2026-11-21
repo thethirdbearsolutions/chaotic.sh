@@ -233,6 +233,10 @@ class FakeBackend:
     async def delete_relation(self, issue_id, relation_id):
         self._rec("delete_relation", issue_id, relation_id)
 
+    async def move_issue(self, issue_id, project_id, *, with_children, dry_run):
+        self._rec("move_issue", issue_id, project_id, with_children, dry_run)
+        return {"target_project": "OPS", "dry_run": dry_run, "moved": [], "warnings": []}
+
     async def add_label(self, issue_id, label_id):
         self._rec("add_label", issue_id, label_id)
 
@@ -534,6 +538,7 @@ class TestBoundary:
     # make a backend call; the default is one issue identifier.
     _REACHING_KWARGS = {
         "issue_unblock": {"identifier": "CHT-1", "relation_id": "rel-1"},
+        "issue_move": {"identifier": "CHT-1", "project": "CHT"},
         "issue_label": {"identifier": "CHT-1", "add": ["bug"]},
         "inbox_mark_read": {"entry_id": "in-1"},
         "doc_revisions": {"document_id": "d"},

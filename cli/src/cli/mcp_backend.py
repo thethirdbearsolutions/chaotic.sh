@@ -453,6 +453,14 @@ class RestBackend:
     async def delete_relation(self, issue_id: str, relation_id: str) -> None:
         await self._call(self._client().delete_relation, issue_id, relation_id)
 
+    async def move_issue(
+        self, issue_id: str, project_id: str, *, with_children: bool, dry_run: bool,
+    ) -> dict:
+        return await self._call(
+            self._client().move_issue, issue_id, project_id,
+            with_children=with_children, dry_run=dry_run,
+        )
+
     async def add_label(self, issue_id: str, label_id: str) -> None:
         await self._call(self._client().add_label_to_issue, issue_id, label_id)
 

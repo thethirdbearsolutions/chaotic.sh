@@ -453,3 +453,36 @@ class IssueBatchUpdate(BaseModel):
 
 # Update forward reference
 IssueResponse.model_rebuild()
+
+
+class IssueMoveRequest(BaseModel):
+    """Move an issue to another project of the same team (CHT-2106)."""
+
+    project_id: str
+    with_children: bool = False
+    dry_run: bool = False
+
+
+class IssueMoveEntry(BaseModel):
+    id: str
+    old: str
+    new: str
+
+
+class IssueMoveResponse(BaseModel):
+    """What a move did, or with ``dry_run`` would do (CHT-2106, CHT-2107).
+
+    ``moved`` maps each old identifier to its new one, root first. The
+    rest lists every mapping the target forced: the root's parent when
+    it stayed behind (``detached_parent``), issues taken out of an old
+    sprint, open claim/close intents canceled, and ``warnings`` such as
+    an estimate off the target's scale. Nothing is dropped unreported.
+    """
+
+    target_project: str
+    dry_run: bool
+    moved: list[IssueMoveEntry]
+    detached_parent: str | None = None
+    removed_from_sprint: list[str] = []
+    canceled_intents: list[str] = []
+    warnings: list[str] = []

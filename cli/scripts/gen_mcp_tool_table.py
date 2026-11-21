@@ -46,6 +46,7 @@ CLI_EQUIVALENTS: dict[str, str] = {
     "issue_relations": "`issue relations`",
     "issue_block": "`issue block` (`relation_type: \"duplicates\"` is the relation half of `issue duplicate`)",
     "issue_unblock": "`issue unblock`",
+    "issue_move": "`issue rehome`",
     "issue_label": "`issue update --label` / `--remove-label`",
     "issue_revisions": "`issue history`",
     "issue_revision": "`issue history` (one version)",

@@ -48,9 +48,11 @@ from app.oxyde_models.push import OxydePushDevice, OxydePushPreference
 from app.oxyde_models.idempotency import OxydeIdempotencyRecord
 from app.oxyde_models.email_verification import OxydeEmailVerificationCode
 from app.oxyde_models.attachment import OxydeAttachment
+from app.oxyde_models.issue_alias import OxydeIssueAlias
 
 __all__ = [
     "OxydeAttachment",
+    "OxydeIssueAlias",
     "OxydeEmailVerificationCode",
     "OxydeIdempotencyRecord",
     "OxydePushDevice",

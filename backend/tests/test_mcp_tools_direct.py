@@ -412,6 +412,33 @@ class TestIssueReady:
 
 
 
+class TestIssueMoveTool:
+    """issue_move over MCP (CHT-2106): resolves the target by key in the issue's team."""
+
+    async def test_dry_run_then_move_and_old_identifier_resolves(self, test_project, test_team):
+        from app.oxyde_models.project import OxydeProject
+
+        await OxydeProject.objects.create(team_id=test_team.id, name="Ops", key="OPS")
+        epic = await tools.issue_create(title="Epic", issue_type="epic", project="PROJ")
+        child = await tools.issue_create(title="Child", parent=epic["identifier"])
+
+        refused = await tools.issue_move(identifier=epic["identifier"], project="OPS")
+        assert "error" in refused and "sub-issues" in refused["error"]["message"]
+
+        plan = await tools.issue_move(identifier=epic["identifier"], project="ops", with_children=True, dry_run=True)
+        assert plan["dry_run"] is True
+        assert [m["new"] for m in plan["moved"]] == ["OPS-1", "OPS-2"]
+        assert (await tools.issue_view(identifier=epic["identifier"]))["identifier"] == epic["identifier"]
+
+        done = await tools.issue_move(identifier=epic["identifier"], project="OPS", with_children=True)
+        assert [(m["old"], m["new"]) for m in done["moved"]] == [
+            (epic["identifier"], "OPS-1"), (child["identifier"], "OPS-2"),
+        ]
+        viewed = await tools.issue_view(identifier=child["identifier"])
+        assert viewed["identifier"] == "OPS-2"
+        assert viewed["parent_identifier"] == "OPS-1"
+
+
 class TestIssueRelationTools:
     async def test_block_then_relations_reports_both_ends(self, test_project):
         blocker = await tools.issue_create(title="Blocker", status="todo")
@@ -1743,6 +1770,7 @@ class TestSweepCoverage:
         # mutations -- swept indirectly via the read tools that show them
         "issue_create", "issue_update", "issue_comment", "issue_attach", "issue_start",
         "issue_block", "issue_unblock", "issue_label",
+        "issue_move",  # its output is IssueMoveResponse, identifiers and notes only; TestIssueMoveTool
         "doc_create", "doc_update", "doc_link", "doc_unlink",
         "sprint_add", "sprint_remove", "sprint_close",
         "ritual_attest", "ritual_complete", "ritual_reject",
