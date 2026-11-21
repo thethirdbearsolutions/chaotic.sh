@@ -1339,21 +1339,19 @@ class IssueService:
         except Exception:
             logger.exception("Failed to settle children-closed entries for issue=%s", issue_id)
 
-    async def _get_next_issue_number_for_key(self, project_key: str, project_id: str | None = None) -> int:
+    async def _get_next_issue_number_for_key(self, project_key: str) -> int:
         """Get the next issue number for a project key: past every issue
-        it holds and, given ``project_id``, every number it gave to an
-        issue that has since moved away (CHT-2106)."""
+        with the key and every old identifier with it (CHT-2106)."""
         rows = await execute_raw(
             "SELECT COALESCE(MAX(number), 0) as max_num FROM issues WHERE identifier LIKE ?",
             [f"{project_key}-%"],
         )
         top = rows[0]["max_num"]
-        if project_id is not None:
-            alias_rows = await execute_raw(
-                "SELECT COALESCE(MAX(number), 0) AS max_num FROM issue_aliases WHERE project_id = ?",
-                [project_id],
-            )
-            top = max(top, alias_rows[0]["max_num"])
+        alias_rows = await execute_raw(
+            "SELECT COALESCE(MAX(number), 0) AS max_num FROM issue_aliases WHERE identifier LIKE ?",
+            [f"{project_key}-%"],
+        )
+        top = max(top, alias_rows[0]["max_num"])
         return top + 1
 
     async def create(
@@ -1419,7 +1417,7 @@ class IssueService:
 
         for attempt in range(max_retries):
             try:
-                issue_number = await self._get_next_issue_number_for_key(project_key, project_id)
+                issue_number = await self._get_next_issue_number_for_key(project_key)
                 identifier = f"{project_key}-{issue_number}"
 
                 async with atomic():

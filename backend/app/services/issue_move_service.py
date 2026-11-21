@@ -21,6 +21,10 @@ What does not fit the target is mapped, and every mapping is reported:
   rituals, so they are canceled (INTENT_CANCELED activity);
 - an estimate off the target's estimate scale: kept, with a warning.
 
+A project's default epic cannot move: the project would point its new
+tickets at an epic in another project. Budget transactions and inbox
+titles keep the old identifier as text; it still resolves.
+
 ``dry_run`` returns the same report and writes nothing. The write is one
 transaction: a failed move changes nothing.
 """
@@ -49,6 +53,10 @@ class IssueMoveError(Exception):
     """A move that cannot be made as asked; the message says why."""
 
 
+class _NumbersTaken(Exception):
+    """Another create or move took a number this move picked."""
+
+
 @dataclass
 class MovePlan:
     target_project_key: str
@@ -71,16 +79,18 @@ class MovePlan:
         }
 
 
-async def next_free_number(project_id: str, project_key: str) -> int:
-    """The next issue number for a project: past every issue it holds and
-    every number it gave out to an issue that has since moved away."""
+async def next_free_number(project_key: str) -> int:
+    """The next issue number for a project key: past every issue that
+    holds the key and every old identifier with it. Keyed by the
+    identifier, like issue numbering, because identifiers and aliases
+    are unique across teams and a project can be recreated."""
     rows = await execute_raw(
         "SELECT COALESCE(MAX(number), 0) AS n FROM issues WHERE identifier LIKE ?",
         [f"{project_key}-%"],
     )
     alias_rows = await execute_raw(
-        "SELECT COALESCE(MAX(number), 0) AS n FROM issue_aliases WHERE project_id = ?",
-        [project_id],
+        "SELECT COALESCE(MAX(number), 0) AS n FROM issue_aliases WHERE identifier LIKE ?",
+        [f"{project_key}-%"],
     )
     return max(rows[0]["n"], alias_rows[0]["n"]) + 1
 
@@ -99,7 +109,7 @@ async def _subtree(root: OxydeIssue) -> list[OxydeIssue]:
             seen.add(child.id)
             ordered.append(child)
             frontier.append(child.id)
-            if len(ordered) > _MAX_MOVE:
+            if len(ordered) - 1 > _MAX_MOVE:
                 raise IssueMoveError(f"{root.identifier} has more than {_MAX_MOVE} descendants.")
     return ordered
 
@@ -134,8 +144,16 @@ async def move_issue(
             )
         issues = [issue]
 
-    plan = MovePlan(target_project_key=target.key, dry_run=dry_run)
     ids = {i.id for i in issues}
+    default_epic_of = await OxydeProject.objects.filter(default_epic_id__in=list(ids)).first()
+    if default_epic_of is not None:
+        epic = next(i for i in issues if i.id == default_epic_of.default_epic_id)
+        raise IssueMoveError(
+            f"{epic.identifier} is the default epic of {default_epic_of.key}. "
+            "Set another default epic first."
+        )
+
+    plan = MovePlan(target_project_key=target.key, dry_run=dry_run)
     old_parent_id = issue.parent_id if issue.parent_id and issue.parent_id not in ids else None
     if old_parent_id:
         parent = await OxydeIssue.objects.filter(id=old_parent_id).first()
@@ -157,7 +175,7 @@ async def move_issue(
             plan.warnings.append(f"{i.identifier}: {warning}")
 
     for attempt in range(_MAX_RETRIES):
-        start = await next_free_number(target.id, target.key)
+        start = await next_free_number(target.key)
         plan.moved = [
             {"id": i.id, "old": i.identifier, "new": f"{target.key}-{start + n}"}
             for n, i in enumerate(issues)
@@ -167,20 +185,43 @@ async def move_issue(
         try:
             await _apply(issues, plan, source, target, start, old_parent_id, open_intents, user_id)
             break
-        except IntegrityError:
+        except (_NumbersTaken, IntegrityError):
             # Another create or move took the same numbers; take fresh ones.
             if attempt == _MAX_RETRIES - 1:
-                raise
+                raise IssueMoveError("Could not allocate identifiers in the target project; try again.")
     else:  # pragma: no cover - the loop either breaks or raises
         raise IssueMoveError("Could not allocate identifiers in the target project.")
 
     from app.services.issue_service import IssueService
 
+    # The move has committed: nothing after this point may fail it.
     service = IssueService()
-    if old_parent_id:
-        await service.rederive_parents([old_parent_id], user_id)
-    # The moved root may itself be an epic whose status is derived.
-    await service.rederive_parents([issue.id], user_id)
+    try:
+        if old_parent_id:
+            await service.rederive_parents([old_parent_id], user_id)
+        # The moved root may itself be an epic whose status is derived.
+        await service.rederive_parents([issue.id], user_id)
+    except Exception:
+        logger.exception("Failed to re-derive parents after moving issue=%s", issue.id)
+    by_id = {i.id: i for i in issues}
+    for intent in open_intents:
+        try:
+            moved = await service.get_by_id(intent.issue_id)
+            if moved is not None:
+                await service._broadcast_intent_event(
+                    moved, user_id, intent.limbo_type, ActivityType.INTENT_CANCELED,
+                    extra={"intent_initiator_id": intent.requested_by_id},
+                )
+        except Exception:
+            logger.exception("Failed to broadcast canceled intent issue=%s", intent.issue_id)
+    if open_intents:
+        # Nothing on these tickets waits on a decision now (as after a force-clear).
+        from app.services.inbox_service import InboxService
+        for issue_id in {li.issue_id for li in open_intents if li.issue_id in by_id}:
+            try:
+                await InboxService().resolve_for_issue(issue_id, decisions_only=True)
+            except Exception:
+                logger.exception("Failed to resolve inbox entries after moving issue=%s", issue_id)
     for i in issues:
         try:
             moved = await service.get_by_id(i.id)
@@ -195,7 +236,15 @@ async def _apply(issues, plan, source, target, start, old_parent_id, open_intent
     from app.services.issue_service import IssueService
 
     service = IssueService()
+    new_identifiers = [f"{target.key}-{start + n}" for n in range(len(issues))]
     async with atomic():
+        # Checked inside the write transaction, so a racing create or move
+        # that took one of these numbers sends us back for fresh ones.
+        if (
+            await OxydeIssue.objects.filter(identifier__in=new_identifiers).exists()
+            or await OxydeIssueAlias.objects.filter(identifier__in=new_identifiers).exists()
+        ):
+            raise _NumbersTaken()
         for n, i in enumerate(issues):
             new_number = start + n
             new_identifier = f"{target.key}-{new_number}"

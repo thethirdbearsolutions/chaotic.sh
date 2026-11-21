@@ -201,3 +201,66 @@ async def test_deleting_a_moved_issue_frees_nothing_it_still_names(client, auth_
     assert not await OxydeIssueAlias.objects.filter(issue_id=a["id"]).exists()
     got = await client.get(f"/api/issues/identifier/{a['identifier']}", headers=auth_headers)
     assert got.status_code == 404
+
+
+async def test_a_number_taken_mid_move_is_retried(client, auth_headers, test_project, target, monkeypatch):
+    await _mk(client, auth_headers, target, "Already there")  # OPS-1
+    a = await _mk(client, auth_headers, test_project, "A")
+    from app.services import issue_move_service
+
+    real = issue_move_service.next_free_number
+    calls = {"n": 0}
+
+    async def stale(key):
+        calls["n"] += 1
+        return 1 if calls["n"] == 1 else await real(key)
+
+    monkeypatch.setattr(issue_move_service, "next_free_number", stale)
+    r = await _move(client, auth_headers, a["id"], target.id)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["moved"][0]["new"] == "OPS-2"
+    assert calls["n"] == 2
+    assert await OxydeIssueAlias.objects.filter(issue_id=a["id"]).count() == 1
+
+
+async def test_numbers_are_kept_per_key_across_teams_and_recreated_projects(client, auth_headers, test_project, target):
+    # An old identifier outlives the project that gave it out.
+    a = await _mk(client, auth_headers, target, "A")  # OPS-1
+    assert (await _move(client, auth_headers, a["id"], test_project.id)).status_code == 200
+    await OxydeProject.objects.filter(id=target.id).delete()
+    again = await OxydeProject.objects.create(team_id=target.team_id, name="Ops", key="OPS")
+
+    b = await _mk(client, auth_headers, again, "B")
+
+    assert b["identifier"] == "OPS-2"
+    assert (await _move(client, auth_headers, b["id"], test_project.id)).status_code == 200
+
+
+async def test_canceled_intents_settle_their_decision_entries(client, auth_headers, test_project, target, test_user):
+    from app.enums import InboxEntryKind
+    from app.oxyde_models.inbox import OxydeInboxEntry
+
+    a = await _mk(client, auth_headers, test_project, "A")
+    await OxydeTicketLimbo.objects.create(issue_id=a["id"], limbo_type="CLOSE", requested_by_id=test_user.id)
+    entry = await OxydeInboxEntry.objects.create(
+        recipient_user_id=test_user.id, kind=InboxEntryKind.GATE_PENDING, team_id=test_project.team_id,
+        project_id=test_project.id, issue_id=a["id"], title="approve",
+    )
+
+    assert (await _move(client, auth_headers, a["id"], target.id)).status_code == 200
+
+    settled = await OxydeInboxEntry.objects.get(id=entry.id)
+    assert settled.resolved_at is not None
+    assert settled.project_id == target.id
+
+
+async def test_a_default_epic_does_not_move(client, auth_headers, test_project, target):
+    epic = await _mk(client, auth_headers, test_project, "Epic", issue_type="epic")
+    await OxydeProject.objects.filter(id=test_project.id).update(default_epic_id=epic["id"])
+
+    for dry_run in (True, False):
+        r = await _move(client, auth_headers, epic["id"], target.id, dry_run=dry_run)
+        assert r.status_code == 400
+        assert "default epic" in r.json()["detail"]
+    assert (await OxydeIssue.objects.get(id=epic["id"])).project_id == test_project.id
