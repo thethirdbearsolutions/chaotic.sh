@@ -1041,6 +1041,41 @@
         "type": "object"
       }
     },
+    "issue_move": {
+      "description": "Move an issue (and, with `with_children`, all its descendants) to another project in the same team.\n\nEach moved issue gets the next number in the target project. Its old\nidentifier keeps working everywhere: viewing, updating, commenting\nor linking it reaches the moved issue. Comments, history, relations,\nlabels, attachments and documents come along.\n\nThe result maps old to new identifiers (`moved`, root first) and\nlists everything the target forced: `detached_parent` (the root's\nparent, when it stayed behind), `removed_from_sprint` (the old\nproject's sprint), `canceled_intents` (open claim/close intents,\nwhose rituals belonged to the old project) and `warnings` (e.g. an\nestimate off the target's scale). Run with `dry_run` first to see it.",
+      "inputSchema": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "description": "Report what would happen and change nothing.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "identifier": {
+            "description": "Issue identifier to move, e.g. CHT-123.",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "project": {
+            "description": "Target project: id, key, or name, in the issue's own team.",
+            "title": "Project",
+            "type": "string"
+          },
+          "with_children": {
+            "default": false,
+            "description": "Move every descendant too. Required when the issue has sub-issues.",
+            "title": "With Children",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "identifier",
+          "project"
+        ],
+        "title": "issue_moveArguments",
+        "type": "object"
+      }
+    },
     "issue_ready": {
       "description": "List issues that are open, unblocked, and unclaimed -- what you can start right now.\n\nOpen + not-started (backlog/todo) only; excludes anything already\nin_progress/in_review/done/canceled, and excludes issues with an\nunresolved blocking relation. Priority-sorted (urgent first), then\noldest first. Unassigned by default -- `mine` restricts to your own\nassigned-but-not-started work, `include_assigned` widens to every\nnot-started issue regardless of assignee.\n\nPrefer this over issue_list when the question is \"what should I pick\nup\"; issue_list can filter by status and assignee but cannot express\n\"has no unresolved blocker\".\n\nScope is never widened silently: with no `project` and no current\nproject this refuses and says so, rather than answering with the\nwhole team's work. Pass `all_projects=true` to ask for that.",
       "inputSchema": {

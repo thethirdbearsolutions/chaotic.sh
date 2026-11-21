@@ -38,6 +38,7 @@ EXPECTED_TOOLS: dict[str, bool] = {
     "issue_create": True,
     "issue_label": False,
     "issue_list": True,
+    "issue_move": False,
     "issue_ready": True,
     "issue_relations": False,
     "issue_revision": False,

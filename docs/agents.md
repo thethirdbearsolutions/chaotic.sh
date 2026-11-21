@@ -220,7 +220,7 @@ one of them (there is deliberately no count here to rot, CHT-1395):
 
 - **issues:** `issue_list`, `issue_view`, `issue_create`, `issue_update`,
   `issue_comment`, `issue_attach`, `issue_start`, `issue_ready`,
-  `issue_relations`, `issue_block`, `issue_unblock`, `issue_label`,
+  `issue_relations`, `issue_block`, `issue_unblock`, `issue_move`, `issue_label`,
   `issue_revisions`, `issue_revision` (a screenshot or other file goes
   on a ticket with the attach tool or a comment's attachments, CHT-1996)
 - **docs:** `doc_list`, `doc_view`, `doc_create`, `doc_update`,

@@ -427,6 +427,44 @@ class TestIssueMove:
         assert result.exit_code != 0
 
 
+class TestIssueRehome:
+    """issue rehome moves an issue to another project (CHT-2106)."""
+
+    def test_rehome_resolves_target_and_reports_map(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.move_issue = MagicMock(return_value={
+            "target_project": "OPS", "dry_run": False,
+            "moved": [{"id": "issue-uuid-123", "old": "CHT-100", "new": "OPS-7"}],
+            "detached_parent": "CHT-90", "removed_from_sprint": ["CHT-100"],
+            "canceled_intents": [], "warnings": ["CHT-100: off scale"],
+        })
+        with patch('cli.main.resolve_project_id', return_value="proj-ops"):
+            result = cli_runner.invoke(cli, ['issue', 'rehome', 'CHT-100', '--to', 'OPS', '--with-children'])
+
+        assert result.exit_code == 0, result.output
+        assert "CHT-100 -> OPS-7" in result.output
+        assert "CHT-90" in result.output and "off scale" in result.output
+        client.move_issue.assert_called_once_with(
+            'issue-uuid-123', 'proj-ops', with_children=True, dry_run=False,
+        )
+
+    def test_rehome_dry_run_json(self, cli_runner, mock_issue):
+        from cli.main import cli, client
+
+        plan = {"target_project": "OPS", "dry_run": True,
+                "moved": [{"id": "x", "old": "CHT-100", "new": "OPS-1"}], "warnings": []}
+        client.get_issue_by_identifier = MagicMock(return_value=mock_issue)
+        client.move_issue = MagicMock(return_value=plan)
+        with patch('cli.main.resolve_project_id', return_value="proj-ops"):
+            result = cli_runner.invoke(cli, ['issue', 'rehome', 'CHT-100', '--to', 'OPS', '--dry-run', '--json'])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["moved"][0]["new"] == "OPS-1"
+        assert client.move_issue.call_args.kwargs["dry_run"] is True
+
+
 class TestIssueClose:
     """Tests for issue close command."""
 

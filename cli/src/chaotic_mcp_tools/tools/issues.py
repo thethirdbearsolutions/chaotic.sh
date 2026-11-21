@@ -1031,6 +1031,41 @@ async def issue_unblock(
     }
 
 
+async def issue_move(
+    backend: Backend,
+    identifier: Annotated[str, Field(description="Issue identifier to move, e.g. CHT-123.")],
+    project: Annotated[
+        str, Field(description="Target project: id, key, or name, in the issue's own team.")
+    ],
+    with_children: Annotated[
+        bool, Field(description="Move every descendant too. Required when the issue has sub-issues.")
+    ] = False,
+    dry_run: Annotated[
+        bool, Field(description="Report what would happen and change nothing.")
+    ] = False,
+) -> dict:
+    """Move an issue (and, with `with_children`, all its descendants) to another project in the same team.
+
+    Each moved issue gets the next number in the target project. Its old
+    identifier keeps working everywhere: viewing, updating, commenting
+    or linking it reaches the moved issue. Comments, history, relations,
+    labels, attachments and documents come along.
+
+    The result maps old to new identifiers (`moved`, root first) and
+    lists everything the target forced: `detached_parent` (the root's
+    parent, when it stayed behind), `removed_from_sprint` (the old
+    project's sprint), `canceled_intents` (open claim/close intents,
+    whose rituals belonged to the old project) and `warnings` (e.g. an
+    estimate off the target's scale). Run with `dry_run` first to see it.
+    """
+    iss = await backend.get_issue(identifier)
+    team_id = await backend.team_for_project(iss["project_id"])
+    project_id, _ = await backend.resolve_project(project, team_id)
+    return await backend.move_issue(
+        iss["id"], project_id, with_children=with_children, dry_run=dry_run,
+    )
+
+
 async def label_list(
     backend: Backend,
     team: Annotated[str | None, Field(description=TEAM_FIELD_DESC)] = None,

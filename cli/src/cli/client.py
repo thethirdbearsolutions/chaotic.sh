@@ -982,6 +982,16 @@ class Client:
     def delete_relation(self, issue_id: str, relation_id: str):
         return self._request("DELETE", f"/issues/{issue_id}/relations/{relation_id}")
 
+    def move_issue(
+        self, issue_id: str, project_id: str, *, with_children: bool = False, dry_run: bool = False,
+    ) -> dict:
+        """Move an issue to another project of its team (CHT-2106)."""
+        return self._request("POST", f"/issues/{issue_id}/move", {
+            "project_id": project_id,
+            "with_children": with_children,
+            "dry_run": dry_run,
+        })
+
     # Comments
     def create_comment(self, issue_id: str, content: str) -> dict:
         return self._request("POST", f"/issues/{issue_id}/comments", {"content": content})

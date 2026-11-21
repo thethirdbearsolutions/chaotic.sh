@@ -1705,6 +1705,44 @@ def register(cli):
         console.print(f"[green]Relation removed from {esc(identifier)}.[/green]")
         return {"deleted": True, "id": relation_id, "issue_id": iss["id"], "identifier": identifier}
 
+    @issue.command("rehome")
+    @click.argument("identifier")
+    @click.option("--to", "to_project", required=True, help="Target project (key, name or id) in the current team")
+    @click.option("--with-children", is_flag=True, help="Move every descendant too (required if it has sub-issues)")
+    @click.option("--dry-run", is_flag=True, help="Show what would happen and change nothing")
+    @_main().json_option
+    @_main().require_auth
+    @_main().require_team
+    @_main().handle_error
+    @_main().json_result()
+    def issue_rehome(identifier, to_project, with_children, dry_run):
+        """Move an issue to another project of the team (CHT-2106).
+
+        (`issue move` changes an issue's status; this changes its project.)
+
+        Each moved issue is renumbered in the target project; its old
+        identifier keeps resolving to it. --json returns the old-to-new map.
+        """
+        iss = _client().get_issue_by_identifier(identifier)
+        target_id = _main().resolve_project_id(to_project)
+        result = _client().move_issue(iss["id"], target_id, with_children=with_children, dry_run=dry_run)
+
+        dry = bool(result.get("dry_run"))
+        for m in result.get("moved", []):
+            if dry:
+                console.print(f"[green]Would move {esc(m['old'])} -> {esc(m['new'])}[/green]")
+            else:
+                console.print(f"[green]Moved {esc(m['old'])} -> {esc(m['new'])}[/green]")
+        if result.get("detached_parent"):
+            console.print(f"[yellow]Detached from parent {esc(result['detached_parent'])}, which stays.[/yellow]")
+        if result.get("removed_from_sprint"):
+            console.print(f"[yellow]Taken out of their sprint: {esc(', '.join(result['removed_from_sprint']))}[/yellow]")
+        if result.get("canceled_intents"):
+            console.print(f"[yellow]Open claim/close intents canceled: {esc(', '.join(result['canceled_intents']))}[/yellow]")
+        for w in result.get("warnings", []):
+            console.print(f"[yellow]{esc(w)}[/yellow]")
+        return result
+
     @issue.command("duplicate")
     @click.argument("duplicate_identifier")
     @click.argument("original_identifier")

@@ -51,7 +51,7 @@ from app.mcp_server import scope
 from app.mcp_server.context import get_current_mcp_principal, get_current_mcp_user
 from app.schemas.document import DocumentCreate, DocumentUpdate
 from app.schemas.issue import (
-    AddLabelRequest, IssueCommentCreate, IssueCreate, IssueRelationCreate, IssueUpdate,
+    AddLabelRequest, IssueCommentCreate, IssueCreate, IssueMoveRequest, IssueRelationCreate, IssueUpdate,
 )
 from app.schemas.ritual import RitualAttestationCreate, RitualRejectCreate
 from app.schemas.user import UserUpdate
@@ -395,6 +395,17 @@ class InProcessBackend:
     @_translated(issues_api.delete_relation)
     async def delete_relation(self, issue_id: str, relation_id: str) -> None:
         await issues_api.delete_relation(issue_id=issue_id, relation_id=relation_id, current_user=self._user)
+
+    @_translated(issues_api.move_issue_to_project)
+    async def move_issue(
+        self, issue_id: str, project_id: str, *, with_children: bool, dry_run: bool,
+    ) -> dict:
+        moved = await issues_api.move_issue_to_project(
+            issue_id=issue_id,
+            body=IssueMoveRequest(project_id=project_id, with_children=with_children, dry_run=dry_run),
+            current_user=self._user,
+        )
+        return _dump(moved)
 
     @_translated(issues_api.add_label_to_issue)
     async def add_label(self, issue_id: str, label_id: str) -> None:
