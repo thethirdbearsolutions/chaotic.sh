@@ -2514,6 +2514,64 @@
         }
       }
     },
+    "/api/issues/{issue_id}/move": {
+      "post": {
+        "tags": [
+          "issues"
+        ],
+        "summary": "Move Issue To Project",
+        "description": "Move an issue, and with ``with_children`` its descendants, to another\nproject of the same team (CHT-2106). Each moved issue is renumbered in\nthe target; its old identifier keeps resolving to it. ``dry_run``\nreports the plan and writes nothing.",
+        "operationId": "move_issue_to_project_api_issues__issue_id__move_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "issue_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Issue Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueMoveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueMoveResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/issues/{issue_id}/labels": {
       "post": {
         "tags": [
@@ -9780,7 +9838,8 @@
           "intent_cleared",
           "intent_canceled",
           "lease_expired",
-          "email_delivery_failed"
+          "email_delivery_failed",
+          "moved"
         ],
         "title": "ActivityType",
         "description": "Type of activity."
@@ -13565,6 +13624,115 @@
         ],
         "title": "IssueDescriptionRevisionResponse",
         "description": "Full description-revision snapshot."
+      },
+      "IssueMoveEntry": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "old": {
+            "type": "string",
+            "title": "Old"
+          },
+          "new": {
+            "type": "string",
+            "title": "New"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "old",
+          "new"
+        ],
+        "title": "IssueMoveEntry"
+      },
+      "IssueMoveRequest": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "with_children": {
+            "type": "boolean",
+            "title": "With Children",
+            "default": false
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "IssueMoveRequest",
+        "description": "Move an issue to another project of the same team (CHT-2106)."
+      },
+      "IssueMoveResponse": {
+        "properties": {
+          "target_project": {
+            "type": "string",
+            "title": "Target Project"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run"
+          },
+          "moved": {
+            "items": {
+              "$ref": "#/components/schemas/IssueMoveEntry"
+            },
+            "type": "array",
+            "title": "Moved"
+          },
+          "detached_parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detached Parent"
+          },
+          "removed_from_sprint": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Removed From Sprint",
+            "default": []
+          },
+          "canceled_intents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Canceled Intents",
+            "default": []
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_project",
+          "dry_run",
+          "moved"
+        ],
+        "title": "IssueMoveResponse",
+        "description": "What a move did, or with ``dry_run`` would do (CHT-2106, CHT-2107).\n\n``moved`` maps each old identifier to its new one, root first. The\nrest lists every mapping the target forced: the root's parent when\nit stayed behind (``detached_parent``), issues taken out of an old\nsprint, open claim/close intents canceled, and ``warnings`` such as\nan estimate off the target's scale. Nothing is dropped unreported."
       },
       "IssuePriority": {
         "type": "string",
