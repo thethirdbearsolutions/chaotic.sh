@@ -257,9 +257,16 @@ async def _apply(issues, plan, source, target, start, old_parent_id, open_intent
                 project_id=source.id,
                 number=i.number,
             )
-            await OxydeIssue.objects.filter(id=i.id).update(
-                project_id=target.id, identifier=new_identifier, number=new_number, sprint_id=None,
-            )
+            try:
+                await OxydeIssue.objects.filter(id=i.id).update(
+                    project_id=target.id, identifier=new_identifier, number=new_number, sprint_id=None,
+                )
+            except RuntimeError as e:
+                # The driver reports a unique violation on update as a plain
+                # RuntimeError: a racing create took the number after our check.
+                if "unique" in str(e).lower():
+                    raise _NumbersTaken() from e
+                raise
             if i.id == issues[0].id and old_parent_id:
                 await OxydeIssue.objects.filter(id=i.id).update(parent_id=None)
 

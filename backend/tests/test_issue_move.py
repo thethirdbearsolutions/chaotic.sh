@@ -264,3 +264,32 @@ async def test_a_default_epic_does_not_move(client, auth_headers, test_project, 
         assert r.status_code == 400
         assert "default epic" in r.json()["detail"]
     assert (await OxydeIssue.objects.get(id=epic["id"])).project_id == test_project.id
+
+
+async def test_a_unique_violation_on_update_is_retried(client, auth_headers, test_project, target, monkeypatch):
+    a = await _mk(client, auth_headers, test_project, "A")
+    from app.services import issue_move_service
+
+    real_filter = OxydeIssue.objects.filter
+    calls = {"n": 0}
+
+    class Flaky:
+        def __init__(self, qs):
+            self.qs = qs
+
+        def __getattr__(self, name):
+            return getattr(self.qs, name)
+
+        async def update(self, **kw):
+            if "identifier" in kw:
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise RuntimeError("UNIQUE constraint failed: issues.identifier")
+            return await self.qs.update(**kw)
+
+    monkeypatch.setattr(issue_move_service.OxydeIssue.objects, "filter", lambda **kw: Flaky(real_filter(**kw)) if set(kw) == {"id"} else real_filter(**kw))
+    r = await _move(client, auth_headers, a["id"], target.id)
+
+    assert r.status_code == 200, r.text
+    assert calls["n"] == 2
+    assert await OxydeIssueAlias.objects.filter(issue_id=a["id"]).count() == 1
