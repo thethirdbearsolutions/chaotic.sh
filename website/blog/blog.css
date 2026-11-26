@@ -1,0 +1,45 @@
+/* Blog pages. Colors and fonts come from the --blog-* variables the
+   layout sets from the site's own palette. Hand-written, not generated. */
+.blog-main { max-width: 1080px; margin: 0 auto; padding: 48px 16px 80px; color: var(--blog-text); }
+.blog-head { max-width: 44rem; margin: 0 0 36px; }
+.blog-head h1 { font-family: var(--blog-display); font-size: clamp(2rem, 5vw, 2.8rem); line-height: 1.1; margin: 0 0 12px; color: var(--blog-text); }
+.blog-lead { color: var(--blog-muted); font-size: 1.1rem; margin: 0; }
+.blog-empty { max-width: 44rem; color: var(--blog-muted); border: 1px dashed var(--blog-line); border-radius: 10px; padding: 20px 22px; margin: 0; }
+
+.post-list { list-style: none; margin: 0; padding: 0; max-width: 44rem; display: grid; gap: 14px; }
+.post-card { display: grid; gap: 4px; padding: 18px 20px; border: 1px solid var(--blog-line); border-radius: 10px; background: var(--blog-surface); color: var(--blog-text); text-decoration: none; }
+.post-card:hover { border-color: var(--blog-accent); text-decoration: none; }
+.post-card time { color: var(--blog-muted); font-size: 0.85rem; }
+.post-card strong { font-size: 1.15rem; color: var(--blog-text); }
+.post-card span { color: var(--blog-muted); }
+
+.post-layout { display: block; }
+.post { max-width: 44rem; min-width: 0; font-size: 1.05rem; line-height: 1.7; }
+.post-head { margin-bottom: 28px; }
+.post-head h1 { font-family: var(--blog-display); font-size: clamp(1.9rem, 4.5vw, 2.6rem); line-height: 1.15; margin: 8px 0 12px; color: var(--blog-text); }
+.post-meta { color: var(--blog-muted); font-size: 0.9rem; margin: 0; }
+.post-desc { color: var(--blog-muted); font-size: 1.15rem; margin: 0; }
+.post h2 { font-family: var(--blog-display); font-size: 1.5rem; margin: 2.2em 0 0.6em; scroll-margin-top: 90px; color: var(--blog-text); }
+.post h3 { font-size: 1.15rem; margin: 1.8em 0 0.5em; color: var(--blog-text); }
+.post p, .post ul, .post ol { margin: 0 0 1.1em; }
+.post li { margin-bottom: 0.4em; }
+.post img, .post video { max-width: 100%; height: auto; border-radius: 8px; }
+.post figure { margin: 1.6em 0; }
+.post figcaption { color: var(--blog-muted); font-size: 0.9rem; margin-top: 6px; }
+.post blockquote { margin: 1.4em 0; padding: 4px 0 4px 18px; border-left: 3px solid var(--blog-accent); color: var(--blog-muted); }
+.post pre { overflow-x: auto; }
+
+.toc { margin: 0 0 28px; border: 1px solid var(--blog-line); border-radius: 10px; background: var(--blog-surface); font-size: 0.92rem; }
+.toc summary { cursor: pointer; padding: 10px 14px; color: var(--blog-muted); font-weight: 600; }
+.toc ol { list-style: none; margin: 0; padding: 0 14px 12px; display: grid; gap: 6px; }
+.toc a { color: var(--blog-muted); text-decoration: none; display: block; border-left: 2px solid transparent; padding-left: 8px; }
+.toc a:hover { color: var(--blog-text); }
+.toc a[aria-current="true"] { color: var(--blog-text); border-left-color: var(--blog-accent); }
+
+@media (min-width: 960px) {
+  .post-layout.has-toc { display: grid; grid-template-columns: minmax(0, 44rem) 15rem; gap: 56px; align-items: start; }
+  .post-layout.has-toc .toc { grid-column: 2; grid-row: 1; position: sticky; top: 90px; margin: 0; background: none; border: 0; }
+  .post-layout.has-toc .post { grid-column: 1; grid-row: 1; }
+  .toc summary { display: none; }
+  .toc ol { padding: 0; }
+}
