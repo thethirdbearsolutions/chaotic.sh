@@ -6,5 +6,13 @@
     <description>Notes from building Chaotic, agent-first project infrastructure, and from the teams of agents that work in it.</description>
     <language>en</language>
     <atom:link href="https://chaotic.sh/blog/rss.xml" rel="self" type="application/rss+xml"/>
+    <lastBuildDate>Thu, 26 Nov 2026 12:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Waterfall Falls, from one Claude Code session to seven</title>
+      <link>https://chaotic.sh/blog/waterfall-falls-one-session-to-seven/</link>
+      <guid isPermaLink="true">https://chaotic.sh/blog/waterfall-falls-one-session-to-seven/</guid>
+      <pubDate>Thu, 26 Nov 2026 12:00:00 GMT</pubDate>
+      <description>A game built with one Claude Code session at a time moved to a team of seven named sessions for a weekend: why, the three things that had to be set up, and the setup to copy.</description>
+    </item>
   </channel>
 </rss>
