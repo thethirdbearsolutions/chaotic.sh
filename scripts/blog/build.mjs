@@ -116,7 +116,7 @@ function postBody(p) {
     return `<h2${attrs}>${inner}</h2>`;
   });
   const tocHtml = toc.length
-    ? `<nav class="toc" aria-label="On this page"><details open><summary>On this page</summary><ol>
+    ? `<nav class="post-toc" aria-label="On this page"><details open><summary>On this page</summary><ol>
 ${toc.map((t) => `  <li><a href="#${esc(t.id)}">${esc(t.text)}</a></li>`).join("\n")}
 </ol></details></nav>`
     : "";

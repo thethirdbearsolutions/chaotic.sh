@@ -1,7 +1,7 @@
 // Post table of contents: always open beside the post on wide screens,
 // collapsible above it on narrow ones, with the section in view marked.
 (function () {
-  var nav = document.querySelector(".toc");
+  var nav = document.querySelector(".post-toc");
   if (!nav) return;
   var details = nav.querySelector("details");
   var wide = window.matchMedia("(min-width: 960px)");
