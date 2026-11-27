@@ -240,6 +240,45 @@ def render_email_changed_notice() -> tuple[str, str]:
     return subject, body
 
 
+class PasswordChangeRefused(Exception):
+    """A change of password refused (CHT-2136). ``status_code`` and
+    ``error_code`` say how."""
+
+    def __init__(self, status_code: int, error_code: str, message: str, headers: dict | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
+        self.message = message
+        self.headers = headers
+
+    def detail(self) -> dict:
+        return {"error_code": self.error_code, "message": self.message}
+
+
+# Tries per account per hour, wrong passwords included, as for the
+# address: the current-password check must not be a faster guess than
+# login.
+PASSWORD_CHANGE_ATTEMPTS_PER_HOUR = 5
+password_change_attempts = SlidingWindowLimiter(3600)
+
+
+def render_password_changed_notice() -> tuple[str, str]:
+    """(subject, body) of the notice mailed when an account's password
+    changes (CHT-2136)."""
+    subject = "[Chaotic] Your password was changed"
+    body = (
+        "The password for your Chaotic account was just changed.\n"
+        "\n"
+        "If you made this change, there is nothing to do.\n"
+        "\n"
+        "If you did not, someone who knew the old password changed it:\n"
+        "contact the operator of your Chaotic server.\n"
+        "\n"
+        "— Chaotic"
+    )
+    return subject, body
+
+
 class UserService:
     """Service for user operations."""
 
@@ -457,6 +496,51 @@ class UserService:
             subject, body = render_email_changed_notice()
             fire_and_forget(email_service.send(old_email, subject, body))
         await _give_free_addresses_safely()
+        await user.refresh()
+        return user
+
+    async def change_password(self, user: OxydeUser, current_password: str, new_password: str) -> OxydeUser:
+        """Change ``user``'s own password (CHT-2136), after checking
+        ``current_password``. Raises PasswordChangeRefused:
+
+        * 403 ``human_required``: an agent, or an account with no
+          password to confirm with.
+        * 429 ``password_change_rate_limited``: over
+          ``PASSWORD_CHANGE_ATTEMPTS_PER_HOUR`` tries (checked first).
+        * 400 ``password_change_refused``: ``current_password`` is wrong.
+        * 400 ``password_unchanged``: the new password is the current one.
+
+        With SMTP configured a notice goes to the account's address.
+        Sessions and API keys stay valid. Logged by account id only.
+        """
+        if user.is_agent or not user.hashed_password:
+            raise PasswordChangeRefused(
+                403, "human_required",
+                "Only a person's account with a password can change its password.",
+            )
+        retry = password_change_attempts.retry_after(user.id, PASSWORD_CHANGE_ATTEMPTS_PER_HOUR)
+        if retry:
+            raise PasswordChangeRefused(
+                429, "password_change_rate_limited",
+                f"Too many password changes: at most {PASSWORD_CHANGE_ATTEMPTS_PER_HOUR} tries an hour. "
+                f"Try again in {(retry + 59) // 60} min.",
+                headers={"Retry-After": str(retry)},
+            )
+        password_change_attempts.allow(user.id, PASSWORD_CHANGE_ATTEMPTS_PER_HOUR)
+        if not verify_password(current_password, user.hashed_password):
+            raise PasswordChangeRefused(
+                400, "password_change_refused", "The password was not changed: the current password is wrong.",
+            )
+        if verify_password(new_password, user.hashed_password):
+            raise PasswordChangeRefused(400, "password_unchanged", "That is already your password.")
+        await OxydeUser.objects.filter(id=user.id).update(
+            hashed_password=get_password_hash(new_password), updated_at=datetime.now(timezone.utc),
+        )
+        logger.info("account %s changed its password (CHT-2136)", user.id)
+        email_service = EmailService()
+        if email_service.is_configured():
+            subject, body = render_password_changed_notice()
+            fire_and_forget(email_service.send(user.email, subject, body))
         await user.refresh()
         return user
 

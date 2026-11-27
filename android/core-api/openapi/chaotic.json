@@ -191,6 +191,53 @@
         ]
       }
     },
+    "/api/auth/password": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Change Password",
+        "description": "Change the signed-in person's own password (CHT-2136), confirmed\nwith the current one, and return the account.\n\n``new_password`` takes at least 8 characters (as at signup) and at\nmost 72 bytes of UTF-8, all bcrypt reads. With SMTP\nconfigured a notice goes to the account's address. Sessions and API\nkeys stay valid.\n\n400 ``password_change_refused`` for a wrong current password; 400\n``password_unchanged`` when the new one is the same. 429\n``password_change_rate_limited`` past five tries an hour. People\nwith a password only: an agent gets 403 ``human_required``.",
+        "operationId": "change_password_api_auth_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/auth/email-verification/confirm": {
       "post": {
         "tags": [
@@ -15180,6 +15227,29 @@
         ],
         "title": "ParentPrompt",
         "description": "The open parent whose last open child this update closed\n(CHT-1901). Epics never close themselves, so whoever closed the last\nchild is asked what happens next."
+      },
+      "PasswordChange": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Current Password"
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 72,
+            "minLength": 8,
+            "title": "New Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "PasswordChange",
+        "description": "A person's new password, confirmed with their current one (CHT-2136)."
       },
       "PendingApprovalIssueResponse": {
         "properties": {

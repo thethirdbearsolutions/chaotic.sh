@@ -128,6 +128,14 @@ export class ApiClient {
         return this.request('POST', '/auth/email-verification/confirm', { code });
     }
 
+    // Change your own password, confirmed with the current one (CHT-2136).
+    async changePassword(currentPassword, newPassword) {
+        return this.request('POST', '/auth/password', {
+            current_password: currentPassword,
+            new_password: newPassword,
+        });
+    }
+
     // OAuth consent (CHT-1519)
     async getOAuthRequest(requestId) {
         return this.request('GET', `/oauth/requests/${encodeURIComponent(requestId)}`);

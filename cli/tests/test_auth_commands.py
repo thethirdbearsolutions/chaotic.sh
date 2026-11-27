@@ -735,3 +735,30 @@ class TestAuthChangeEmail:
 
         assert result.exit_code == 1
         assert 'not changed' in result.output
+
+
+class TestAuthChangePassword:
+    """auth change-password (CHT-2136)."""
+
+    def test_changes_the_password_with_both_given(self, cli_runner):
+        from cli.main import cli, client
+
+        client.change_password = MagicMock(return_value={"email": "me@test.com"})
+        result = cli_runner.invoke(cli, [
+            'auth', 'change-password', '--current-password', 'old', '--new-password', 'new-password',
+        ])
+
+        assert result.exit_code == 0, result.output
+        client.change_password.assert_called_once_with('old', 'new-password')
+        assert 'changed' in result.output
+
+    def test_prompts_without_echoing(self, cli_runner):
+        from cli.main import cli, client
+
+        client.change_password = MagicMock(return_value={"email": "me@test.com"})
+        result = cli_runner.invoke(cli, ['auth', 'change-password'], input="old-s3cret\nnew-s3cret\nnew-s3cret\n")
+
+        assert result.exit_code == 0, result.output
+        client.change_password.assert_called_once_with('old-s3cret', 'new-s3cret')
+        assert 'old-s3cret' not in result.output
+        assert 'new-s3cret' not in result.output

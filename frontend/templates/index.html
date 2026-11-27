@@ -620,6 +620,25 @@
                             </div>
                         </section>
                         <section class="settings-section">
+                            <h3>Password</h3>
+                            <p class="settings-description">Change the password you sign in with. Signed-in sessions and API keys keep working.</p>
+                            <form data-action="change-password" class="change-password-form">
+                                <div class="form-group">
+                                    <label for="current-password">Current password</label>
+                                    <input type="password" id="current-password" autocomplete="current-password" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="new-password">New password</label>
+                                    <input type="password" id="new-password" autocomplete="new-password" minlength="8" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="confirm-new-password">Confirm new password</label>
+                                    <input type="password" id="confirm-new-password" autocomplete="new-password" minlength="8" required>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Change password</button>
+                            </form>
+                        </section>
+                        <section class="settings-section">
                             <h3>API Keys</h3>
                             <p class="settings-description">Create API keys to access Chaotic from the CLI or other applications.</p>
                             <button class="btn btn-primary" data-action="showCreateApiKeyModal">+ Create API Key</button>

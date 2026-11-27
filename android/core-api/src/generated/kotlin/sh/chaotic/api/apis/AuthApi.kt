@@ -27,6 +27,7 @@ import sh.chaotic.api.models.EmailChange
 import sh.chaotic.api.models.EmailVerificationConfirm
 import sh.chaotic.api.models.EmailVerificationSent
 import sh.chaotic.api.models.HTTPValidationError
+import sh.chaotic.api.models.PasswordChange
 import sh.chaotic.api.models.Token
 import sh.chaotic.api.models.UserCreate
 import sh.chaotic.api.models.UserLogin
@@ -69,6 +70,39 @@ import io.ktor.http.ParametersBuilder
             val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.POST,
             "/api/auth/email",
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+            )
+
+            return jsonRequest(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+            ).wrap()
+            }
+
+        /**
+        * POST /api/auth/password
+        * Change Password
+        * Change the signed-in person&#39;s own password (CHT-2136), confirmed with the current one, and return the account.  &#x60;&#x60;new_password&#x60;&#x60; takes at least 8 characters (as at signup) and at most 72 bytes of UTF-8, all bcrypt reads. With SMTP configured a notice goes to the account&#39;s address. Sessions and API keys stay valid.  400 &#x60;&#x60;password_change_refused&#x60;&#x60; for a wrong current password; 400 &#x60;&#x60;password_unchanged&#x60;&#x60; when the new one is the same. 429 &#x60;&#x60;password_change_rate_limited&#x60;&#x60; past five tries an hour. People with a password only: an agent gets 403 &#x60;&#x60;human_required&#x60;&#x60;.
+         * @param passwordChange  
+         * @return UserResponse
+        */
+            @Suppress("UNCHECKED_CAST")
+        open suspend fun changePasswordApiAuthPasswordPost(passwordChange: PasswordChange): HttpResponse<UserResponse> {
+
+            val localVariableAuthNames = listOf<String>("HTTPBearer")
+
+            val localVariableBody = passwordChange
+
+            val localVariableQuery = mutableMapOf<String, List<String>>()
+
+            val localVariableHeaders = mutableMapOf<String, String>()
+
+            val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.POST,
+            "/api/auth/password",
             query = localVariableQuery,
             headers = localVariableHeaders,
             requiresAuthentication = true,

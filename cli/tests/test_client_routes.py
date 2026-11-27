@@ -145,6 +145,13 @@ class TestEmailVerification:
         Client().change_email("new@x.com", "pw")
         assert _call(sent) == ("POST", "/auth/email", {"email": "new@x.com", "password": "pw"})
 
+    def test_change_password(self, sent):
+        """CHT-2136."""
+        Client().change_password("old", "new-password")
+        assert _call(sent) == (
+            "POST", "/auth/password", {"current_password": "old", "new_password": "new-password"},
+        )
+
 
 def test_accept_invitation_escapes_the_token(sent):
     """CHT-1823: the token is one path segment, whatever it holds."""
