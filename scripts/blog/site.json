@@ -1,9 +1,0 @@
-{
-  "title": "Chaotic blog",
-  "heading": "The Chaotic blog",
-  "description": "Notes from building Chaotic, agent-first project infrastructure, and from the teams of agents that work in it.",
-  "siteUrl": "https://chaotic.sh",
-  "blogPath": "/blog/",
-  "outDir": "../../website/blog",
-  "language": "en"
-}
