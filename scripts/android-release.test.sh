@@ -66,7 +66,8 @@ check "--new-key succeeds" test $? = 0
 PROPS="$WORK/home/.chaotic/android-signing.properties"
 STORE="$WORK/home/.chaotic/android-release.jks"
 check "it writes the keystore and the properties" test -f "$STORE" -a -f "$PROPS"
-check "both private" bash -c "[ \"\$(stat -c %a '$PROPS')\" = 600 ] && [ \"\$(stat -c %a '$STORE')\" = 600 ]"
+# BSD stat (macOS) first, GNU stat second, as the script's own mode() does.
+check "both private" bash -c "[ \"\$( stat -f %Lp '$PROPS' 2>/dev/null || stat -c %a '$PROPS')\" = 600 ] && [ \"\$( stat -f %Lp '$STORE' 2>/dev/null || stat -c %a '$STORE')\" = 600 ]"
 check "the properties file doubles the backslash" grep -qxF 'storePassword=correct horse\\battery staple' "$PROPS"
 check "Java reads the password back as typed" python3 -I - "$PROPS" "$PW" <<'EOF'
 import sys
@@ -85,7 +86,8 @@ check "--new-key never replaces a key" bash -c "[ $? != 0 ] && grep -q 'already 
 
 # A relative storeFile resolves against ~/.chaotic, as Gradle resolves it.
 cp "$PROPS" "$WORK/props.bak"
-sed -i 's|^storeFile=.*|storeFile=android-release.jks|' "$PROPS"
+# Portable in-place edit: GNU and BSD sed disagree on -i.
+sed 's|^storeFile=.*|storeFile=android-release.jks|' "$PROPS" > "$PROPS.tmp" && mv "$PROPS.tmp" "$PROPS"
 check "a relative storeFile resolves in ~/.chaotic" test "$(store_file)" = "$STORE"
 check "and the keystore opens through it" test "$(keystore_fingerprint)" = "$FROM_KEYSTORE"
 cp "$WORK/props.bak" "$PROPS"

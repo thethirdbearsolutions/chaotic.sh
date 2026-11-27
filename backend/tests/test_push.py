@@ -14,6 +14,7 @@
 * The VAPID key is derived from SECRET_KEY unless VAPID_PRIVATE_KEY is
   set, and is a valid P-256 point either way.
 """
+import socket
 import base64
 import os
 from datetime import datetime, timedelta, timezone
@@ -726,6 +727,12 @@ class TestRealResolver:
 
     @pytest.mark.parametrize("host", ["127.1", "2130706433", "0x7f000001", "0177.0.0.1", "LOCALHOST", "0"])
     async def test_numeric_loopback_is_refused(self, monkeypatch, host):
+        # A leading zero is octal to glibc (0177.0.0.1 is 127.0.0.1) but
+        # decimal to macOS (177.0.0.1, a public address, which is right to
+        # allow). What matters is that whatever the platform resolves to
+        # loopback is refused.
+        if host == "0177.0.0.1" and socket.gethostbyname(host) != "127.0.0.1":
+            pytest.skip("this platform reads 0177.0.0.1 as decimal, not loopback")
         monkeypatch.setattr(push_service, "_resolve", _REAL_RESOLVE)
         with pytest.raises(PushRegistrationError):
             await check_endpoint(f"https://{host}/up")

@@ -8,9 +8,19 @@ Provides composable fixtures that eliminate duplicated setup across test files:
 - patched_auth: Patches get_token, get_current_team, get_api_key
 - patched_project: Patches config.get_current_project
 """
+import os
+import tempfile
+
 import pytest
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
+
+# The suite runs on developers' machines as the CI gate (CHT-2140), where
+# ~/.chaotic holds real profiles and maybe a real server install, and
+# CHAOTIC_PROFILE may be set. Point HOME at an empty directory before any
+# cli module computes a path from it, so no test reads (or writes) them.
+os.environ["HOME"] = tempfile.mkdtemp(prefix="chaotic-cli-tests-home-")
+os.environ.pop("CHAOTIC_PROFILE", None)
 
 
 class _FakeAPIError(Exception):

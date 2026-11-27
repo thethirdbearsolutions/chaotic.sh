@@ -53,6 +53,29 @@ serve-prod:
 # Run all test suites (backend, frontend, CLI)
 test-all: test-backend test-frontend test-cli
 
+# Actions CI runs only by hand and at releases (CHT-2140), so this is the
+# gate before every push. The Android Gradle job is left out (slow, needs
+# the Android SDK): add `just ci-android` when a change touches android/.
+# What GitHub Actions CI runs, locally: run before every push
+ci: lint
+    cd frontend && npm ci && npm run lint && npm run test:coverage
+    cd backend && uv run pytest --cov=app --cov-report=term-missing -q
+    cd cli && uv run pytest -q
+    cd e2e && uv run pytest -q
+    bash scripts/sqlite-backup.test.sh
+    bash scripts/android-release.test.sh
+    android/scripts/generate-api-client.sh --check
+    cd frontend && npx playwright install chromium && npx vite build && cd .. && frontend/speed/run.sh
+
+# Includes CI's PR-only check that committed Room schemas are append-only,
+# compared with origin/main.
+# The Android job of CI, locally
+ci-android:
+    cd android && ./gradlew detekt :app:lintFossDebug :app:lintPlayDebug test :app:checkFossDependencies assembleFossDebug assemblePlayDebug
+    git fetch --no-tags -q origin main
+    edited=$(git diff --name-status origin/main -- android/app/schemas | grep -v '^A' || true); \
+    if [ -n "$edited" ]; then echo "$edited"; echo "A committed Room schema was changed or removed: bump ChaoticDatabase's version instead." >&2; exit 1; fi
+
 # Pyflakes-rule lint for backend, CLI and e2e (what CI runs; CHT-1362, CHT-1382)
 lint:
     cd backend && uv run ruff check .
