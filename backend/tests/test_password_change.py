@@ -93,6 +93,24 @@ class TestChangePassword:
         assert response.status_code == 422
         assert verify_password(PASSWORD, (await _fresh(test_user)).hashed_password)
 
+    async def test_multibyte_password_over_72_bytes_is_refused(self, client, auth_headers, test_user, no_smtp):
+        """bcrypt reads 72 bytes: 25 three-byte characters (75 bytes) would
+        be cut silently, so they are refused though only 25 characters."""
+        response = await _change(client, auth_headers, new="\u20ac" * 25)
+        assert response.status_code == 422
+        assert verify_password(PASSWORD, (await _fresh(test_user)).hashed_password)
+
+    async def test_multibyte_password_within_72_bytes_is_taken(self, client, auth_headers, test_user, no_smtp):
+        new = "\u20ac" * 24  # 72 bytes
+        assert (await _change(client, auth_headers, new=new)).status_code == 200
+        assert verify_password(new, (await _fresh(test_user)).hashed_password)
+
+    async def test_refusal_body_never_echoes_the_passwords(self, client, auth_headers, no_smtp):
+        response = await _change(client, auth_headers, new="short1", current="my-current-secret")
+        assert response.status_code == 422
+        assert "short1" not in response.text
+        assert "my-current-secret" not in response.text
+
     async def test_rate_limited_after_five_tries_an_hour(self, client, auth_headers, no_smtp):
         for _ in range(user_service_module.PASSWORD_CHANGE_ATTEMPTS_PER_HOUR):
             assert (await _change(client, auth_headers, current="wrong")).status_code == 400

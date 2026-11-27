@@ -178,8 +178,17 @@ class PasswordChange(BaseModel):
     """A person's new password, confirmed with their current one (CHT-2136)."""
 
     current_password: str = Field(min_length=1, max_length=1024)
-    # Same floor as signup; bcrypt reads at most 72 bytes.
+    # Same floor as signup. The ceiling is bcrypt's: it reads at most 72
+    # bytes of UTF-8 and ignores the rest, so a longer password would be
+    # cut without a word. Checked in bytes below, not characters.
     new_password: str = Field(min_length=8, max_length=72)
+
+    @field_validator("new_password")
+    @classmethod
+    def _fits_bcrypt(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("must be at most 72 bytes of UTF-8")
+        return value
 
 
 class UserLogin(BaseModel):

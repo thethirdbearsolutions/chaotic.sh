@@ -662,6 +662,11 @@ class Client:
     def change_email(self, email: str, password: str) -> dict:
         return self._request("POST", "/auth/email", {"email": email, "password": password})
 
+    def change_password(self, current_password: str, new_password: str) -> dict:
+        return self._request("POST", "/auth/password", {
+            "current_password": current_password, "new_password": new_password,
+        })
+
     # Users (CHT-1383)
     def get_user(self, user_id: str) -> dict:
         return self._request("GET", f"/users/{user_id}")

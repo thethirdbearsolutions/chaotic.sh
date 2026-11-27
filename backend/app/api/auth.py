@@ -173,7 +173,8 @@ async def change_password(
     """Change the signed-in person's own password (CHT-2136), confirmed
     with the current one, and return the account.
 
-    ``new_password`` takes 8 to 72 characters, as at signup. With SMTP
+    ``new_password`` takes at least 8 characters (as at signup) and at
+    most 72 bytes of UTF-8, all bcrypt reads. With SMTP
     configured a notice goes to the account's address. Sessions and API
     keys stay valid.
 

@@ -325,6 +325,28 @@ def register(cli):
         console.print(f"[green]Your email address is now {escape(user['email'])}.[/green]")
         console.print("It is not verified yet: chaotic auth verify-email")
 
+    @auth.command("change-password")
+    @click.option("--current-password", prompt="Current password", hide_input=True,
+                  help="Your account's current password (prompted for when not given).")
+    @click.option("--new-password", prompt="New password", hide_input=True, confirmation_prompt=True,
+                  help="The new password, 8 characters or more (prompted for, twice, when not given).")
+    @_main().json_option
+    @_main().require_auth
+    @_main().handle_error
+    def auth_change_password(current_password, new_password):
+        """Change your account's password (CHT-2136).
+
+        Asks for the current password and the new one. If the server sends
+        email, a notice goes to your address. Your sessions and API keys
+        keep working.
+        """
+        m = _main()
+        user = _client().change_password(current_password, new_password)
+        if m.is_json_output():
+            m.output_json(user)
+            return
+        console.print("[green]Your password was changed.[/green]")
+
     @auth.group("keys")
     def auth_keys():
         """API key management commands."""
