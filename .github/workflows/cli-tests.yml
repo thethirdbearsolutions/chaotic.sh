@@ -1,6 +1,6 @@
 name: CLI tests
 
-# The CLI suite, shared by ci.yml (every push and PR) and publish-cli.yml
+# The CLI suite, shared by ci.yml (by hand and at releases, CHT-2140) and publish-cli.yml
 # (the release gate), so the two cannot drift apart (CHT-1834).
 #
 # Users install the CLI on their own Python, so the suite runs on the oldest
