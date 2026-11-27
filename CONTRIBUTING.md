@@ -33,7 +33,9 @@ web UI at http://localhost:24267). The CLI is `cd cli && uv run chaotic --help`.
 
 ## Tests
 
-Run the suites your change touches before you push. CI runs all of them.
+Run `just ci` before you push: it runs what GitHub Actions CI runs, and
+Actions CI does not run on pushes or PRs, only by hand and at releases.
+Add `just ci-android` when you touch `android/`.
 
 | Suite | Command | Notes |
 |---|---|---|
@@ -82,7 +84,7 @@ through. If you think a test is wrong, say why in the PR.
 - Describe the PR as **Before** (what was wrong or missing), **After** (what
   is true now) and **How** (the approach, and how you tested it). The PR
   template has the outline.
-- Every PR is reviewed before merge, and CI must be green.
+- Every PR is reviewed before merge, with a passing `just ci` run.
 
 By contributing you agree that your contributions are licensed under the
 [MIT License](LICENSE).

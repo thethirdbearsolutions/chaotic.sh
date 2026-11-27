@@ -1,9 +1,15 @@
 name: CI
 
+# By hand and at a release, not on every push or PR (CHT-2140): Actions
+# minutes cost money, and `just ci` runs the same suites locally before a
+# push. Run it here with `gh workflow run CI --ref <branch>`. The secret
+# scan (secret-scan.yml) still runs on every push: this repo is public.
+# The PR-only steps below (the Android change check, Room schemas
+# append-only) then take their non-PR path; `just ci-android` checks the
+# Room schemas against the merge base with origin/main instead.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
 
 # Nothing here writes to the repository; third-party actions and the
@@ -221,8 +227,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Whether android-release-smoke should run: always on main and on a
-      # manual run, and on a pull request only when it changes the app or
+      # Whether android-release-smoke should run: always on a manual run or
+      # a release, and on a pull request (no longer a trigger, CHT-2140) only when it changes the app or
       # this workflow. HEAD is the merge ref, compared with the base
       # branch's current tip, so a commit that reached main after GitHub
       # built the merge ref can also count (it only ever runs the smoke

@@ -260,9 +260,11 @@ it was nine minutes serial until the test environment set `BCRYPT_ROUNDS=4`
 (both `backend/tests/conftest.py` and `e2e/conftest.py`), which made each
 fixture user cost ~1 ms instead of ~250 ms, and pytest-xdist spread the
 rest across cores. Coverage is combined across workers before the 90%
-gate. Run the full suite locally before every push -- CI should see a head
-only once. The cli suite is ~15 seconds, e2e about a minute, frontend
-under two.
+gate. Run `just ci` locally before every push: GitHub Actions CI runs
+only by hand (`gh workflow run CI --ref <branch>`) and at releases, not
+on pushes or PRs (CHT-2140), so the local run is the gate. Add
+`just ci-android` when a change touches `android/`. The cli suite is ~15
+seconds, e2e about a minute, frontend under two.
 
 ## Project Structure
 

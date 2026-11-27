@@ -316,7 +316,9 @@ class TestPathCliWarning:
         assert f"the CLI just installed at {bin_dir / 'chaotic'}" in warning
         assert f"put {bin_dir} first on PATH" in warning
         # Review L1: also true for install and for a rollback's re-sync.
-        assert "upgraded" not in warning and "older" not in warning
+        # Paths left out: macOS puts tmp_path under /var/folders ("older").
+        prose = warning.replace(str(tmp_path), "")
+        assert "upgraded" not in prose and "older" not in prose
 
     def test_a_pipx_install_first_on_path_says_how_to_remove_it(self, tmp_path, monkeypatch):
         bin_dir = self._bin(tmp_path)
