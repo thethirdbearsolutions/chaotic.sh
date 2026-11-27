@@ -174,6 +174,14 @@ class EmailChange(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
 
 
+class PasswordChange(BaseModel):
+    """A person's new password, confirmed with their current one (CHT-2136)."""
+
+    current_password: str = Field(min_length=1, max_length=1024)
+    # Same floor as signup; bcrypt reads at most 72 bytes.
+    new_password: str = Field(min_length=8, max_length=72)
+
+
 class UserLogin(BaseModel):
     """Schema for user login."""
 

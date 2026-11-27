@@ -6,13 +6,14 @@ from app.schemas.user import (
     EmailChange,
     EmailVerificationConfirm,
     EmailVerificationSent,
+    PasswordChange,
     Token,
     UserCreate,
     UserLogin,
     UserResponse,
 )
 from app.services.email_verification_service import EmailVerificationService, VerificationRefused
-from app.services.user_service import EmailChangeRefused, EmailTakenError, UserService
+from app.services.user_service import EmailChangeRefused, EmailTakenError, PasswordChangeRefused, UserService
 from app.utils.security import WEB_LOGIN, WEB_LOGIN_CLAIM, create_access_token
 
 router = APIRouter()
@@ -158,6 +159,32 @@ async def change_email(
     try:
         user = await UserService().change_email(current_user, body.email, body.password)
     except EmailChangeRefused as refused:
+        raise HTTPException(
+            status_code=refused.status_code, detail=refused.detail(), headers=refused.headers,
+        ) from refused
+    return UserResponse.model_validate(user)
+
+
+@router.post("/password", response_model=UserResponse)
+@writes
+async def change_password(
+    body: PasswordChange, current_user: CurrentUser, _app_session: NotAppSession,
+) -> UserResponse:
+    """Change the signed-in person's own password (CHT-2136), confirmed
+    with the current one, and return the account.
+
+    ``new_password`` takes 8 to 72 characters, as at signup. With SMTP
+    configured a notice goes to the account's address. Sessions and API
+    keys stay valid.
+
+    400 ``password_change_refused`` for a wrong current password; 400
+    ``password_unchanged`` when the new one is the same. 429
+    ``password_change_rate_limited`` past five tries an hour. People
+    with a password only: an agent gets 403 ``human_required``.
+    """
+    try:
+        user = await UserService().change_password(current_user, body.current_password, body.new_password)
+    except PasswordChangeRefused as refused:
         raise HTTPException(
             status_code=refused.status_code, detail=refused.detail(), headers=refused.headers,
         ) from refused

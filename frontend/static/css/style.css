@@ -5421,6 +5421,10 @@ input[type="checkbox"] {
     color: var(--text-primary);
 }
 
+.change-password-form {
+    max-width: 24rem;
+}
+
 .settings-description {
     color: var(--text-muted);
     font-size: var(--font-md);
